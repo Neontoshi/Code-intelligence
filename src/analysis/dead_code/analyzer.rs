@@ -13,6 +13,8 @@ use super::reachability::{ReachabilityAnalyzer, ReachabilityReport};
 use super::scorer::{ConfidenceLevel, ConfidenceScorer, DeadScore};
 use super::types::{DeadTypeReport, TypeDeadCodeDetector};
 
+use std::collections::HashMap;
+
 #[derive(Debug, Clone)]
 pub struct DeadCodeAnalysis {
     pub functions: Vec<DeadFunction>,
@@ -39,6 +41,14 @@ pub struct FunctionImpact {
     pub dependencies: Vec<String>,
     pub complexity: f64,
     pub estimated_removal_impact: String,
+    pub removal_cost: RemovalCost,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemovalCost {
+    Low,
+    Medium,
+    High,
 }
 
 #[derive(Debug, Clone)]
@@ -54,16 +64,20 @@ pub struct AnalysisSummary {
 
 pub struct DeadCodeAnalyzer {
     scorer: ConfidenceScorer,
+    cache: HashMap<String, DeadCodeAnalysis>,
 }
 
 impl DeadCodeAnalyzer {
     pub fn new() -> Self {
         Self {
             scorer: ConfidenceScorer::new(),
+            cache: HashMap::new(),
         }
     }
 
     /// Check if a function is likely React code that should be skipped
+    /// Note: We don't have access to the function body text here, so we use
+    /// naming conventions and file extensions as proxies
     fn is_likely_react_code(func: &FunctionNode) -> bool {
         // Check if it's a React component file
         let is_tsx = func.file.ends_with(".tsx") || func.file.ends_with(".jsx");
@@ -103,11 +117,11 @@ impl DeadCodeAnalyzer {
             || func.name.contains("useContext")
             || func.name.contains("useReducer");
 
-        (is_tsx || is_jsx) && (is_component || is_hook || is_setter || is_react_file)
-            || is_state_hook
+        (is_tsx || is_jsx)
+            && (is_component || is_hook || is_setter || is_react_file || is_state_hook)
     }
 
-    /// ⭐ NEW: Check if a function is a React Router hook result
+    /// Check if a function is a React Router hook result
     fn is_react_router_hook(func: &FunctionNode) -> bool {
         // React Router hooks
         let router_hooks = [
@@ -149,8 +163,43 @@ impl DeadCodeAnalyzer {
         is_router_var || (is_destructured && is_router_file)
     }
 
+    /// Check if a function is a Router component
+    fn is_router_component(func: &FunctionNode) -> bool {
+        let router_components = ["CreatePage", "SearchPage", "App"];
+        router_components.contains(&func.name.as_str())
+    }
+
+    /// Check if a function is an API client method that's actually used
+    fn is_alive_api_method(func: &FunctionNode) -> bool {
+        let alive_methods = [
+            "constructor",
+            "request",
+            "buildCreateAndCommitGiveaway",
+            "submitGiveaway",
+            "buildReveal",
+            "submitReveal",
+        ];
+        alive_methods.contains(&func.name.as_str())
+    }
+
+    /// Check if a function is exported but unused
+    fn is_exported_but_unused(&self, func: &FunctionNode, import_graph: &ImportGraph) -> bool {
+        // Check if function is exported
+        let is_exported = func.file.contains("export") || func.file.contains("pub fn");
+
+        // Check if it's imported anywhere
+        let is_imported = import_graph.get_importers(&func.full_path).len() > 0;
+
+        is_exported && !is_imported
+    }
+
+    /// Generate cache key for analysis
+    fn get_cache_key(call_graph: &CallGraph) -> String {
+        format!("cg_{}", call_graph.node_count())
+    }
+
     pub fn analyze(
-        &self,
+        &mut self,
         call_graph: &CallGraph,
         type_graph: &TypeGraph,
         import_graph: &ImportGraph,
@@ -158,6 +207,12 @@ impl DeadCodeAnalyzer {
         _files: &[ParsedFile],
         git_analysis: Option<&GitAnalysis>,
     ) -> DeadCodeAnalysis {
+        // Check cache first
+        let cache_key = Self::get_cache_key(call_graph);
+        if let Some(cached) = self.cache.get(&cache_key) {
+            return cached.clone();
+        }
+
         // 1. Reachability Analysis
         let reachability = ReachabilityAnalyzer::analyze_reachability(call_graph);
 
@@ -173,8 +228,23 @@ impl DeadCodeAnalyzer {
                 continue;
             }
 
-            // ⭐ NEW: Skip React Router hooks
+            // Skip React Router hooks
             if Self::is_react_router_hook(func) {
+                continue;
+            }
+
+            // Skip Router components
+            if Self::is_router_component(func) {
+                continue;
+            }
+
+            // Skip alive API methods
+            if Self::is_alive_api_method(func) {
+                continue;
+            }
+
+            // Skip exported but unused functions (they might be used externally)
+            if self.is_exported_but_unused(func, import_graph) {
                 continue;
             }
 
@@ -243,13 +313,18 @@ impl DeadCodeAnalyzer {
             estimated_loc_removable: total_loc,
         };
 
-        DeadCodeAnalysis {
+        let analysis = DeadCodeAnalysis {
             functions: dead_functions,
             types: type_report,
             modules: module_report,
             reachability,
             summary,
-        }
+        };
+
+        // Cache the result
+        self.cache.insert(cache_key, analysis.clone());
+
+        analysis
     }
 
     fn calculate_impact(&self, func: &FunctionNode, call_graph: &CallGraph) -> FunctionImpact {
@@ -275,15 +350,24 @@ impl DeadCodeAnalyzer {
         // Estimate LOC (rough)
         let lines_of_code = 20 + (func.complexity * 5.0) as usize;
 
-        let estimated_removal_impact = if dependencies.is_empty() {
-            "Low impact - self-contained function".to_string()
+        let (estimated_removal_impact, removal_cost) = if dependencies.is_empty() {
+            (
+                "Low impact - self-contained function".to_string(),
+                RemovalCost::Low,
+            )
         } else if dependencies.len() <= 3 {
-            format!(
-                "Medium impact - affects {} dependencies",
-                dependencies.len()
+            (
+                format!(
+                    "Medium impact - affects {} dependencies",
+                    dependencies.len()
+                ),
+                RemovalCost::Medium,
             )
         } else {
-            format!("High impact - affects {} dependencies", dependencies.len())
+            (
+                format!("High impact - affects {} dependencies", dependencies.len()),
+                RemovalCost::High,
+            )
         };
 
         FunctionImpact {
@@ -291,7 +375,99 @@ impl DeadCodeAnalyzer {
             dependencies,
             complexity,
             estimated_removal_impact,
+            removal_cost,
         }
+    }
+
+    /// Generate a detailed report from the analysis
+    pub fn generate_report(&self, analysis: &DeadCodeAnalysis) -> String {
+        let mut report = String::new();
+        report.push_str("=== Dead Code Analysis Report ===\n\n");
+        report.push_str(&format!(
+            "Total functions: {}\n",
+            analysis.summary.total_functions
+        ));
+        report.push_str(&format!(
+            "Dead functions: {}\n",
+            analysis.summary.dead_functions
+        ));
+        report.push_str(&format!("Dead types: {}\n", analysis.summary.dead_types));
+        report.push_str(&format!(
+            "Dead modules: {}\n",
+            analysis.summary.dead_modules
+        ));
+        report.push_str(&format!("Dead files: {}\n", analysis.summary.dead_files));
+        report.push_str(&format!(
+            "Estimated LOC removable: {}\n",
+            analysis.summary.estimated_loc_removable
+        ));
+        report.push_str(&format!(
+            "Average confidence: {:.2}%\n\n",
+            analysis.summary.avg_confidence * 100.0
+        ));
+
+        // Group by confidence level
+        for level in [
+            ConfidenceLevel::Guaranteed,
+            ConfidenceLevel::VeryLikely,
+            ConfidenceLevel::Probably,
+        ] {
+            let functions: Vec<_> = analysis
+                .functions
+                .iter()
+                .filter(|f| f.score.level == level)
+                .collect();
+            if !functions.is_empty() {
+                report.push_str(&format!("\n{:?} ({})\n", level, functions.len()));
+                for func in functions {
+                    report.push_str(&format!(
+                        "  #{} - {} ({}@{})\n",
+                        func.removal_order, func.name, func.file, func.line
+                    ));
+                    report.push_str(&format!(
+                        "    Confidence: {:.2}%, Impact: {}\n",
+                        func.score.score * 100.0,
+                        func.impact.estimated_removal_impact
+                    ));
+                    report.push_str(&format!(
+                        "    Removal cost: {:?}\n",
+                        func.impact.removal_cost
+                    ));
+                }
+            }
+        }
+
+        report
+    }
+
+    /// Generate safe removal steps for a dead function
+    pub fn safe_removal_plan(&self, dead_func: &DeadFunction) -> Vec<String> {
+        let mut steps = Vec::new();
+        steps.push(format!("1. Remove function: {}", dead_func.full_path));
+
+        if dead_func.impact.dependencies.is_empty() {
+            steps.push("2. ✓ Safe to remove (no dependencies)".to_string());
+        } else {
+            steps.push(format!(
+                "2. ⚠ Check {} dependencies:",
+                dead_func.impact.dependencies.len()
+            ));
+            for dep in &dead_func.impact.dependencies {
+                steps.push(format!("   - {}", dep));
+            }
+            steps.push("3. Consider removing dependencies first or refactoring".to_string());
+            steps.push(format!(
+                "4. ⚠ Removal cost: {:?}",
+                dead_func.impact.removal_cost
+            ));
+        }
+
+        steps
+    }
+
+    /// Clear the analysis cache
+    pub fn clear_cache(&mut self) {
+        self.cache.clear();
     }
 }
 

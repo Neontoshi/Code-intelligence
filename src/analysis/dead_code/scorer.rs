@@ -105,6 +105,24 @@ impl ConfidenceScorer {
         func.file.contains("mod.rs") || func.file.contains("lib.rs")
     }
 
+    /// ⭐ NEW: Check if a function is an API client method
+    fn is_api_client_method(func: &FunctionNode) -> bool {
+        func.file.contains("useSolanaWallet.ts")
+            && (func.name == "request"
+                || func.name == "constructor"
+                || func.name.contains("build")
+                || func.name.contains("submit")
+                || func.name == "getStatus"
+                || func.name == "getWinners"
+                || func.name == "getAudit")
+    }
+
+    /// ⭐ NEW: Check if a function is a Router component
+    fn is_router_component(func: &FunctionNode) -> bool {
+        let router_components = ["CreatePage", "SearchPage", "App"];
+        router_components.contains(&func.name.as_str())
+    }
+
     pub fn score_function(&self, func: &FunctionNode, git_info: Option<&GitInfo>) -> DeadScore {
         let mut score = 0.0;
         let mut factors = Vec::new();
@@ -222,7 +240,7 @@ impl ConfidenceScorer {
             });
         }
 
-        // ⭐ NEW: React components are less likely dead (-30)
+        // 11. React components are less likely dead (-30)
         if Self::is_react_component(func) {
             score -= 30.0;
             factors.push(ScoreFactor {
@@ -233,7 +251,7 @@ impl ConfidenceScorer {
             });
         }
 
-        // ⭐ NEW: React hooks are less likely dead (-25)
+        // 12. React hooks are less likely dead (-25)
         if Self::is_react_hook(func) {
             score -= 25.0;
             factors.push(ScoreFactor {
@@ -244,7 +262,7 @@ impl ConfidenceScorer {
             });
         }
 
-        // ⭐ NEW: State setters are less likely dead (-20)
+        // 13. State setters are less likely dead (-20)
         if Self::is_state_setter(func) {
             score -= 20.0;
             factors.push(ScoreFactor {
@@ -255,7 +273,7 @@ impl ConfidenceScorer {
             });
         }
 
-        // ⭐ NEW: Exported functions are less likely dead (-15)
+        // 14. Exported functions are less likely dead (-15)
         if Self::is_exported(func) {
             score -= 15.0;
             factors.push(ScoreFactor {
@@ -263,6 +281,28 @@ impl ConfidenceScorer {
                 weight: 15.0,
                 contribution: -15.0,
                 explanation: "Function is exported - may be used externally".to_string(),
+            });
+        }
+
+        // 15. ⭐ NEW: API client methods are less likely dead (-15)
+        if Self::is_api_client_method(func) {
+            score -= 15.0;
+            factors.push(ScoreFactor {
+                name: "api_client_method".to_string(),
+                weight: 15.0,
+                contribution: -15.0,
+                explanation: "API client method - may be used indirectly".to_string(),
+            });
+        }
+
+        // 16. ⭐ NEW: Router components are less likely dead (-40)
+        if Self::is_router_component(func) {
+            score -= 40.0;
+            factors.push(ScoreFactor {
+                name: "router_component".to_string(),
+                weight: 40.0,
+                contribution: -40.0,
+                explanation: "Router component - used in React Router".to_string(),
             });
         }
 

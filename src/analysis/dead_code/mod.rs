@@ -48,7 +48,7 @@ impl DeadCodeDetector {
         files: &[ParsedFile],
         git_analysis: Option<&crate::analysis::git_analysis::GitAnalysis>,
     ) -> DeadCodeAnalysis {
-        let analyzer = DeadCodeAnalyzer::new();
+        let mut analyzer = DeadCodeAnalyzer::new(); // <-- Add `mut` here
         analyzer.analyze(
             call_graph,
             type_graph,

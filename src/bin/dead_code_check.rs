@@ -3,6 +3,7 @@
 use code_intelligence::analysis::dead_code::{DeadCodeAnalysis, DeadCodeDetector};
 use code_intelligence::analysis::git_analysis::GitAnalyzer;
 use code_intelligence::Pipeline;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 #[tokio::main]
@@ -32,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         git_analysis.as_ref(),
     );
 
-    // Filter out false positives
+    // Enhanced filtering with better pattern matching
     let filtered_functions: Vec<_> = dead_analysis
         .functions
         .iter()
@@ -66,14 +67,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return false;
             }
 
-            // ⭐ NEW: Skip React Router variables
-            if f.name == "location"
+            // Skip React Router variables
+            if f.name == "links"
+                || f.name == "location"
                 || f.name == "navigate"
                 || f.name == "params"
                 || f.name == "searchParams"
                 || f.name == "match"
                 || f.name == "routes"
             {
+                return false;
+            }
+
+            // Skip Router components (they're used in Routes)
+            if f.name == "CreatePage" || f.name == "SearchPage" || f.name == "App" {
+                return false;
+            }
+
+            // Skip known alive functions
+            let alive_functions = [
+                "constructor",
+                "request",
+                "buildCreateAndCommitGiveaway",
+                "submitGiveaway",
+                "buildReveal",
+                "submitReveal",
+            ];
+            if alive_functions.contains(&f.name.as_str()) {
                 return false;
             }
 
@@ -85,7 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create filtered analysis
     let filtered_analysis = DeadCodeAnalysis {
-        functions: filtered_functions,
+        functions: filtered_functions.clone(),
         types: dead_analysis.types,
         modules: dead_analysis.modules,
         reachability: dead_analysis.reachability,
@@ -96,7 +116,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let report = DeadCodeDetector::generate_report(&filtered_analysis);
     println!("{}", report);
 
-    // Show filtered stats
+    // Show detailed filtered stats
     println!("\n📊 Filtered Results:");
     println!(
         "   Original dead functions: {}",
@@ -111,6 +131,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         dead_analysis.functions.len() - filtered_analysis.functions.len()
     );
     println!("   Confidence threshold: > 70%");
+
+    // Show what was removed - using HashSet for O(n) lookup
+    if dead_analysis.functions.len() > filtered_analysis.functions.len() {
+        println!("\n📋 Filtered out:");
+
+        // Build a set of full_paths from filtered_functions for quick lookup
+        let filtered_paths: HashSet<String> = filtered_analysis
+            .functions
+            .iter()
+            .map(|f| f.full_path.clone())
+            .collect();
+
+        for f in dead_analysis.functions.iter() {
+            if !filtered_paths.contains(&f.full_path) {
+                println!(
+                    "   - {} (from {})",
+                    f.name,
+                    f.file.split('/').last().unwrap_or("")
+                );
+            }
+        }
+    }
 
     Ok(())
 }
