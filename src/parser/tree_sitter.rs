@@ -98,30 +98,41 @@ impl TreeSitterParser {
     fn configure_languages() -> HashMap<String, LanguageConfig> {
         let mut langs = HashMap::new();
 
+        // ============================================================
+        // Rust
+        // ============================================================
         langs.insert(
             "rs".to_string(),
             LanguageConfig {
                 name: "Rust".to_string(),
                 extensions: vec!["rs".to_string()],
                 language_fn: tree_sitter_rust::language,
-                function_kinds: vec!["function_item".to_string()],
+                function_kinds: vec!["function_item".to_string(), "method_item".to_string()],
                 import_kinds: vec!["use_declaration".to_string()],
                 type_kinds: vec![
                     "struct_item".to_string(),
                     "enum_item".to_string(),
                     "trait_item".to_string(),
                     "impl_item".to_string(),
+                    "type_alias".to_string(),
                 ],
             },
         );
 
+        // ============================================================
+        // Python
+        // ============================================================
         langs.insert(
             "py".to_string(),
             LanguageConfig {
                 name: "Python".to_string(),
                 extensions: vec!["py".to_string()],
                 language_fn: tree_sitter_python::language,
-                function_kinds: vec!["function_definition".to_string()],
+                function_kinds: vec![
+                    "function_definition".to_string(),
+                    "async_function_definition".to_string(),
+                    "method_definition".to_string(),
+                ],
                 import_kinds: vec![
                     "import_statement".to_string(),
                     "import_from_statement".to_string(),
@@ -130,6 +141,9 @@ impl TreeSitterParser {
             },
         );
 
+        // ============================================================
+        // JavaScript (JS + JSX)
+        // ============================================================
         langs.insert(
             "js".to_string(),
             LanguageConfig {
@@ -138,14 +152,100 @@ impl TreeSitterParser {
                 language_fn: tree_sitter_javascript::language,
                 function_kinds: vec![
                     "function_declaration".to_string(),
+                    "function_expression".to_string(),
                     "arrow_function".to_string(),
                     "method_definition".to_string(),
+                    "generator_function_declaration".to_string(),
                 ],
-                import_kinds: vec!["import_statement".to_string()],
+                import_kinds: vec![
+                    "import_statement".to_string(),
+                    "export_statement".to_string(),
+                ],
                 type_kinds: vec!["class_declaration".to_string()],
             },
         );
 
+        // ============================================================
+        // TypeScript (TS) - without JSX
+        // ============================================================
+        langs.insert(
+            "ts".to_string(),
+            LanguageConfig {
+                name: "TypeScript".to_string(),
+                extensions: vec!["ts".to_string()],
+                language_fn: tree_sitter_typescript::language_typescript,
+                function_kinds: vec![
+                    "function_declaration".to_string(),
+                    "function_expression".to_string(),
+                    "arrow_function".to_string(),
+                    "method_definition".to_string(),
+                    "generator_function_declaration".to_string(),
+                    "function".to_string(),
+                    "lexical_declaration".to_string(),
+                ],
+                import_kinds: vec![
+                    "import_statement".to_string(),
+                    "import".to_string(),
+                    "export_statement".to_string(),
+                    "export".to_string(),
+                ],
+                type_kinds: vec![
+                    "class_declaration".to_string(),
+                    "interface_declaration".to_string(),
+                    "type_alias_declaration".to_string(),
+                    "enum_declaration".to_string(),
+                    "type_parameter".to_string(),
+                ],
+            },
+        );
+
+        // ============================================================
+        // TypeScript with JSX (TSX) - ⭐ NEW
+        // ============================================================
+        langs.insert(
+            "tsx".to_string(),
+            LanguageConfig {
+                name: "TypeScript".to_string(),
+                extensions: vec!["tsx".to_string()],
+                language_fn: tree_sitter_typescript::language_tsx,
+                function_kinds: vec![
+                    // Standard function declarations
+                    "function_declaration".to_string(),
+                    "function_expression".to_string(),
+                    "arrow_function".to_string(),
+                    "method_definition".to_string(),
+                    "generator_function_declaration".to_string(),
+                    // ⭐ CRITICAL: React component patterns
+                    "function".to_string(),
+                    "lexical_declaration".to_string(),
+                    "variable_declaration".to_string(),
+                    "variable_declarator".to_string(),
+                    "export_statement".to_string(),
+                    "export_default".to_string(),
+                    // Class components
+                    "class_declaration".to_string(),
+                    "class".to_string(),
+                    "method_definition".to_string(),
+                ],
+                import_kinds: vec![
+                    "import_statement".to_string(),
+                    "import".to_string(),
+                    "export_statement".to_string(),
+                    "export".to_string(),
+                ],
+                type_kinds: vec![
+                    "class_declaration".to_string(),
+                    "interface_declaration".to_string(),
+                    "type_alias_declaration".to_string(),
+                    "enum_declaration".to_string(),
+                    "type_parameter".to_string(),
+                ],
+            },
+        );
+
+        // ============================================================
+        // Go
+        // ============================================================
         langs.insert(
             "go".to_string(),
             LanguageConfig {
@@ -161,6 +261,9 @@ impl TreeSitterParser {
             },
         );
 
+        // ============================================================
+        // Java
+        // ============================================================
         langs.insert(
             "java".to_string(),
             LanguageConfig {
@@ -170,11 +273,14 @@ impl TreeSitterParser {
                 function_kinds: vec![
                     "method_declaration".to_string(),
                     "constructor_declaration".to_string(),
+                    "lambda_expression".to_string(),
                 ],
                 import_kinds: vec!["import_declaration".to_string()],
                 type_kinds: vec![
                     "class_declaration".to_string(),
                     "interface_declaration".to_string(),
+                    "enum_declaration".to_string(),
+                    "record_declaration".to_string(),
                 ],
             },
         );
