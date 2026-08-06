@@ -22,6 +22,7 @@ pub struct DuplicateGroup {
     pub priority_score: f64,
     pub total_token_savings: usize,
     pub complexity_impact: f64,
+    pub confidence_score: f64, // ⭐ NEW: ML confidence score
 }
 
 #[derive(Debug, Clone, PartialEq)]

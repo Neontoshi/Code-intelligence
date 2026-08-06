@@ -1,3 +1,5 @@
+// src/optimize/dedup/mod.rs
+
 //! Deduplication module - Modular duplicate detection system
 
 pub mod analyzers;
@@ -18,8 +20,9 @@ pub use types::{
     SimilarityScores,
 };
 
-// Internal imports for the main Deduplicator
+// Internal imports
 use crate::graph::call_graph::{CallGraph, FunctionNode};
+// ⭐ REMOVED unused import: GraphMetrics
 use crate::optimize::dedup::analyzers::MLAnalyzer;
 use crate::optimize::dedup::comparators::{
     CallGraphComparator, SemanticComparator, StructuralComparator,
@@ -29,6 +32,11 @@ use crate::optimize::dedup::reporters::ReportGenerator;
 use crate::optimize::dedup::types::{combine, ScoreWeights, SignalVerdict};
 use crate::parser::tree_sitter::ParsedFile;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+// Import ML duplicate classifier
+use crate::analysis::training_data::FunctionFeatures;
+use crate::ml::duplicate_classifier::DuplicateClassifier;
 
 // ============================================================================
 // Union-Find for cluster merging
@@ -84,6 +92,7 @@ impl UnionFind {
 pub struct Deduplicator {
     config: DedupConfig,
     weights: ScoreWeights,
+    duplicate_model: Option<Arc<DuplicateClassifier>>,
 }
 
 impl Deduplicator {
@@ -91,6 +100,15 @@ impl Deduplicator {
         Self {
             config: DedupConfig::default(),
             weights: ScoreWeights::default(),
+            duplicate_model: None,
+        }
+    }
+
+    pub fn new_with_ml(model: Option<DuplicateClassifier>) -> Self {
+        Self {
+            config: DedupConfig::default(),
+            weights: ScoreWeights::default(),
+            duplicate_model: model.map(Arc::new),
         }
     }
 
@@ -133,10 +151,6 @@ impl Deduplicator {
         }
 
         let sources = SourceIndex::build(&functions, files);
-        // Enforce max_functions_to_compare instead of only storing it.
-        // Cheap pre-bucketing by param-count band keeps this from becoming an
-        // unbounded O(n^2) scan on large codebases.
-        // Three-tier bucketing: signature hash → AST hash → param count fallback
         let candidate_pairs = self.build_candidate_pairs(&functions, &sources);
         metrics.total_comparisons = candidate_pairs.len();
 
@@ -150,7 +164,7 @@ impl Deduplicator {
         let mut duplicate_groups = Vec::new();
         let mut all_duplicates = HashSet::new();
 
-        // Phase 1: Exact matches (fast, now actually functional)
+        // Phase 1: Exact matches
         let exact_groups = self.find_exact_duplicates(&functions, &sources);
         self.process_groups(
             exact_groups,
@@ -163,7 +177,7 @@ impl Deduplicator {
             DuplicateType::Exact,
         );
 
-        // Phase 2: unified consensus pass
+        // Phase 2: Consensus pass with ML
         let consensus_groups = self.find_consensus_duplicates(
             &functions,
             call_graph,
@@ -173,19 +187,6 @@ impl Deduplicator {
         );
         for (group, verdict) in consensus_groups {
             let duplicate_type = verdict.dominant_type();
-            let _signal_count = verdict.signal_count();
-            #[cfg(debug_assertions)]
-            {
-                let func_a = &group[0];
-                let func_b = &group[1];
-                eprintln!(
-                    "🔍 Duplicate found: {} ↔ {} (signals: {}, score: {:.3})",
-                    func_a.name,
-                    func_b.name,
-                    _signal_count,
-                    verdict.mean_score()
-                );
-            }
             self.process_groups(
                 vec![group],
                 &sources,
@@ -197,6 +198,9 @@ impl Deduplicator {
                 duplicate_type,
             );
         }
+
+        // Phase 3: ML refinement
+        self.refine_with_ml(&mut duplicate_groups, &functions, call_graph, &mut metrics);
 
         let unique_functions: Vec<FunctionNode> = functions
             .into_iter()
@@ -223,6 +227,54 @@ impl Deduplicator {
             unique_functions,
             total_saved_tokens,
             accuracy_metrics: metrics,
+        }
+    }
+
+    // ML refinement phase
+    fn refine_with_ml(
+        &self,
+        groups: &mut Vec<DuplicateGroup>,
+        _functions: &[FunctionNode], // ⭐ Added underscore
+        call_graph: &CallGraph,
+        metrics: &mut AccuracyMetrics,
+    ) {
+        if let Some(_model) = &self.duplicate_model {
+            // ⭐ Added underscore
+            for group in groups.iter_mut() {
+                let mut ml_scores = Vec::new();
+
+                for i in 0..group.functions.len() {
+                    for j in (i + 1)..group.functions.len() {
+                        let a = &group.functions[i];
+                        let b = &group.functions[j];
+
+                        // Extract features for ML
+                        let features_a = FunctionFeatures::from_function(a, call_graph);
+                        let features_b = FunctionFeatures::from_function(b, call_graph);
+
+                        // Get ML prediction
+                        let ml_score = _model.predict(&features_a, &features_b);
+                        ml_scores.push(ml_score);
+                    }
+                }
+
+                if !ml_scores.is_empty() {
+                    // Average ML score
+                    let avg_ml_score: f64 = ml_scores.iter().sum::<f64>() / ml_scores.len() as f64;
+
+                    // Store ML confidence in the group
+                    group.confidence_score = avg_ml_score;
+
+                    // Adjust similarity score by blending with ML
+                    if avg_ml_score > 0.8 {
+                        group.similarity_score = group.similarity_score.max(avg_ml_score);
+                        if group.duplicate_type == DuplicateType::Partial {
+                            group.duplicate_type = DuplicateType::Algorithmic;
+                            metrics.algorithmic_matches += 1;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -256,18 +308,6 @@ impl Deduplicator {
         let generator = CandidateGenerator::new(self.config.clone());
         let result = generator.generate(functions, sources);
 
-        // Log strategy usage
-        let strategy_names: Vec<String> = result
-            .strategies_used
-            .iter()
-            .map(|s| format!("{:?}", s))
-            .collect();
-        eprintln!(
-            "   🎯 Candidate strategies: {} ({} pairs)",
-            strategy_names.join(" → "),
-            result.total_candidates
-        );
-
         result
             .pairs
             .into_iter()
@@ -285,8 +325,6 @@ impl Deduplicator {
     ) -> Vec<(Vec<FunctionNode>, SignalVerdict)> {
         let mut groups = Vec::new();
         let mut used = processed.clone();
-        let mut total_pairs_checked = 0;
-        let mut pairs_with_consensus = 0;
 
         for &(i, j) in candidate_pairs {
             let func_a = &functions[i];
@@ -325,26 +363,23 @@ impl Deduplicator {
                 }
             }
 
-            total_pairs_checked += 1;
+            // Use ML model if available
+            if let Some(model) = &self.duplicate_model {
+                let features_a = FunctionFeatures::from_function(func_a, call_graph);
+                let features_b = FunctionFeatures::from_function(func_b, call_graph);
+                let ml_score = model.predict(&features_a, &features_b);
+                let current_ml = verdict.ml.unwrap_or(0.5);
+                verdict.ml = Some((current_ml + ml_score) / 2.0);
+            }
 
             if verdict.is_duplicate(
                 self.config.per_signal_threshold,
                 self.config.min_signal_agreement,
             ) {
-                pairs_with_consensus += 1;
                 used.insert(func_a.full_path.clone());
                 used.insert(func_b.full_path.clone());
                 groups.push((vec![func_a.clone(), func_b.clone()], verdict));
             }
-        }
-
-        // Log consensus statistics
-        if total_pairs_checked > 0 {
-            let consensus_rate = pairs_with_consensus as f64 / total_pairs_checked as f64 * 100.0;
-            eprintln!(
-                "📊 Consensus: {} pairs checked, {} passed ({:.1}%)",
-                total_pairs_checked, pairs_with_consensus, consensus_rate
-            );
         }
 
         groups
@@ -361,7 +396,6 @@ impl Deduplicator {
         threshold: f64,
         duplicate_type: DuplicateType,
     ) {
-        // First, collect all function indices from all groups
         let mut all_funcs: Vec<FunctionNode> = Vec::new();
         let mut func_to_idx: HashMap<String, usize> = HashMap::new();
 
@@ -374,7 +408,6 @@ impl Deduplicator {
             }
         }
 
-        // Build Union-Find and union functions within each group
         let mut uf = UnionFind::new(all_funcs.len());
 
         for group in &groups {
@@ -382,20 +415,17 @@ impl Deduplicator {
                 continue;
             }
 
-            // Skip false positives
             if FalsePositiveFilter::filter_duplicate_group(group, Some(sources)) {
                 metrics.false_positives_filtered += group.len();
                 continue;
             }
 
-            // Calculate similarity for this group
             let similarity = self.calculate_group_similarity(group);
             if similarity < threshold {
                 metrics.false_positives_filtered += group.len();
                 continue;
             }
 
-            // Union all functions in this group
             let first_idx = func_to_idx[&group[0].full_path];
             for func in &group[1..] {
                 let idx = func_to_idx[&func.full_path];
@@ -403,8 +433,6 @@ impl Deduplicator {
             }
         }
 
-        // Extract clusters and create DuplicateGroups
-        // Extract clusters and create DuplicateGroups
         let clusters = uf.get_clusters(all_funcs.len());
 
         for cluster in clusters {
@@ -415,13 +443,11 @@ impl Deduplicator {
                 continue;
             }
 
-            // Mark all functions as processed/duplicates
             for func in &cluster_funcs {
                 processed.insert(func.full_path.clone());
                 all_duplicates.insert(func.full_path.clone());
             }
 
-            // Calculate group similarity
             let similarity = self.calculate_group_similarity(&cluster_funcs);
 
             let group_size = cluster_funcs.len();
@@ -435,17 +461,15 @@ impl Deduplicator {
                 + ((avg_fan_in / 10.0).min(1.0) * 0.3);
             let priority_score = priority_score.min(1.0);
 
-            // Calculate token savings using TokenEstimator
             let mut total_source_len = 0;
             let mut total_compressed_len = 0;
             for func in &cluster_funcs {
                 if let Some(source) = sources.get(&func.full_path) {
                     total_source_len += source.len();
-                    // Estimate compressed: remove duplicates within group
                     total_compressed_len += source.len() / group_size;
                 }
             }
-            let total_token_savings = (total_source_len - total_compressed_len) / 4; // rough tokens
+            let total_token_savings = (total_source_len - total_compressed_len) / 4;
 
             let duplicate_group = DuplicateGroup {
                 functions: cluster_funcs.clone(),
@@ -456,6 +480,7 @@ impl Deduplicator {
                 priority_score,
                 total_token_savings,
                 complexity_impact: avg_complexity / 50.0,
+                confidence_score: 0.0,
             };
             duplicate_groups.push(duplicate_group);
 
@@ -480,8 +505,6 @@ impl Deduplicator {
         for i in 0..group.len() {
             for j in (i + 1)..group.len() {
                 let scores = StructuralComparator::compare(&group[i], &group[j]);
-                // Same weights as everywhere else now — previously this used
-                // a different 0.6/0.4 blend than auto-tune and phase 2's 0.7/0.3.
                 total_sim += combine(&scores, &self.weights);
                 comparisons += 1;
             }

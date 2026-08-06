@@ -1,7 +1,8 @@
 // src/ml/classifier.rs
 
 use crate::analysis::training_data::{TrainingExample, TrainingLabel};
-use serde::{Deserialize, Serialize};
+use crate::utils::serialization::{load_from_file, save_to_file};
+use serde::{Deserialize, Serialize}; // ⭐ NEW
 
 // Simple linear classifier with gradient descent
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -264,21 +265,14 @@ impl DeadCodeClassifier {
 
     pub fn save(&self, path: &str) -> Result<(), String> {
         if let Some(model) = &self.model {
-            let data = serde_json::to_string_pretty(model)
-                .map_err(|e| format!("Failed to serialize: {}", e))?;
-            std::fs::write(path, data).map_err(|e| format!("Failed to write model: {}", e))?;
-            Ok(())
+            save_to_file(model, path)
         } else {
             Err("No model trained".to_string())
         }
     }
 
     pub fn load(path: &str) -> Result<Self, String> {
-        let data =
-            std::fs::read_to_string(path).map_err(|e| format!("Failed to read model: {}", e))?;
-        let model: LinearClassifier =
-            serde_json::from_str(&data).map_err(|e| format!("Failed to parse model: {}", e))?;
-
+        let model = load_from_file(path)?;
         Ok(Self {
             model: Some(model),
             accuracy: 0.0,

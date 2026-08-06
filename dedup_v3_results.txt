@@ -1,0 +1,188 @@
+🔍 Analyzing project: "/home/dicey/Documents/code-intelligence"
+
+✅ Loaded duplicate model from: "models/duplicate_model_v3.bin"
+
+📁 Found 87 source files
+🔄 Parsing files in parallel...
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/filters/mod.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/tests/integration/test-self-analysis.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/token_estimate.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/output/graphviz.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/types.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/compress.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/parser/tree_sitter.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/benches/compression.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/ml/classifier.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/symbols.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/output/mod.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/output/rag.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/chunk.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/ml/duplicate_classifier.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/mod.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/candidates.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/ml/mod.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/ml/features.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/analysis/context.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/llm/providers/mock.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/parser/semantic.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/comparators/structural.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/comparators/semantic.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/llm/providers/ollama.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/comparators/call_graph.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/comparators/mod.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/reporters/report.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/parser/comments.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/reporters/mod.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/llm_analyzer.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/llm/providers/mod.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/parser/mod.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/utils/alloc.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/mod.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/utils/hashing.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/analysis/git_analysis.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/llm/providers/openai.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/utils/parallel.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/analysis/training_data.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/utils/mod.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/utils/string_utils.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/main.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/llm/providers/anthropic.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/llm/code_understanding.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/analysis/importance.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/analyzers/ml_features.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/analysis/dead_code/report.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/lib.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/bin/train_model.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/bin/dead_code_check.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/analyzers/git_history.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/analysis/dead_code/reachability.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/analyzers/data_flow.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/analysis/dead_code/modules.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/bin/training_data_exporter.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/llm/mod.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/bin/dedup_check.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/analysis/dead_code/mod.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/analyzers/mod.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/analyzers/ast.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/analysis/dead_code/analyzer.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/llm/prompts.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/core.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/filters/threshold.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/bin/train_duplicate_model.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/optimize/dedup/filters/false_positive.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/graph/type_graph.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/graph/import_graph.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/bin/dead_code_dashboard.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/analysis/dead_code/scorer.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/graph/graph_traits.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/graph/mod.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/graph/project_graph.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/graph/call_graph.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/analysis/dead_code/types.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/graph/dependency_graph.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/analysis/complexity.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/analysis/features.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/engine/pipeline.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/analysis/dead_code/whitelist.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/bin/merge_training_data.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/output/json.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/engine/indexer.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/output/markdown.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/engine/mod.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/engine/cache.rs"
+📄 Parsing file: "/home/dicey/Documents/code-intelligence/src/analysis/mod.rs"
+✅ Successfully parsed 74 files
+🔄 Building graphs in parallel...
+📊 Built call graph: 696 functions, 2327 edges
+   📇 Indexes: 500 names, 73 files, 459 public, 92 async
+   📊 Project graph: 770 nodes, 3023 edges
+   🔄 14 functions in cycles
+   📂 Layers: ["core", "test", "utility"]
+🔄 Extracting features and building indexes in parallel...
+   ✅ Extracted features for 694 functions
+   ✅ Built indexes: 500 names, 73 files, 39 hashes
+📈 Scored function importance
+⏱️ Analysis completed in 17.27s
+📊 Deduplication Report
+=======================
+
+Duplicate groups found: 8
+Total token savings: ~900
+
+Confidence score: 96.5%
+
+🔍 Duplicate Groups:
+
+Group 1 (2 functions, similarity: 96.2% (ML: 51.1%)):
+  Type: Exact
+  Suggestion: Extract to shared function
+  Priority: 80.6%
+  Token savings: ~18
+  Functions:
+    - node_count (/home/dicey/Documents/code-intelligence/src/graph/type_graph.rs:183)
+    - node_count (/home/dicey/Documents/code-intelligence/src/graph/project_graph.rs:434)
+
+Group 2 (2 functions, similarity: 100.0% (ML: 100.0%)):
+  Type: Exact
+  Suggestion: Extract to shared function
+  Priority: 98.6%
+  Token savings: ~32
+  Functions:
+    - new (/home/dicey/Documents/code-intelligence/src/graph/type_graph.rs:60)
+    - new (/home/dicey/Documents/code-intelligence/src/graph/dependency_graph.rs:36)
+
+Group 3 (3 functions, similarity: 96.2% (ML: 51.9%)):
+  Type: Exact
+  Suggestion: Extract to shared function
+  Priority: 100.0%
+  Token savings: ~42
+  Functions:
+    - index (/home/dicey/Documents/code-intelligence/src/graph/call_graph.rs:406)
+    - index (/home/dicey/Documents/code-intelligence/src/graph/dependency_graph.rs:183)
+    - index (/home/dicey/Documents/code-intelligence/src/graph/project_graph.rs:568)
+
+Group 4 (2 functions, similarity: 96.7% (ML: 52.0%)):
+  Type: Exact
+  Suggestion: Extract to shared function
+  Priority: 80.6%
+  Token savings: ~14
+  Functions:
+    - model_name (/home/dicey/Documents/code-intelligence/src/llm/providers/ollama.rs:379)
+    - model_name (/home/dicey/Documents/code-intelligence/src/llm/providers/openai.rs:408)
+
+Group 5 (2 functions, similarity: 96.2% (ML: 51.1%)):
+  Type: Exact
+  Suggestion: Extract to shared function
+  Priority: 80.6%
+  Token savings: ~18
+  Functions:
+    - edge_count (/home/dicey/Documents/code-intelligence/src/graph/type_graph.rs:187)
+    - edge_count (/home/dicey/Documents/code-intelligence/src/graph/project_graph.rs:438)
+
+Group 6 (2 functions, similarity: 96.7% (ML: 52.0%)):
+  Type: Exact
+  Suggestion: Extract to shared function
+  Priority: 80.6%
+  Token savings: ~14
+  Functions:
+    - max_context_length (/home/dicey/Documents/code-intelligence/src/llm/providers/mock.rs:236)
+    - max_context_length (/home/dicey/Documents/code-intelligence/src/llm/providers/anthropic.rs:40)
+
+Group 7 (2 functions, similarity: 100.0% (ML: 100.0%)):
+  Type: Algorithmic
+  Suggestion: Extract algorithm to shared function
+  Priority: 80.6%
+  Token savings: ~87
+  Functions:
+    - save (/home/dicey/Documents/code-intelligence/src/ml/classifier.rs:265)
+    - save (/home/dicey/Documents/code-intelligence/src/ml/duplicate_classifier.rs:220)
+
+Group 8 (2 functions, similarity: 100.0% (ML: 100.0%)):
+  Type: Algorithmic
+  Suggestion: Extract algorithm to shared function
+  Priority: 80.6%
+  Token savings: ~84
+  Functions:
+    - load (/home/dicey/Documents/code-intelligence/src/ml/classifier.rs:276)
+    - load (/home/dicey/Documents/code-intelligence/src/ml/duplicate_classifier.rs:228)
+

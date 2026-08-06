@@ -76,6 +76,14 @@ pub struct FunctionFeatures {
     pub name_contains_fetch: bool,
     pub name_contains_verify: bool,
     pub name_contains_audit: bool,
+
+    // ⭐ NEW: Type context features
+    pub type_name: Option<String>,  // "Allocator", "MemoryPool", etc.
+    pub type_path: Option<String>,  // Full path to the type
+    pub is_method: bool,            // True if this is a method (has self)
+    pub is_trait_impl: bool,        // True if this is a trait implementation
+    pub trait_name: Option<String>, // Name of the trait if implemented
+    pub is_associated: bool,        // True if associated function (like new())
 }
 
 impl FunctionFeatures {
@@ -103,6 +111,9 @@ impl FunctionFeatures {
 
         // Get call depth
         let call_depth = func.depth;
+
+        // ⭐ NEW: Extract type context
+        let type_info = Self::extract_type_info(func);
 
         Self {
             param_count: func.params.len(),
@@ -148,12 +159,121 @@ impl FunctionFeatures {
             name_contains_fetch: name_lower.contains("fetch"),
             name_contains_verify: name_lower.contains("verify"),
             name_contains_audit: name_lower.contains("audit"),
+            // ⭐ NEW: Type context
+            type_name: type_info.type_name,
+            type_path: type_info.type_path,
+            is_method: type_info.is_method,
+            is_trait_impl: type_info.is_trait_impl,
+            trait_name: type_info.trait_name,
+            is_associated: type_info.is_associated,
         }
+    }
+
+    /// ⭐ NEW: Extract type information from function context
+    fn extract_type_info(func: &FunctionNode) -> TypeInfo {
+        let mut type_name = None;
+        let mut type_path = None;
+        let mut is_method = false;
+        let mut is_trait_impl = false;
+        let mut trait_name = None;
+        let mut is_associated = false;
+
+        // 1. Check if it's a trait implementation
+        if let Some(trait_impl_name) = &func.trait_impl {
+            is_trait_impl = true;
+            trait_name = Some(trait_impl_name.clone());
+        }
+
+        // 2. Check if it's a method (has self parameter)
+        if func
+            .params
+            .first()
+            .map(|p| p == "self" || p == "&self" || p == "&mut self")
+            .unwrap_or(false)
+        {
+            is_method = true;
+        }
+
+        // 3. Check if it's an associated function (like new())
+        if func.name == "new" || func.name == "default" || func.name == "from" {
+            is_associated = true;
+        }
+
+        // 4. Extract type from file path heuristics
+        let file = &func.file;
+        let name = &func.name;
+
+        // Look for common patterns
+        if let Some(type_name_from_file) = Self::parse_type_from_file(file, name) {
+            type_name = Some(type_name_from_file);
+            type_path = Some(format!("{}::{}", file, type_name.as_ref().unwrap()));
+        }
+
+        // If it's a trait impl, use the trait name as the type name
+        if type_name.is_none() && is_trait_impl {
+            type_name = trait_name.clone();
+            type_path = trait_name.clone().map(|t| format!("trait::{}", t));
+        }
+
+        TypeInfo {
+            type_name,
+            type_path,
+            is_method,
+            is_trait_impl,
+            trait_name,
+            is_associated,
+        }
+    }
+
+    /// Parse type name from file path heuristics
+    fn parse_type_from_file(file: &str, func_name: &str) -> Option<String> {
+        // Check if the file is alloc.rs
+        if file.ends_with("alloc.rs") {
+            if func_name == "reset" {
+                if file.contains("Allocator") {
+                    return Some("Allocator".to_string());
+                } else if file.contains("MemoryPool") {
+                    return Some("MemoryPool".to_string());
+                }
+            }
+            return None;
+        }
+
+        // Graph types
+        if file.contains("graph/")
+            && (func_name == "index" || func_name == "node_count" || func_name == "edge_count")
+        {
+            if file.contains("call_graph") {
+                return Some("CallGraph".to_string());
+            } else if file.contains("dependency_graph") {
+                return Some("DependencyGraph".to_string());
+            } else if file.contains("project_graph") {
+                return Some("ProjectGraph".to_string());
+            } else if file.contains("type_graph") {
+                return Some("TypeGraph".to_string());
+            }
+        }
+
+        // LLM providers
+        if file.contains("llm/providers/") {
+            if file.contains("ollama") {
+                return Some("OllamaProvider".to_string());
+            } else if file.contains("openai") {
+                return Some("OpenAIProvider".to_string());
+            } else if file.contains("anthropic") {
+                return Some("AnthropicProvider".to_string());
+            } else if file.contains("mock") {
+                return Some("MockProvider".to_string());
+            }
+        }
+
+        None
     }
 
     /// Convert features to a numeric vector for ML
     pub fn to_feature_vector(&self) -> Vec<f64> {
         vec![
+            // Original features
             self.param_count as f64 / 10.0,
             self.return_count as f64 / 5.0,
             if self.is_public { 1.0 } else { 0.0 },
@@ -191,8 +311,36 @@ impl FunctionFeatures {
             if self.name_contains_handle { 1.0 } else { 0.0 },
             if self.name_contains_process { 1.0 } else { 0.0 },
             if self.name_contains_convert { 1.0 } else { 0.0 },
+            // ⭐ NEW: Type context features
+            if self.is_method { 1.0 } else { 0.0 },
+            if self.is_trait_impl { 1.0 } else { 0.0 },
+            if self.is_associated { 1.0 } else { 0.0 },
+            self.type_name
+                .as_ref()
+                .map(|s| s.len() as f64 / 20.0)
+                .unwrap_or(0.0),
+            self.trait_name
+                .as_ref()
+                .map(|s| s.len() as f64 / 20.0)
+                .unwrap_or(0.0),
+            if self.type_name == self.trait_name {
+                1.0
+            } else {
+                0.0
+            },
         ]
     }
+}
+
+/// ⭐ NEW: Type information container
+#[derive(Debug, Clone)]
+struct TypeInfo {
+    type_name: Option<String>,
+    type_path: Option<String>,
+    is_method: bool,
+    is_trait_impl: bool,
+    trait_name: Option<String>,
+    is_associated: bool,
 }
 
 impl TrainingExample {
@@ -271,7 +419,7 @@ impl TrainingDataCollector {
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
 
-            // ⭐ NEW: Check if it's a test function FIRST
+            // Check if it's a test function
             let is_test_function = func.name.starts_with("test_")
                 || func.name.starts_with("Test")
                 || func.name.starts_with("bench_")
@@ -280,7 +428,6 @@ impl TrainingDataCollector {
                 || func.file.ends_with("_test.rs")
                 || func.file.ends_with("_test.go");
 
-            // ⭐ FIX: Test functions are ALIVE (run by test runners)
             let (label, confidence) = if is_test_function {
                 (TrainingLabel::Alive, 0.95)
             } else if is_whitelisted_fn(func) {
