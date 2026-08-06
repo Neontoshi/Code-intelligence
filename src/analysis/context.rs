@@ -1,5 +1,3 @@
-//! Unified project analysis context - single source of truth for all analysis data
-
 use crate::analysis::features::FeatureExtractor;
 use crate::engine::cache::FileCache;
 use crate::engine::indexer::RichIndexes;
@@ -7,9 +5,9 @@ use crate::engine::pipeline::LLMAnalysis;
 use crate::graph::call_graph::CallGraph;
 use crate::graph::call_graph::FunctionNode;
 use crate::graph::dependency_graph::DependencyGraph;
-use crate::graph::graph_traits::GraphMetrics;
 use crate::graph::import_graph::ImportGraph;
 use crate::graph::project_graph::ProjectGraph;
+use crate::graph::traits::GraphMetrics;
 use crate::graph::type_graph::TypeGraph;
 use crate::parser::tree_sitter::ParsedFile;
 use std::collections::HashMap;

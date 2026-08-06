@@ -3,7 +3,6 @@
 use crate::analysis::git_analysis::GitAnalysis;
 use crate::graph::call_graph::{CallGraph, FunctionNode};
 use crate::graph::dependency_graph::DependencyGraph;
-use crate::graph::graph_traits::GraphMetrics;
 use crate::graph::import_graph::ImportGraph;
 use crate::graph::type_graph::TypeGraph;
 use crate::parser::tree_sitter::ParsedFile;
@@ -13,6 +12,7 @@ use super::reachability::{ReachabilityAnalyzer, ReachabilityReport};
 use super::scorer::{ConfidenceLevel, ConfidenceScorer, DeadScore};
 use super::types::{DeadTypeReport, TypeDeadCodeDetector};
 use super::whitelist::WHITELIST;
+use crate::graph::traits::GraphMetrics;
 
 // ⭐ NEW: Import ML
 #[cfg(feature = "ml")]

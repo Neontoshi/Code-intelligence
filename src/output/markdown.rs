@@ -1,5 +1,5 @@
+use crate::graph::traits::GraphMetrics;
 use crate::graph::call_graph::CallGraph;
-use crate::graph::graph_traits::GraphMetrics;
 use crate::parser::tree_sitter::ParsedFile;
 
 pub struct MarkdownOutput;

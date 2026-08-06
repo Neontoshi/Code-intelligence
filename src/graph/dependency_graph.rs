@@ -1,3 +1,7 @@
+// src/graph/dependency_graph.rs
+
+use crate::define_graph;
+use crate::graph::traits::GraphMetrics;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use std::collections::{HashMap, HashSet};
@@ -26,20 +30,11 @@ pub enum DependencyType {
     Local,
 }
 
-#[derive(Debug)]
-pub struct DependencyGraph {
-    graph: DiGraph<DependencyNode, DependencyEdge>,
-    node_index: HashMap<String, NodeIndex>,
-}
+// ⭐ The macro creates the struct and new() function
+define_graph!(DependencyGraph, DependencyNode, DependencyEdge);
 
+// ⭐ All other methods go in a separate impl block
 impl DependencyGraph {
-    pub fn new() -> Self {
-        Self {
-            graph: DiGraph::new(),
-            node_index: HashMap::new(),
-        }
-    }
-
     pub fn add_node(&mut self, node: DependencyNode) -> NodeIndex {
         let key = node.name.clone();
         if let Some(&idx) = self.node_index.get(&key) {
@@ -182,5 +177,15 @@ impl std::ops::Index<NodeIndex> for DependencyGraph {
 
     fn index(&self, index: NodeIndex) -> &Self::Output {
         &self.graph[index]
+    }
+}
+
+impl GraphMetrics for DependencyGraph {
+    fn node_count(&self) -> usize {
+        self.graph.node_count()
+    }
+
+    fn edge_count(&self) -> usize {
+        self.graph.edge_count()
     }
 }

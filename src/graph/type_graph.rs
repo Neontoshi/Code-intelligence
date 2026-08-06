@@ -1,5 +1,7 @@
 // src/graph/type_graph.rs
 
+use crate::define_graph;
+use crate::graph::traits::GraphMetrics;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use std::collections::{HashMap, HashSet};
@@ -8,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 pub struct TypeNode {
     pub name: String,
     pub file: String,
-    pub line: usize, // ← ADDED
+    pub line: usize,
     pub kind: TypeKind,
     pub fields: Vec<Field>,
     pub methods: Vec<String>,
@@ -25,7 +27,7 @@ pub enum TypeKind {
     Class,
     TypeAlias,
     Union,
-    Impl, // ← ADDED
+    Impl,
 }
 
 #[derive(Debug, Clone)]
@@ -50,20 +52,11 @@ pub enum TypeRelationship {
     References,
 }
 
-#[derive(Debug)]
-pub struct TypeGraph {
-    graph: DiGraph<TypeNode, TypeEdge>,
-    node_index: HashMap<String, NodeIndex>,
-}
+// ⭐ The macro creates the struct and new() function
+define_graph!(TypeGraph, TypeNode, TypeEdge);
 
+// ⭐ All other methods go in a separate impl block
 impl TypeGraph {
-    pub fn new() -> Self {
-        Self {
-            graph: DiGraph::new(),
-            node_index: HashMap::new(),
-        }
-    }
-
     pub fn add_type(&mut self, type_node: TypeNode) -> NodeIndex {
         let key = type_node.name.clone();
         if let Some(&idx) = self.node_index.get(&key) {
@@ -178,14 +171,6 @@ impl TypeGraph {
             tree.push(&self.graph[child]);
             self.collect_subtypes(child, tree);
         }
-    }
-
-    pub fn node_count(&self) -> usize {
-        self.graph.node_count()
-    }
-
-    pub fn edge_count(&self) -> usize {
-        self.graph.edge_count()
     }
 
     // ================================================================
@@ -338,5 +323,15 @@ impl TypeGraph {
     /// Get the number of types
     pub fn type_count(&self) -> usize {
         self.node_index.len()
+    }
+}
+
+impl GraphMetrics for TypeGraph {
+    fn node_count(&self) -> usize {
+        self.graph.node_count()
+    }
+
+    fn edge_count(&self) -> usize {
+        self.graph.edge_count()
     }
 }

@@ -1,8 +1,9 @@
+use crate::graph::traits::GraphMetrics;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::HashSet; // ✅ Should already be there // ✅ Use this path
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FunctionNode {
@@ -414,7 +415,7 @@ impl std::ops::IndexMut<NodeIndex> for CallGraph {
     }
 }
 
-impl super::graph_traits::GraphMetrics for CallGraph {
+impl GraphMetrics for CallGraph {
     fn node_count(&self) -> usize {
         self.graph.node_count()
     }

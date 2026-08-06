@@ -229,14 +229,6 @@ impl LLMProvider for MockProvider {
         Ok(Box::new(stream))
     }
 
-    fn model_name(&self) -> &str {
-        "mock"
-    }
-
-    fn max_context_length(&self) -> usize {
-        4096
-    }
-
     async fn is_available(&self) -> bool {
         !self.should_fail
     }

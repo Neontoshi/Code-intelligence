@@ -1,13 +1,7 @@
 // src/llm/code_understanding.rs
 
-//! LLM-Powered Code Understanding
-//!
-//! This module provides high-level code analysis capabilities using LLMs,
-//! including function summarization, code explanation, duplicate detection,
-//! and documentation generation.
-
 use crate::graph::call_graph::{CallGraph, FunctionNode};
-use crate::graph::graph_traits::GraphMetrics;
+use crate::graph::traits::GraphMetrics;
 use crate::llm::extract_json_from_response;
 use crate::llm::{GenerationOptions, LLMMessage, LLMProvider};
 use crate::parser::tree_sitter::ParsedFile;

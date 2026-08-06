@@ -32,12 +32,4 @@ impl LLMProvider for AnthropicProvider {
     ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send>, String> {
         Err("Anthropic provider not fully implemented".to_string())
     }
-
-    fn model_name(&self) -> &str {
-        "claude-3-haiku"
-    }
-
-    fn max_context_length(&self) -> usize {
-        4096
-    }
 }

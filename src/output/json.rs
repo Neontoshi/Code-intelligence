@@ -1,6 +1,6 @@
+use crate::graph::traits::GraphMetrics;
 use crate::analysis::dead_code::DeadCodeDetector;
 use crate::graph::call_graph::CallGraph;
-use crate::graph::graph_traits::GraphMetrics;
 use crate::parser::tree_sitter::ParsedFile;
 use serde_json::{json, Value};
 

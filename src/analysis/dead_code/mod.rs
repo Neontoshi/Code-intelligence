@@ -20,7 +20,7 @@ pub use types::{DeadType, DeadTypeReport};
 pub use whitelist::WHITELIST; // ⭐ NEW - Export the whitelist
 
 use crate::graph::call_graph::CallGraph;
-use crate::graph::graph_traits::GraphMetrics;
+use crate::graph::traits::GraphMetrics;
 use crate::parser::tree_sitter::ParsedFile;
 
 pub struct DeadCodeDetector;

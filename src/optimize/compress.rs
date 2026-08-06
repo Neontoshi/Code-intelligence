@@ -1,5 +1,5 @@
+use crate::graph::traits::GraphMetrics;
 use crate::graph::call_graph::{CallGraph, FunctionNode};
-use crate::graph::graph_traits::GraphMetrics;
 use crate::optimize::symbols::SymbolTable;
 use crate::parser::tree_sitter::ParsedFile;
 use regex::Regex;

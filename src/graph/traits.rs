@@ -1,9 +1,4 @@
 // src/graph/traits.rs
-
-//! Shared traits for graph implementations
-
-use petgraph::graph::NodeIndex;
-
 /// Common metrics for all graph types
 pub trait GraphMetrics {
     /// Get the number of nodes in the graph

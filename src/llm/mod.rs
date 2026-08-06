@@ -148,10 +148,17 @@ pub trait LLMProvider: Send + Sync {
         String,
     >;
 
-    fn model_name(&self) -> &str;
-    fn max_context_length(&self) -> usize;
+    // ⭐ Add default implementations here
+    fn model_name(&self) -> &str {
+        "default" // Default implementation
+    }
+
+    fn max_context_length(&self) -> usize {
+        4096 // Default implementation (4K context)
+    }
+
     async fn is_available(&self) -> bool {
-        true
+        true // Default implementation
     }
 }
 

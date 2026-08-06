@@ -7,15 +7,14 @@ use crate::engine::cache::{AnalysisCacheManager, FileCache};
 use crate::engine::indexer::IndexBuilder;
 use crate::graph::call_graph::{CallEdge, CallGraph, FunctionNode};
 use crate::graph::project_graph::ProjectGraphBuilder;
+use crate::graph::traits::GraphMetrics;
 use crate::llm::{create_ollama_phi2, CodeUnderstandingEngine, LLMProvider};
 use crate::optimize::{SemanticCompressor, TokenEstimator};
 use crate::parser::tree_sitter::{ParsedFile, TreeSitterParser};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
-use crate::graph::graph_traits::GraphMetrics;
+use std::sync::Arc; // ⭐ ADD THIS
 
 // ============================================================================
 // Pipeline Configuration

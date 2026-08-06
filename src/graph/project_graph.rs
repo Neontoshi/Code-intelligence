@@ -3,11 +3,12 @@
 use crate::graph::call_graph::{CallEdge, FunctionNode};
 use crate::graph::dependency_graph::{DependencyEdge, DependencyNode};
 use crate::graph::import_graph::{ImportEdge, ImportNode};
+use crate::graph::traits::GraphMetrics;
 use crate::graph::type_graph::{TypeEdge, TypeNode};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::PathBuf; // ⭐ ADD THIS
 
 // ============================================================================
 // Unified Node Types
@@ -431,14 +432,6 @@ impl ProjectGraph {
     // Analysis Operations
     // ========================================================================
 
-    pub fn node_count(&self) -> usize {
-        self.graph.node_count()
-    }
-
-    pub fn edge_count(&self) -> usize {
-        self.graph.edge_count()
-    }
-
     pub fn node_indices(&self) -> impl Iterator<Item = NodeIndex> + '_ {
         self.graph.node_indices()
     }
@@ -626,5 +619,15 @@ impl ProjectGraphBuilder {
 impl Default for ProjectGraph {
     fn default() -> Self {
         Self::new()
+    }
+}
+// ⭐ ADD THIS
+impl GraphMetrics for ProjectGraph {
+    fn node_count(&self) -> usize {
+        self.graph.node_count()
+    }
+
+    fn edge_count(&self) -> usize {
+        self.graph.edge_count()
     }
 }

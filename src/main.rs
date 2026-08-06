@@ -1,7 +1,7 @@
 // src/main.rs
 
 use clap::Parser;
-use code_intelligence::graph::graph_traits::GraphMetrics;
+use code_intelligence::graph::traits::GraphMetrics;
 use code_intelligence::{
     engine::pipeline::Pipeline,
     llm::{create_provider_from_string, ProviderConfig, ProviderType},
