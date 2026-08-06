@@ -1138,25 +1138,6 @@ impl Pipeline {
             .unwrap_or(no_generics)
             .to_string()
     }
-
-    #[allow(dead_code)]
-    fn hash_project(files: &[PathBuf]) -> String {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        for file in files {
-            if let Some(name) = file.to_str() {
-                hasher.update(name.as_bytes());
-            }
-            if let Ok(meta) = std::fs::metadata(file) {
-                if let Ok(modified) = meta.modified() {
-                    if let Ok(duration) = modified.elapsed() {
-                        hasher.update(duration.as_secs().to_string().as_bytes());
-                    }
-                }
-            }
-        }
-        format!("{:x}", hasher.finalize())
-    }
 }
 
 // ============================================================================

@@ -12,6 +12,7 @@ use super::modules::{DeadModuleReport, ModuleDeadCodeDetector};
 use super::reachability::{ReachabilityAnalyzer, ReachabilityReport};
 use super::scorer::{ConfidenceLevel, ConfidenceScorer, DeadScore};
 use super::types::{DeadTypeReport, TypeDeadCodeDetector};
+use super::whitelist::WHITELIST;
 
 use std::collections::HashMap;
 
@@ -75,8 +76,166 @@ impl DeadCodeAnalyzer {
         }
     }
 
+    /// Check if a function is a Go test or benchmark function
+    fn is_go_test_function(func: &FunctionNode) -> bool {
+        // Go test functions start with Test, Benchmark, Example
+        if func.name.starts_with("Test")
+            || func.name.starts_with("Benchmark")
+            || func.name.starts_with("Example")
+        {
+            return true;
+        }
+
+        // Go test files end with _test.go
+        if func.file.ends_with("_test.go") {
+            return true;
+        }
+
+        false
+    }
+
+    /// Check if a function is a Go interface method
+    fn is_go_interface_method(func: &FunctionNode) -> bool {
+        // Common interface method names in Go
+        let interface_methods = [
+            // Standard library interfaces
+            "String",
+            "Error",
+            "Format",
+            "GoString",
+            "MarshalJSON",
+            "UnmarshalJSON",
+            "MarshalText",
+            "UnmarshalText",
+            "MarshalBinary",
+            "UnmarshalBinary",
+            "Write",
+            "Read",
+            "Close",
+            "Len",
+            "Less",
+            "Swap",
+            "Cap",
+            "Index",
+            "Slice",
+            "Add",
+            "Sub",
+            "Mul",
+            "Div",
+            "Rem",
+            "And",
+            "Or",
+            "Xor",
+            "Shl",
+            "Shr",
+            "Neg",
+            "Not",
+            "Equal",
+            "Cmp",
+            "IsZero",
+            "IsNegative",
+            "IsPositive",
+            "Set",
+            "SetString",
+            "SetInt",
+            "SetUint",
+            // jsoniter specific
+            "ValueType",
+            "MustBeValid",
+            "LastError",
+            "ToBool",
+            "ToInt",
+            "ToInt32",
+            "ToInt64",
+            "ToUint",
+            "ToUint32",
+            "ToUint64",
+            "ToFloat32",
+            "ToFloat64",
+            "ToString",
+            "WriteTo",
+            "GetInterface",
+            "Parse",
+            "Get",
+            "Size",
+            "Keys",
+            "ToVal",
+            "ReadArray",
+            "ReadArrayCB",
+            "ReadObject",
+            "ReadObjectCB",
+            "ReadMapCB",
+        ];
+
+        // Check if the function name matches an interface method
+        if interface_methods.contains(&func.name.as_str()) {
+            return true;
+        }
+
+        // Check if the file is in a providers/ or mock/ directory (often contains interface implementations)
+        if func.file.contains("providers/") || func.file.contains("mock/") {
+            return true;
+        }
+
+        false
+    }
+
+    /// Check if a function is a Go exported function (starts with uppercase)
+    fn is_go_exported_function(func: &FunctionNode) -> bool {
+        // In Go, exported functions start with an uppercase letter
+        if let Some(first_char) = func.name.chars().next() {
+            if first_char.is_uppercase() && func.file.ends_with(".go") {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if a function is in a Go test or example directory
+    fn is_go_test_file(func: &FunctionNode) -> bool {
+        func.file.contains("/example_test.go")
+            || func.file.contains("/benchmarks/")
+            || func.file.contains("/misc_tests/")
+            || func.file.contains("/api_tests/")
+            || func.file.contains("/value_tests/")
+            || func.file.contains("/type_tests/")
+            || func.file.contains("/skip_tests/")
+            || func.file.contains("/any_tests/")
+            || func.file.contains("/extension_tests/")
+    }
+
     /// Check if a function should be excluded from dead code analysis
     fn is_excluded_function(func: &FunctionNode) -> bool {
+        // ⭐ GO-SPECIFIC CHECKS
+
+        // Skip Go test functions (TestXxx, BenchmarkXxx, ExampleXxx)
+        if Self::is_go_test_function(func) {
+            return true;
+        }
+
+        // Skip Go test files
+        if Self::is_go_test_file(func) {
+            return true;
+        }
+
+        // Skip Go interface methods
+        if Self::is_go_interface_method(func) {
+            return true;
+        }
+
+        // Skip Go exported functions (public API)
+        if Self::is_go_exported_function(func) {
+            return true;
+        }
+
+        // Check whitelist first
+        if WHITELIST.is_whitelisted(&func.name) {
+            return true;
+        }
+        if WHITELIST.is_whitelisted_path(&func.file) {
+            return true;
+        }
+
         // Skip trait implementations (they're required by traits)
         if func.trait_impl.is_some() {
             return true;
@@ -123,6 +282,11 @@ impl DeadCodeAnalyzer {
 
         // Skip functions that are part of a trait implementation
         if func.file.contains("providers/") && trait_methods.contains(&func.name.as_str()) {
+            return true;
+        }
+
+        // Skip auto-generated files
+        if func.file.contains("_string.go") || func.file.contains(".pb.go") {
             return true;
         }
 

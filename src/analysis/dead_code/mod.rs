@@ -6,6 +6,7 @@ mod reachability;
 mod report;
 mod scorer;
 mod types;
+mod whitelist; // ⭐ NEW - Add this line
 
 // Re-export from analyzer only (it has the most complete definitions)
 pub use analyzer::{
@@ -16,6 +17,7 @@ pub use reachability::ReachabilityReport;
 pub use report::DeadCodeReportGenerator;
 pub use scorer::{ConfidenceLevel, ConfidenceScorer, DeadScore, ScoreFactor, ScoreWeights};
 pub use types::{DeadType, DeadTypeReport};
+pub use whitelist::WHITELIST; // ⭐ NEW - Export the whitelist
 
 use crate::graph::call_graph::CallGraph;
 use crate::graph::graph_traits::GraphMetrics;
@@ -48,7 +50,7 @@ impl DeadCodeDetector {
         files: &[ParsedFile],
         git_analysis: Option<&crate::analysis::git_analysis::GitAnalysis>,
     ) -> DeadCodeAnalysis {
-        let mut analyzer = DeadCodeAnalyzer::new(); // <-- Add `mut` here
+        let mut analyzer = DeadCodeAnalyzer::new();
         analyzer.analyze(
             call_graph,
             type_graph,

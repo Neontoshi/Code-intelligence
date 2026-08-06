@@ -306,6 +306,7 @@ mod tests {
     use super::*;
     use crate::graph::call_graph::FunctionNode;
 
+    // ⭐ Move create_test_function inside the test module
     fn create_test_function(name: &str, params: usize, returns: usize) -> FunctionNode {
         FunctionNode {
             name: name.to_string(),
