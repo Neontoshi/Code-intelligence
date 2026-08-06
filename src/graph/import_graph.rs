@@ -22,7 +22,6 @@ pub struct ImportGraph {
     nodes: HashMap<String, ImportNode>,
     edges: Vec<ImportEdge>,
     adjacency: HashMap<String, Vec<String>>,
-    // ⭐ NEW: Track exports
     exports: HashMap<String, Vec<String>>,
 }
 
@@ -47,7 +46,6 @@ impl ImportGraph {
             self.nodes.insert(node_name, node);
         }
 
-        // Build import relationships
         for file in files {
             for import in &file.imports {
                 let target = import.module.clone();
@@ -58,7 +56,6 @@ impl ImportGraph {
                         import_info: import.clone(),
                     });
 
-                    // Update adjacency
                     self.adjacency
                         .entry(file.path.clone())
                         .or_insert_with(Vec::new)
@@ -66,7 +63,6 @@ impl ImportGraph {
                 }
             }
 
-            // ⭐ NEW: Build exports index
             for func in &file.functions {
                 if func.is_public {
                     self.exports
@@ -92,7 +88,6 @@ impl ImportGraph {
             .collect()
     }
 
-    // ⭐ NEW: Check if a function is exported from its file
     pub fn is_exported(&self, file: &str, func_name: &str) -> bool {
         self.exports
             .get(file)
@@ -100,9 +95,17 @@ impl ImportGraph {
             .unwrap_or(false)
     }
 
-    // ⭐ NEW: Get all exports from a file
     pub fn get_exports(&self, file: &str) -> Vec<String> {
         self.exports.get(file).cloned().unwrap_or_default()
+    }
+
+    // ⭐ NEW: Get all functions imported from a specific module
+    pub fn get_imported_functions(&self, module: &str) -> Vec<String> {
+        let mut functions = Vec::new();
+        if let Some(exports) = self.exports.get(module) {
+            functions.extend(exports.clone());
+        }
+        functions
     }
 
     pub fn find_circular_imports(&self) -> Vec<Vec<String>> {
@@ -156,7 +159,7 @@ impl ImportGraph {
 
         while let Some((current, d)) = queue.pop() {
             if d > 10 {
-                continue; // Avoid infinite recursion
+                continue;
             }
 
             if let Some(neighbors) = self.adjacency.get(&current) {
@@ -179,5 +182,111 @@ impl ImportGraph {
 
     pub fn edge_count(&self) -> usize {
         self.edges.len()
+    }
+
+    pub fn iter_nodes(&self) -> impl Iterator<Item = &ImportNode> {
+        self.nodes.values()
+    }
+
+    pub fn iter_edges(&self) -> impl Iterator<Item = &ImportEdge> {
+        self.edges.iter()
+    }
+
+    pub fn get_importing_files(&self, module: &str) -> Vec<&str> {
+        self.edges
+            .iter()
+            .filter(|e| e.target_file == module)
+            .map(|e| e.source_file.as_str())
+            .collect()
+    }
+
+    pub fn get_imported_modules(&self, file: &str) -> Vec<&str> {
+        self.edges
+            .iter()
+            .filter(|e| e.source_file == file)
+            .map(|e| e.target_file.as_str())
+            .collect()
+    }
+
+    pub fn is_imported(&self, module: &str) -> bool {
+        self.edges.iter().any(|e| e.target_file == module)
+    }
+
+    pub fn find_unimported_files(&self) -> Vec<String> {
+        self.nodes
+            .keys()
+            .filter(|&file| !self.is_imported(file))
+            .cloned()
+            .collect()
+    }
+
+    pub fn import_count(&self, file: &str) -> usize {
+        self.edges.iter().filter(|e| e.target_file == file).count()
+    }
+
+    pub fn find_unused_imports(&self) -> Vec<ImportEdge> {
+        self.edges
+            .iter()
+            .filter(|e| {
+                let source_file = &e.source_file;
+                let imported_funcs = self.get_imported_functions(&e.target_file);
+
+                let mut any_used = false;
+                for func in &imported_funcs {
+                    if self.is_function_used_in_file(func, source_file) {
+                        any_used = true;
+                        break;
+                    }
+                }
+
+                !any_used
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub fn is_function_used(&self, func_name: &str) -> bool {
+        for edge in &self.edges {
+            if edge.import_info.items.contains(&func_name.to_string()) {
+                return true;
+            }
+        }
+        false
+    }
+
+    // ⭐ NEW: Check if a function is used in a specific file
+    pub fn is_function_used_in_file(&self, func_name: &str, file: &str) -> bool {
+        for edge in &self.edges {
+            if edge.source_file == file {
+                if edge.import_info.items.contains(&func_name.to_string()) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    pub fn get_module_depth(&self, module: &str) -> usize {
+        use std::collections::HashSet;
+
+        let mut depth = 0;
+        let mut current = module;
+        let mut visited = HashSet::new();
+
+        while let Some(importers) = self.adjacency.get(current) {
+            if visited.contains(current) {
+                break;
+            }
+            visited.insert(current);
+
+            if let Some(importer) = importers.iter().find(|&i| i != current) {
+                current = importer;
+                depth += 1;
+            } else {
+                break;
+            }
+        }
+
+        depth
     }
 }

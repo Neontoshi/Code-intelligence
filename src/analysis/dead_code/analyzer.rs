@@ -75,9 +75,61 @@ impl DeadCodeAnalyzer {
         }
     }
 
+    /// Check if a function should be excluded from dead code analysis
+    fn is_excluded_function(func: &FunctionNode) -> bool {
+        // Skip trait implementations (they're required by traits)
+        if func.trait_impl.is_some() {
+            return true;
+        }
+
+        // Skip benchmark functions
+        if func.file.contains("benches/") {
+            return true;
+        }
+
+        // Skip test functions
+        if func.name.starts_with("test_") || func.name.starts_with("bench_") {
+            return true;
+        }
+
+        // Skip main entry points
+        if func.name == "main"
+            && (func.file.contains("src/bin/") || func.file.contains("src/main.rs"))
+        {
+            return true;
+        }
+
+        // Skip default implementations
+        if func.name == "default" {
+            return true;
+        }
+
+        // Skip trait method implementations
+        let trait_methods = [
+            "generate",
+            "generate_stream",
+            "model_name",
+            "max_context_length",
+            "is_available",
+        ];
+        if trait_methods.contains(&func.name.as_str()) && func.trait_impl.is_some() {
+            return true;
+        }
+
+        // Skip functions in test modules
+        if func.file.contains("/tests/") || func.file.ends_with("_test.rs") {
+            return true;
+        }
+
+        // Skip functions that are part of a trait implementation
+        if func.file.contains("providers/") && trait_methods.contains(&func.name.as_str()) {
+            return true;
+        }
+
+        false
+    }
+
     /// Check if a function is likely React code that should be skipped
-    /// Note: We don't have access to the function body text here, so we use
-    /// naming conventions and file extensions as proxies
     fn is_likely_react_code(func: &FunctionNode) -> bool {
         // Check if it's a React component file
         let is_tsx = func.file.ends_with(".tsx") || func.file.ends_with(".jsx");
@@ -92,7 +144,7 @@ impl DeadCodeAnalyzer {
             .unwrap_or(false);
 
         // Check if it's a React hook (useState, useEffect, etc.)
-        let is_hook = func.name.starts_with("use") && !func.name.starts_with("useSolanaGiveaway"); // Keep this hook!
+        let is_hook = func.name.starts_with("use") && !func.name.starts_with("useSolanaGiveaway");
 
         // Check if it's a state setter
         let is_setter = func.name.starts_with("set")
@@ -222,6 +274,11 @@ impl DeadCodeAnalyzer {
 
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
+
+            // Skip excluded functions (trait methods, benchmarks, tests, etc.)
+            if Self::is_excluded_function(func) {
+                continue;
+            }
 
             // Skip React components and hooks
             if Self::is_likely_react_code(func) {
