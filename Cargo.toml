@@ -1,0 +1,86 @@
+[package]
+name = "code-intelligence"
+version = "0.1.0"
+edition = "2021"
+default-run = "code-intelligence"
+description = "Semantic Code Intelligence Engine for AI"
+authors = ["Your Name"]
+license = "MIT"
+
+[dependencies]
+# Core
+clap = { version = "4.4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+thiserror = "1"
+lazy_static = "1.4"
+hex = "0.4"
+
+
+# Parsing
+tree-sitter = "0.22"
+tree-sitter-rust = "0.21"
+tree-sitter-python = "0.21"
+tree-sitter-javascript = "0.21"
+tree-sitter-typescript = "0.21"
+tree-sitter-go = "0.21"
+tree-sitter-java = "0.21"
+
+# Graph
+petgraph = { version = "0.6", features = ["serde-1"] }
+
+# Parallel
+rayon = "1.8"
+dashmap = "5"
+
+# Compression
+flate2 = "1"
+base64 = "0.21"
+
+# Hashing
+blake3 = "1"
+sha2 = "0.10"
+
+# Allocation
+bumpalo = "3"
+
+# Regex
+regex = "1"
+aho-corasick = "1"
+
+# File walking
+walkdir = "2"
+ignore = "0.4"
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Error handling
+anyhow = "1"
+async-trait = "0.1.91"
+futures = "0.3.33"
+tokio = { version = "1", features = ["rt", "time", "macros", "rt-multi-thread"] }
+reqwest = { version = "0.13.4", features = ["json", "stream"] }
+
+# Terminal UI
+ratatui = "0.26"
+crossterm = "0.27"
+
+[dev-dependencies]
+criterion = "0.5"
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[[bench]]
+name = "compression"
+harness = false
+path = "benches/compression.rs"
