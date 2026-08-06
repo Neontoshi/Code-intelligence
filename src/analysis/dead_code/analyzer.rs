@@ -3,7 +3,7 @@
 use crate::analysis::git_analysis::GitAnalysis;
 use crate::graph::call_graph::{CallGraph, FunctionNode};
 use crate::graph::dependency_graph::DependencyGraph;
-use crate::graph::graph_traits::GraphMetrics; // Also add this for node_count()
+use crate::graph::graph_traits::GraphMetrics;
 use crate::graph::import_graph::ImportGraph;
 use crate::graph::type_graph::TypeGraph;
 use crate::parser::tree_sitter::ParsedFile;
@@ -63,6 +63,92 @@ impl DeadCodeAnalyzer {
         }
     }
 
+    /// Check if a function is likely React code that should be skipped
+    fn is_likely_react_code(func: &FunctionNode) -> bool {
+        // Check if it's a React component file
+        let is_tsx = func.file.ends_with(".tsx") || func.file.ends_with(".jsx");
+        let is_jsx = func.file.ends_with(".jsx");
+
+        // Check if the name starts with uppercase (React component convention)
+        let is_component = func
+            .name
+            .chars()
+            .next()
+            .map(|c| c.is_uppercase())
+            .unwrap_or(false);
+
+        // Check if it's a React hook (useState, useEffect, etc.)
+        let is_hook = func.name.starts_with("use") && !func.name.starts_with("useSolanaGiveaway"); // Keep this hook!
+
+        // Check if it's a state setter
+        let is_setter = func.name.starts_with("set")
+            && func
+                .name
+                .chars()
+                .nth(3)
+                .map(|c| c.is_uppercase())
+                .unwrap_or(false);
+
+        // Check if it's a React component file
+        let is_react_file = func.file.contains("components/")
+            || func.file.contains("pages/")
+            || func.file.contains("providers/");
+
+        // Skip state hooks (useState, setState, etc.)
+        let is_state_hook = func.name.contains("useState")
+            || func.name.contains("useEffect")
+            || func.name.contains("useRef")
+            || func.name.contains("useCallback")
+            || func.name.contains("useMemo")
+            || func.name.contains("useContext")
+            || func.name.contains("useReducer");
+
+        (is_tsx || is_jsx) && (is_component || is_hook || is_setter || is_react_file)
+            || is_state_hook
+    }
+
+    /// ⭐ NEW: Check if a function is a React Router hook result
+    fn is_react_router_hook(func: &FunctionNode) -> bool {
+        // React Router hooks
+        let router_hooks = [
+            "useLocation",
+            "useNavigate",
+            "useParams",
+            "useSearchParams",
+            "useRouteMatch",
+            "useRoutes",
+            "useOutletContext",
+            "useOutlet",
+            "useResolvedPath",
+            "useHref",
+            "useInRouterContext",
+            "useNavigationType",
+            "useSubmit",
+            "useFetcher",
+            "useFetchers",
+            "useRevalidator",
+            "useNavigation",
+        ];
+
+        // Check if it's a variable that holds a router hook result
+        let is_router_var = router_hooks.contains(&func.name.as_str());
+
+        // Check if it's a destructured variable from a router hook
+        let is_destructured = func.name == "location"
+            || func.name == "navigate"
+            || func.name == "params"
+            || func.name == "searchParams"
+            || func.name == "match"
+            || func.name == "routes";
+
+        // Check if the file imports react-router-dom
+        let is_router_file = func.file.contains("App.tsx")
+            || func.file.contains("Router")
+            || func.file.contains("routes");
+
+        is_router_var || (is_destructured && is_router_file)
+    }
+
     pub fn analyze(
         &self,
         call_graph: &CallGraph,
@@ -81,6 +167,16 @@ impl DeadCodeAnalyzer {
 
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
+
+            // Skip React components and hooks
+            if Self::is_likely_react_code(func) {
+                continue;
+            }
+
+            // ⭐ NEW: Skip React Router hooks
+            if Self::is_react_router_hook(func) {
+                continue;
+            }
 
             // Skip functions with callers
             if func.fan_in > 0 {

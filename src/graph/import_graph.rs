@@ -1,3 +1,5 @@
+// src/graph/import_graph.rs
+
 use crate::parser::tree_sitter::{ImportInfo, ParsedFile};
 use std::collections::{HashMap, HashSet};
 
@@ -20,6 +22,8 @@ pub struct ImportGraph {
     nodes: HashMap<String, ImportNode>,
     edges: Vec<ImportEdge>,
     adjacency: HashMap<String, Vec<String>>,
+    // ⭐ NEW: Track exports
+    exports: HashMap<String, Vec<String>>,
 }
 
 impl ImportGraph {
@@ -28,6 +32,7 @@ impl ImportGraph {
             nodes: HashMap::new(),
             edges: Vec::new(),
             adjacency: HashMap::new(),
+            exports: HashMap::new(),
         }
     }
 
@@ -60,6 +65,16 @@ impl ImportGraph {
                         .push(target);
                 }
             }
+
+            // ⭐ NEW: Build exports index
+            for func in &file.functions {
+                if func.is_public {
+                    self.exports
+                        .entry(file.path.clone())
+                        .or_default()
+                        .push(func.name.clone());
+                }
+            }
         }
     }
 
@@ -75,6 +90,19 @@ impl ImportGraph {
             .iter()
             .filter(|e| e.target_file == file)
             .collect()
+    }
+
+    // ⭐ NEW: Check if a function is exported from its file
+    pub fn is_exported(&self, file: &str, func_name: &str) -> bool {
+        self.exports
+            .get(file)
+            .map(|funcs| funcs.contains(&func_name.to_string()))
+            .unwrap_or(false)
+    }
+
+    // ⭐ NEW: Get all exports from a file
+    pub fn get_exports(&self, file: &str) -> Vec<String> {
+        self.exports.get(file).cloned().unwrap_or_default()
     }
 
     pub fn find_circular_imports(&self) -> Vec<Vec<String>> {

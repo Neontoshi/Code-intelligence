@@ -72,6 +72,39 @@ impl ConfidenceScorer {
         }
     }
 
+    /// Check if a function is a React component
+    fn is_react_component(func: &FunctionNode) -> bool {
+        let is_tsx = func.file.ends_with(".tsx") || func.file.ends_with(".jsx");
+        let is_component = func
+            .name
+            .chars()
+            .next()
+            .map(|c| c.is_uppercase())
+            .unwrap_or(false);
+        is_tsx && is_component
+    }
+
+    /// Check if a function is a React hook
+    fn is_react_hook(func: &FunctionNode) -> bool {
+        func.name.starts_with("use") && !func.name.starts_with("useSolanaGiveaway")
+    }
+
+    /// Check if a function is a React state setter
+    fn is_state_setter(func: &FunctionNode) -> bool {
+        func.name.starts_with("set")
+            && func
+                .name
+                .chars()
+                .nth(3)
+                .map(|c| c.is_uppercase())
+                .unwrap_or(false)
+    }
+
+    /// Check if a function is exported
+    fn is_exported(func: &FunctionNode) -> bool {
+        func.file.contains("mod.rs") || func.file.contains("lib.rs")
+    }
+
     pub fn score_function(&self, func: &FunctionNode, git_info: Option<&GitInfo>) -> DeadScore {
         let mut score = 0.0;
         let mut factors = Vec::new();
@@ -87,7 +120,7 @@ impl ConfidenceScorer {
             });
         }
 
-        // 2. Private (-20)
+        // 2. Private (+20)
         if !func.is_public {
             score += self.weights.is_private;
             factors.push(ScoreFactor {
@@ -98,7 +131,7 @@ impl ConfidenceScorer {
             });
         }
 
-        // 3. No documentation (-10)
+        // 3. No documentation (+10)
         if func.doc_comment.is_none() {
             score += self.weights.no_docs;
             factors.push(ScoreFactor {
@@ -109,7 +142,7 @@ impl ConfidenceScorer {
             });
         }
 
-        // 4. No tests (-15)
+        // 4. No tests (+15)
         if !func.name.starts_with("test_") && !func.name.starts_with("bench_") {
             score += self.weights.no_tests;
             factors.push(ScoreFactor {
@@ -120,7 +153,7 @@ impl ConfidenceScorer {
             });
         }
 
-        // 5. No exports (-20)
+        // 5. No exports (+20)
         if !func.is_public && !func.file.contains("lib.rs") && !func.file.contains("mod.rs") {
             score += self.weights.no_exports;
             factors.push(ScoreFactor {
@@ -131,7 +164,7 @@ impl ConfidenceScorer {
             });
         }
 
-        // 6. Trait implementation penalty (+30)
+        // 6. Trait implementation penalty (-30)
         if Self::is_trait_method(func) {
             score += self.weights.trait_impl;
             factors.push(ScoreFactor {
@@ -142,7 +175,7 @@ impl ConfidenceScorer {
             });
         }
 
-        // 7. Macro generated penalty (+40)
+        // 7. Macro generated penalty (-40)
         if func.doc_comment.is_some() && func.doc_comment.as_ref().unwrap().contains("macro") {
             score += self.weights.macro_generated;
             factors.push(ScoreFactor {
@@ -153,7 +186,7 @@ impl ConfidenceScorer {
             });
         }
 
-        // 8. Public API penalty (+20)
+        // 8. Public API penalty (-20)
         if func.is_public && !func.file.contains("src/bin/") {
             score += self.weights.public_api;
             factors.push(ScoreFactor {
@@ -186,6 +219,50 @@ impl ConfidenceScorer {
                 weight: self.weights.complexity,
                 contribution: self.weights.complexity,
                 explanation: format!("Complex function (complexity: {:.2})", func.complexity),
+            });
+        }
+
+        // ⭐ NEW: React components are less likely dead (-30)
+        if Self::is_react_component(func) {
+            score -= 30.0;
+            factors.push(ScoreFactor {
+                name: "react_component".to_string(),
+                weight: 30.0,
+                contribution: -30.0,
+                explanation: "React component - likely used in JSX".to_string(),
+            });
+        }
+
+        // ⭐ NEW: React hooks are less likely dead (-25)
+        if Self::is_react_hook(func) {
+            score -= 25.0;
+            factors.push(ScoreFactor {
+                name: "react_hook".to_string(),
+                weight: 25.0,
+                contribution: -25.0,
+                explanation: "React hook - likely used in components".to_string(),
+            });
+        }
+
+        // ⭐ NEW: State setters are less likely dead (-20)
+        if Self::is_state_setter(func) {
+            score -= 20.0;
+            factors.push(ScoreFactor {
+                name: "state_setter".to_string(),
+                weight: 20.0,
+                contribution: -20.0,
+                explanation: "React state setter - used in component state".to_string(),
+            });
+        }
+
+        // ⭐ NEW: Exported functions are less likely dead (-15)
+        if Self::is_exported(func) {
+            score -= 15.0;
+            factors.push(ScoreFactor {
+                name: "exported".to_string(),
+                weight: 15.0,
+                contribution: -15.0,
+                explanation: "Function is exported - may be used externally".to_string(),
             });
         }
 

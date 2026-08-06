@@ -439,10 +439,45 @@ impl TreeSitterParser {
         params
     }
 
+    // Add this function after extract_calls()
+
     fn extract_calls(node: &Node, source: &str) -> Vec<String> {
         let mut calls = Vec::new();
         Self::walk_for_calls_with_context(node, source, &mut calls, None);
+
+        // ⭐ NEW: Detect JSX component usage
+        Self::walk_for_jsx_components(node, source, &mut calls);
+
         calls
+    }
+
+    // ⭐ NEW: Walk the AST for JSX components
+    fn walk_for_jsx_components(node: &Node, source: &str, calls: &mut Vec<String>) {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            // Check for JSX element (self-closing or with children)
+            if child.kind() == "jsx_element" || child.kind() == "jsx_self_closing_element" {
+                // Try to find the opening tag
+                if let Some(open_tag) = child.child_by_field_name("open_tag") {
+                    // Try to find the tag name
+                    if let Some(tag_name) = open_tag.child_by_field_name("name") {
+                        if let Ok(name) = tag_name.utf8_text(source.as_bytes()) {
+                            // If the tag name starts with uppercase, it's a component
+                            if name
+                                .chars()
+                                .next()
+                                .map(|c| c.is_uppercase())
+                                .unwrap_or(false)
+                            {
+                                calls.push(format!("jsx::{}", name));
+                            }
+                        }
+                    }
+                }
+            }
+            // Recurse into children
+            Self::walk_for_jsx_components(&child, source, calls);
+        }
     }
 
     fn walk_for_calls_with_context(
