@@ -3,8 +3,6 @@
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-/// Global whitelist of functions that should never be considered dead
-/// even if they have no callers (entry points, FFI exports, etc.)
 pub static WHITELIST: LazyLock<Whitelist> = LazyLock::new(Whitelist::new);
 
 pub struct Whitelist {
@@ -17,34 +15,26 @@ impl Whitelist {
         let mut functions = HashSet::new();
         let mut patterns = Vec::new();
 
-        // ================================================================
         // ENTRY POINTS
-        // ================================================================
         functions.insert("main".to_string());
         functions.insert("async_main".to_string());
         functions.insert("run".to_string());
         functions.insert("start".to_string());
         functions.insert("init".to_string());
 
-        // ================================================================
         // FFI / EXPORTED SYMBOLS
-        // ================================================================
         functions.insert("java_".to_string()); // JNI
         functions.insert("JNI_".to_string());
         functions.insert("Python_".to_string()); // Python C API
         functions.insert("node_".to_string()); // Node.js N-API
         functions.insert("napi_".to_string());
 
-        // ================================================================
         // LIBRARY ENTRY POINTS
-        // ================================================================
         functions.insert("new".to_string());
         functions.insert("create".to_string());
         functions.insert("build".to_string());
 
-        // ================================================================
         // COMMON TRAIT/INTERFACE METHODS
-        // ================================================================
         functions.insert("generate".to_string());
         functions.insert("generate_stream".to_string());
         functions.insert("model_name".to_string());
@@ -54,9 +44,7 @@ impl Whitelist {
         functions.insert("clone".to_string());
         functions.insert("drop".to_string());
 
-        // ================================================================
         // GO INTERFACE METHODS (jsoniter)
-        // ================================================================
         functions.insert("ValueType".to_string());
         functions.insert("MustBeValid".to_string());
         functions.insert("LastError".to_string());
@@ -82,10 +70,6 @@ impl Whitelist {
         functions.insert("ReadObject".to_string());
         functions.insert("ReadObjectCB".to_string());
         functions.insert("ReadMapCB".to_string());
-
-        // ================================================================
-        // KNOWN INTERNAL FUNCTIONS (Used via reflection/function pointers)
-        // ================================================================
 
         // Stream internal helpers
         functions.insert("writeByte".to_string());
@@ -170,22 +154,16 @@ impl Whitelist {
         functions.insert("cleanDecoders".to_string());
         functions.insert("cleanEncoders".to_string());
 
-        // ================================================================
         // KNOWN INTERNAL FUNCTIONS (from other languages/projects)
-        // ================================================================
         functions.insert("compress_text".to_string());
         functions.insert("encode_hex".to_string());
         functions.insert("get_languages".to_string());
         functions.insert("get_key_files".to_string());
 
-        // ================================================================
         // TEST HELPERS
-        // ================================================================
         functions.insert("create_test_function".to_string());
 
-        // ================================================================
         // ⭐ NEW: Chart.js internal functions (used by the library)
-        // ================================================================
         functions.insert("_computeGridLineItems".to_string());
         functions.insert("_computeLabelItems".to_string());
         functions.insert("calculateLabelRotation".to_string());
@@ -282,9 +260,7 @@ impl Whitelist {
         functions.insert("average".to_string());
         functions.insert("nearest".to_string());
 
-        // ================================================================
         // PATTERNS
-        // ================================================================
         patterns.push("^test_".to_string());
         patterns.push("^bench_".to_string());
         patterns.push("^mock_".to_string());

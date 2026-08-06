@@ -2,6 +2,7 @@ pub mod analysis;
 pub mod engine;
 pub mod graph;
 pub mod llm;
+pub mod ml;
 pub mod optimize;
 pub mod output;
 pub mod parser;
@@ -22,7 +23,7 @@ pub use graph::call_graph::FunctionNode;
 pub use graph::dependency_graph::DependencyGraph;
 pub use graph::import_graph::ImportGraph;
 pub use graph::type_graph::TypeGraph;
-// Re-export compression utilities
+pub use ml::classifier::DeadCodeClassifier; // Re-export compression utilities
 pub use optimize::chunk::ChunkStrategy;
 pub use optimize::dedup::Deduplicator;
 pub use optimize::SemanticCompressor;

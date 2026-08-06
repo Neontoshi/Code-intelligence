@@ -71,6 +71,14 @@ reqwest = { version = "0.13.4", features = ["json", "stream"] }
 ratatui = "0.26"
 crossterm = "0.27"
 
+# ML / Linear Algebra
+linfa = { version = "0.7", features = ["serde"] }
+linfa-logistic = "0.7"
+linfa-trees = "0.7"
+ndarray = "0.15"
+rand = "0.8"
+
+
 [dev-dependencies]
 criterion = "0.5"
 tokio = { version = "1", features = ["rt", "macros"] }
@@ -84,3 +92,8 @@ codegen-units = 1
 name = "compression"
 harness = false
 path = "benches/compression.rs"
+
+# ⭐ NEW: Feature flags
+[features]
+default = ["ml"]  # Enable ML by default
+ml = []          # ML feature flag
