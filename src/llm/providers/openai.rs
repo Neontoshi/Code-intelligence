@@ -136,70 +136,16 @@ impl OpenAIProvider {
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-        let mut provider = Self {
+        let provider = Self {
             client,
             api_key,
             base_url,
             model: config.model.clone(),
             config: config.clone(),
-            available: false,
+            available: true,
         };
-        // Check availability
-        provider.check_availability().await;
 
         Ok(provider)
-    }
-
-    /// Check if API key is valid and model is available
-    async fn check_availability(&mut self) {
-        let url = format!("{}/api/tags", self.base_url);
-        let response = self
-            .client
-            .get(&url)
-            .timeout(Duration::from_secs(5))
-            .send()
-            .await
-            .ok();
-
-        match response {
-            Some(resp) if resp.status().is_success() => {
-                // Check if our model is available
-                if let Ok(models) = resp.json::<OpenAIModelsResponse>().await {
-                    let model_available = models
-                        .data
-                        .iter()
-                        .any(|m| m.id == self.model || m.id.starts_with(&self.model));
-
-                    if model_available {
-                        self.available = true;
-                        eprintln!("✅ OpenAI connected. Model '{}' available.", self.model);
-                    } else {
-                        eprintln!(
-                            "⚠️ Model '{}' not available through OpenAI API.",
-                            self.model
-                        );
-                        eprintln!("   Available models:");
-                        for model in models.data.iter().take(10) {
-                            eprintln!("   - {}", model.id);
-                        }
-                        if models.data.len() > 10 {
-                            eprintln!("   ... and {} more", models.data.len() - 10);
-                        }
-                    }
-                }
-            }
-            Some(resp) => {
-                eprintln!("⚠️ OpenAI API error: {}", resp.status());
-                if resp.status() == 401 {
-                    eprintln!("   Invalid API key. Please check your OPENAI_API_KEY.");
-                }
-                self.available = false;
-            }
-            None => {
-                eprintln!("⚠️ Could not connect to OpenAI API at {}", self.base_url);
-                self.available = false;
-            }
-        }
     }
 
     /// Check if provider is available

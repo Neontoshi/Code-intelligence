@@ -1,7 +1,7 @@
 //! Candidate generation - first-class phase before comparison
 
 use crate::graph::call_graph::FunctionNode;
-use crate::optimize::dedup::core::{compute_ast_hash, compute_exact_hash, compute_signature_hash};
+use crate::optimize::dedup::core::compute_signature_hash;
 use crate::optimize::dedup::types::DedupConfig;
 use std::collections::HashMap;
 
@@ -51,76 +51,38 @@ impl CandidateGenerator {
         Self { config }
     }
 
-    /// Generate candidate pairs using multiple strategies
     pub fn generate(
         &self,
         functions: &[FunctionNode],
-        sources: &crate::optimize::dedup::core::SourceIndex,
+        _sources: &crate::optimize::dedup::core::SourceIndex,
     ) -> CandidateResult {
         let mut all_pairs = Vec::new();
         let mut used = std::collections::HashSet::new();
         let mut strategies_used = Vec::new();
 
-        // Strategy 1: Exact hash match (highest confidence)
-        let exact_pairs = self.generate_exact_hash_candidates(functions, sources);
-        let count1 = self.add_pairs(
-            &mut all_pairs,
-            &mut used,
-            exact_pairs,
-            CandidateStrategy::ExactHash,
-        );
-        if count1 > 0 {
-            strategies_used.push(CandidateStrategy::ExactHash);
-        }
-
-        // Strategy 2: AST hash match (structural)
-        if self.config.enable_ast_analysis {
-            let ast_pairs = self.generate_ast_hash_candidates(functions, sources);
-            let count2 = self.add_pairs(
-                &mut all_pairs,
-                &mut used,
-                ast_pairs,
-                CandidateStrategy::AstHash,
-            );
-            if count2 > 0 {
-                strategies_used.push(CandidateStrategy::AstHash);
-            }
-        }
-
-        // Strategy 3: Signature hash match (metadata)
+        // Use signature hash as the primary strategy
         let sig_pairs = self.generate_signature_candidates(functions);
-        let count3 = self.add_pairs(
+        let count = self.add_pairs(
             &mut all_pairs,
             &mut used,
             sig_pairs,
             CandidateStrategy::SignatureHash,
         );
-        if count3 > 0 {
+        if count > 0 {
             strategies_used.push(CandidateStrategy::SignatureHash);
         }
 
-        // Strategy 4: Param count bucketing (fallback)
+        // Use param count as fallback
         if all_pairs.len() < self.config.max_functions_to_compare {
             let param_pairs = self.generate_param_candidates(functions, &used);
-            let count4 = self.add_pairs(
+            let count2 = self.add_pairs(
                 &mut all_pairs,
                 &mut used,
                 param_pairs,
                 CandidateStrategy::ParamCount,
             );
-            if count4 > 0 {
+            if count2 > 0 {
                 strategies_used.push(CandidateStrategy::ParamCount);
-            }
-        }
-
-        // Strategy 5: LSH / MinHash (if enabled)
-        if self.config.enable_ml_features && all_pairs.len() < self.config.max_functions_to_compare
-        {
-            let lsh_pairs = self.generate_lsh_candidates(functions, sources);
-            let count5 =
-                self.add_pairs(&mut all_pairs, &mut used, lsh_pairs, CandidateStrategy::LSH);
-            if count5 > 0 {
-                strategies_used.push(CandidateStrategy::LSH);
             }
         }
 
@@ -130,6 +92,7 @@ impl CandidateGenerator {
         }
 
         let total_candidates = all_pairs.len();
+
         CandidateResult {
             pairs: all_pairs,
             total_functions: functions.len(),
@@ -138,41 +101,9 @@ impl CandidateGenerator {
         }
     }
 
-    // ========================================================================
-    // Strategy Implementations
-    // ========================================================================
-
-    fn generate_exact_hash_candidates(
-        &self,
-        functions: &[FunctionNode],
-        sources: &crate::optimize::dedup::core::SourceIndex,
-    ) -> Vec<(usize, usize, f64)> {
-        let mut buckets: HashMap<String, Vec<usize>> = HashMap::new();
-
-        for (i, func) in functions.iter().enumerate() {
-            let hash = compute_exact_hash(func, sources.get(&func.full_path));
-            buckets.entry(hash).or_default().push(i);
-        }
-
-        self.pairs_from_buckets(buckets, 1.0)
-    }
-
-    fn generate_ast_hash_candidates(
-        &self,
-        functions: &[FunctionNode],
-        sources: &crate::optimize::dedup::core::SourceIndex,
-    ) -> Vec<(usize, usize, f64)> {
-        let mut buckets: HashMap<String, Vec<usize>> = HashMap::new();
-
-        for (i, func) in functions.iter().enumerate() {
-            if let Some(source) = sources.get(&func.full_path) {
-                let hash = compute_ast_hash(func, source);
-                buckets.entry(hash).or_default().push(i);
-            }
-        }
-
-        self.pairs_from_buckets(buckets, 0.95)
-    }
+    // ================================================================
+    // ⭐ KEEP THESE TWO FUNCTIONS (they're used as fallbacks)
+    // ================================================================
 
     fn generate_signature_candidates(
         &self,
@@ -216,29 +147,9 @@ impl CandidateGenerator {
         pairs
     }
 
-    fn generate_lsh_candidates(
-        &self,
-        functions: &[FunctionNode],
-        sources: &crate::optimize::dedup::core::SourceIndex,
-    ) -> Vec<(usize, usize, f64)> {
-        // Simple LSH: bucket by first few characters of AST hash
-        let mut buckets: HashMap<String, Vec<usize>> = HashMap::new();
-
-        for (i, func) in functions.iter().enumerate() {
-            if let Some(source) = sources.get(&func.full_path) {
-                let hash = compute_ast_hash(func, source);
-                // Use first 4 chars as bucket key (LSH approximation)
-                let key = hash.chars().take(4).collect::<String>();
-                buckets.entry(key).or_default().push(i);
-            }
-        }
-
-        self.pairs_from_buckets(buckets, 0.6)
-    }
-
-    // ========================================================================
-    // Helpers
-    // ========================================================================
+    // ================================================================
+    // Helper Functions
+    // ================================================================
 
     fn pairs_from_buckets(
         &self,
@@ -306,7 +217,6 @@ mod tests {
     use super::*;
     use crate::graph::call_graph::FunctionNode;
 
-    // ⭐ Move create_test_function inside the test module
     fn create_test_function(name: &str, params: usize, returns: usize) -> FunctionNode {
         FunctionNode {
             name: name.to_string(),

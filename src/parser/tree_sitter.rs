@@ -479,6 +479,7 @@ impl TreeSitterParser {
             Self::walk_for_jsx_components(&child, source, calls);
         }
     }
+    // src/parser/tree_sitter.rs
 
     fn walk_for_calls_with_context(
         node: &Node,
@@ -491,34 +492,55 @@ impl TreeSitterParser {
             match child.kind() {
                 "call_expression" => {
                     if let Some(func) = child.child_by_field_name("function") {
+                        // ============================================================
+                        // Case 1: Field expression — x.method() or self.method()
+                        // ============================================================
                         if func.kind() == "field_expression" {
-                            // x.method(...) — tree-sitter-rust has no distinct method-call
-                            // node kind; `x.method(...)` is a call_expression whose
-                            // "function" field is a field_expression. Without unpacking it,
-                            // func.utf8_text() returns the literal dotted text
-                            // ("self.foo", "uf.find") which no resolution tier downstream
-                            // can ever match.
                             let receiver = func
                                 .child_by_field_name("value")
                                 .and_then(|v| v.utf8_text(source.as_bytes()).ok())
                                 .unwrap_or("")
                                 .trim();
+
                             if let Some(method) = func.child_by_field_name("field") {
                                 if let Ok(method_name) = method.utf8_text(source.as_bytes()) {
                                     if receiver == "self" {
+                                        // self.method() → self::method
                                         calls.push(format!("self::{}", method_name));
+                                    } else if receiver == "Self" {
+                                        // Self::method()
+                                        calls.push(format!("Self::{}", method_name));
+                                    } else if receiver.contains("::") {
+                                        // Type::method() or module::method()
+                                        calls.push(format!("{}::{}", receiver, method_name));
                                     } else {
-                                        calls.push(method_name.to_string());
+                                        // variable.method() — store as method call
+                                        calls.push(format!("{}.{}", receiver, method_name));
                                     }
                                 }
                             }
-                        } else if let Ok(name) = func.utf8_text(source.as_bytes()) {
-                            // Plain call: foo(...) or Type::method(...) — already correct,
-                            // qualified paths keep their "::" and get handled by Tier 1.
+                        }
+                        // ============================================================
+                        // Case 2: Scoped/qualified identifier — Type::function()
+                        // ============================================================
+                        else if func.kind() == "scoped_identifier"
+                            || func.kind() == "qualified_identifier"
+                        {
+                            if let Ok(name) = func.utf8_text(source.as_bytes()) {
+                                calls.push(name.to_string());
+                            }
+                        }
+                        // ============================================================
+                        // Case 3: Plain call — function_name()
+                        // ============================================================
+                        else if let Ok(name) = func.utf8_text(source.as_bytes()) {
                             calls.push(name.to_string());
                         }
                     }
                 }
+                // ============================================================
+                // Method call — generic detection for other languages
+                // ============================================================
                 "method_call" | "method_invocation" => {
                     if let Some(receiver) = child.child_by_field_name("receiver") {
                         let receiver_text = receiver
@@ -529,26 +551,33 @@ impl TreeSitterParser {
                         if let Some(method) = child.child_by_field_name("method") {
                             if let Ok(method_name) = method.utf8_text(source.as_bytes()) {
                                 if receiver_text == "self" {
-                                    // lowercase "self::" — matches Tier 0's check in
-                                    // pipeline.rs exactly, resolves against the enclosing
-                                    // impl block's own method table.
                                     calls.push(format!("self::{}", method_name));
+                                } else if receiver_text == "Self" {
+                                    calls.push(format!("Self::{}", method_name));
+                                } else if receiver_text.contains("::") {
+                                    calls.push(format!("{}::{}", receiver_text, method_name));
                                 } else {
-                                    calls.push(method_name.to_string());
+                                    calls.push(format!("{}.{}", receiver_text, method_name));
                                 }
                             }
                         }
                     }
                 }
+                // ============================================================
+                // Chain expression — x.y().z()
+                // ============================================================
                 "chain_expression" | "chained_call" => {
                     Self::walk_for_calls_with_context(&child, source, calls, receiver_type);
                 }
+                // ============================================================
+                // Index expression — a[b] → op::index
+                // ============================================================
                 "index_expression" => {
-                    // a[b] → potential Index::index (or IndexMut::index_mut) call.
-                    // Can't tell read vs write context without more analysis, so we
-                    // emit one marker and let the resolver check both traits.
                     calls.push("op::index".to_string());
                 }
+                // ============================================================
+                // Binary expression — a + b → op::add
+                // ============================================================
                 "binary_expression" => {
                     if let Some(op_node) = child.child_by_field_name("operator") {
                         if let Ok(op) = op_node.utf8_text(source.as_bytes()) {
@@ -566,9 +595,47 @@ impl TreeSitterParser {
                         }
                     }
                 }
+                // ============================================================
+                // Scoped identifier — Type::method (standalone)
+                // ============================================================
+                "scoped_identifier" | "qualified_identifier" => {
+                    if let Ok(text) = child.utf8_text(source.as_bytes()) {
+                        if text.contains("::") {
+                            // Check if it's a function call context
+                            if let Some(parent) = child.parent() {
+                                if parent.kind() == "call_expression" {
+                                    calls.push(text.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                // ============================================================
+                // Field expression — self.method (standalone)
+                // ============================================================
+                "field_expression" => {
+                    if let (Some(value), Some(field)) = (
+                        child.child_by_field_name("value"),
+                        child.child_by_field_name("field"),
+                    ) {
+                        if let (Ok(receiver), Ok(method_name)) = (
+                            value.utf8_text(source.as_bytes()),
+                            field.utf8_text(source.as_bytes()),
+                        ) {
+                            let receiver = receiver.trim();
+                            if receiver == "self" {
+                                calls.push(format!("self::{}", method_name));
+                            } else if receiver == "Self" {
+                                calls.push(format!("Self::{}", method_name));
+                            } else if receiver.contains("::") {
+                                calls.push(format!("{}::{}", receiver, method_name));
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
-            // Recurse
+            // Recurse into children
             Self::walk_for_calls_with_context(&child, source, calls, receiver_type);
         }
     }

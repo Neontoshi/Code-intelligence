@@ -37,6 +37,8 @@ pub struct DeadFunction {
     pub score: DeadScore,
     pub impact: FunctionImpact,
     pub removal_order: usize,
+    pub is_binary_only: bool,   // ⭐ NEW: functions only used in binaries
+    pub is_internal_call: bool, // ⭐ NEW: functions called internally in same file
 }
 
 #[derive(Debug, Clone)]
@@ -111,6 +113,47 @@ impl DeadCodeAnalyzer {
     pub fn get_ml_model(&self) -> Option<&DeadCodeClassifier> {
         self.ml_model.as_ref()
     }
+
+    // ================================================================
+    // Binary Detection Helpers
+    // ================================================================
+
+    /// Check if a function is only used in binary executables
+    fn is_binary_only_function(&self, func: &FunctionNode) -> bool {
+        // Functions in bin/ directories are binary-only
+        if func.file.contains("/bin/") || func.file.starts_with("src/bin/") {
+            return true;
+        }
+
+        // Functions in main.rs are binary-only
+        if func.file.ends_with("main.rs") {
+            return true;
+        }
+
+        // Functions in benches/ are binary-only
+        if func.file.contains("/benches/") {
+            return true;
+        }
+
+        // Check if it's in a binary-only directory
+        let binary_dirs = ["/bin/", "/cli/", "/cmd/", "/executables/"];
+        for dir in binary_dirs {
+            if func.file.contains(dir) {
+                return true;
+            }
+        }
+
+        // Check if the file name suggests it's a binary
+        if func.file.ends_with("_bin.rs") || func.file.ends_with("_cli.rs") {
+            return true;
+        }
+
+        false
+    }
+
+    // ================================================================
+    // Helper methods
+    // ================================================================
 
     fn is_generated_file(func: &FunctionNode) -> bool {
         func.file.contains(".gen.go")
@@ -191,6 +234,7 @@ impl DeadCodeAnalyzer {
         let mut skipped_generated = 0;
         let mut skipped_react = 0;
         let mut skipped_exported = 0;
+        let mut skipped_binary = 0;
         let mut scored = 0;
         let mut low_confidence = 0;
 
@@ -269,6 +313,12 @@ impl DeadCodeAnalyzer {
                 continue;
             }
 
+            // ⭐ NEW: Skip binary-only functions
+            if self.is_binary_only_function(func) {
+                skipped_binary += 1;
+                continue;
+            }
+
             // Don't skip exported functions automatically
             // Score them and let the confidence threshold decide
             if func.is_public && func.fan_in == 0 {
@@ -290,13 +340,23 @@ impl DeadCodeAnalyzer {
                 git_analysis.and_then(|g| g.files.get(&std::path::PathBuf::from(&func.file)));
             let score = self.scorer.score_function(func, git_info);
 
-            // Only consider if confidence is high enough
+            // Check if this is a binary-only function (double-check)
+            let is_binary_only = self.is_binary_only_function(func);
+
+            // ⭐ NEW: Check if this function might be an internal call
+            // This is a heuristic: if the function has no callers but is in a file
+            // with other functions, it might be called internally
+            let is_internal_call =
+                func.fan_in == 0 && !is_binary_only && !func.is_public && func.file.contains(".rs");
+
+            // Only consider if confidence is high enough and it's not binary-only
             if matches!(
                 score.level,
                 ConfidenceLevel::Probably
                     | ConfidenceLevel::VeryLikely
                     | ConfidenceLevel::Guaranteed
-            ) {
+            ) && !is_binary_only
+            {
                 let impact = self.calculate_impact(func, call_graph);
                 total_loc += impact.lines_of_code;
 
@@ -308,8 +368,12 @@ impl DeadCodeAnalyzer {
                     score,
                     impact,
                     removal_order: 0,
+                    is_binary_only: false,
+                    is_internal_call,
                 });
                 scored += 1;
+            } else if is_binary_only {
+                skipped_binary += 1;
             } else {
                 low_confidence += 1;
             }
@@ -326,6 +390,7 @@ impl DeadCodeAnalyzer {
         println!("   Skipped (generated): {}", skipped_generated);
         println!("   Skipped (React): {}", skipped_react);
         println!("   Skipped (exported API): {}", skipped_exported);
+        println!("   Skipped (binary-only): {}", skipped_binary);
         println!("   Scored (high confidence): {}", scored);
         println!("   Scored (low confidence): {}", low_confidence);
 
@@ -452,6 +517,38 @@ impl DeadCodeAnalyzer {
             analysis.summary.avg_confidence * 100.0
         ));
 
+        // ⭐ NEW: Show binary-only and internal call counts
+        let binary_only = analysis
+            .functions
+            .iter()
+            .filter(|f| f.is_binary_only)
+            .count();
+        let internal_calls = analysis
+            .functions
+            .iter()
+            .filter(|f| f.is_internal_call)
+            .count();
+        let truly_dead = analysis.functions.len() - binary_only - internal_calls;
+
+        if binary_only > 0 {
+            report.push_str(&format!(
+                "   ⚠️ {} functions are binary-only (used in CLI tools)\n",
+                binary_only
+            ));
+        }
+        if internal_calls > 0 {
+            report.push_str(&format!(
+                "   ⚠️ {} functions are internal calls (may be false positives)\n",
+                internal_calls
+            ));
+        }
+        if truly_dead > 0 {
+            report.push_str(&format!(
+                "   ✅ {} functions are truly dead\n\n",
+                truly_dead
+            ));
+        }
+
         // Group by confidence level
         for level in [
             ConfidenceLevel::Guaranteed,
@@ -464,11 +561,25 @@ impl DeadCodeAnalyzer {
                 .filter(|f| f.score.level == level)
                 .collect();
             if !functions.is_empty() {
-                report.push_str(&format!("\n{:?} ({})\n", level, functions.len()));
+                let label = if level == ConfidenceLevel::Guaranteed {
+                    "✅ Guaranteed"
+                } else if level == ConfidenceLevel::VeryLikely {
+                    "🔶 Very Likely"
+                } else {
+                    "🔷 Probably"
+                };
+                report.push_str(&format!("\n{} ({})\n", label, functions.len()));
                 for func in functions {
+                    let status = if func.is_binary_only {
+                        " [BINARY-ONLY]"
+                    } else if func.is_internal_call {
+                        " [INTERNAL CALL]"
+                    } else {
+                        ""
+                    };
                     report.push_str(&format!(
-                        "  #{} - {} ({}@{})\n",
-                        func.removal_order, func.name, func.file, func.line
+                        "  #{} - {}{} ({}@{})\n",
+                        func.removal_order, func.name, status, func.file, func.line
                     ));
                     report.push_str(&format!(
                         "    Confidence: {:.2}%, Impact: {}\n",
@@ -490,6 +601,19 @@ impl DeadCodeAnalyzer {
     pub fn safe_removal_plan(&self, dead_func: &DeadFunction) -> Vec<String> {
         let mut steps = Vec::new();
         steps.push(format!("1. Remove function: {}", dead_func.full_path));
+
+        if dead_func.is_binary_only {
+            steps.push(
+                "2. ⚠️ This function is binary-only — check if the binary is still needed"
+                    .to_string(),
+            );
+        }
+
+        if dead_func.is_internal_call {
+            steps.push(
+                "2. ⚠️ This may be an internal call — check if it's called elsewhere".to_string(),
+            );
+        }
 
         if dead_func.impact.dependencies.is_empty() {
             steps.push("2. ✓ Safe to remove (no dependencies)".to_string());

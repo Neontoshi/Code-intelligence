@@ -148,29 +148,6 @@ impl TypeGraph {
         depth
     }
 
-    pub fn inheritance_tree(&self, root: &str) -> Vec<&TypeNode> {
-        let mut tree = Vec::new();
-        if let Some(&idx) = self.node_index.get(root) {
-            tree.push(&self.graph[idx]);
-            self.collect_subtypes_impl(idx, &mut tree);
-        }
-        tree
-    }
-
-    fn collect_subtypes_impl<'a>(&'a self, parent: NodeIndex, tree: &mut Vec<&'a TypeNode>) {
-        let children: Vec<_> = self
-            .graph
-            .edges_directed(parent, petgraph::Direction::Incoming)
-            .filter(|e| matches!(e.weight().relationship, TypeRelationship::Extends))
-            .map(|e| e.source())
-            .collect();
-
-        for child in children {
-            tree.push(&self.graph[child]);
-            self.collect_subtypes_impl(child, tree);
-        }
-    }
-
     // ================================================================
     // NEW METHODS
     // ================================================================
