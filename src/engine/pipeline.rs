@@ -972,9 +972,7 @@ impl Pipeline {
                     for called_name in &func.calls {
                         let mut found = false;
 
-                        // ============================================================
                         // TIER OP: Operator overloads
-                        // ============================================================
                         if called_name.starts_with("op::") {
                             let method = called_name.trim_start_matches("op::");
                             let expected: &[(&str, &str)] = match method {
@@ -1005,9 +1003,7 @@ impl Pipeline {
                             continue;
                         }
 
-                        // ============================================================
                         // TIER 0: Method call on self (self.method_name)
-                        // ============================================================
                         if !found && called_name.starts_with("self::") {
                             let method_name = called_name.trim_start_matches("self::");
                             if let Some(container) = &func.container {
@@ -1027,9 +1023,7 @@ impl Pipeline {
                             }
                         }
 
-                        // ============================================================
                         // TIER 1: Qualified call (Type::method)
-                        // ============================================================
                         if !found {
                             if let Some((qualifier, method)) = called_name.rsplit_once("::") {
                                 let qualified_path =
@@ -1050,15 +1044,15 @@ impl Pipeline {
 
                         let simple_name = called_name.rsplit("::").next().unwrap_or(called_name);
 
-                        // ============================================================
                         // ⭐ NEW: Handle method calls (variable.method)
-                        // ============================================================
                         if !found && called_name.contains(".") {
                             let parts: Vec<&str> = called_name.split('.').collect();
                             if parts.len() == 2 {
                                 let _receiver = parts[0];
                                 let method = parts[1];
-                                // Look for a method with this name in the same file
+
+                                // Try to find a method with this name in the same file
+                                // First check if it's in the same container (impl block)
                                 if let Some(container) = &func.container {
                                     let full_path =
                                         format!("{}::{}::{}", file_path, container, method);
@@ -1074,12 +1068,26 @@ impl Pipeline {
                                         found = true;
                                     }
                                 }
+
+                                // If not found, try to find it as a standalone function in the same file
+                                if !found {
+                                    let full_path = format!("{}::{}", file_path, method);
+                                    if let Some(&callee_idx) = func_index.get(&full_path) {
+                                        call_graph.add_call(
+                                            caller_idx,
+                                            callee_idx,
+                                            CallEdge {
+                                                call_type: "method_call".to_string(),
+                                                line: func.line,
+                                            },
+                                        );
+                                        found = true;
+                                    }
+                                }
                             }
                         }
 
-                        // ============================================================
                         // ⭐ NEW: Handle associated function calls (Self::method)
-                        // ============================================================
                         if !found && called_name.starts_with("Self::") {
                             let method_name = called_name.trim_start_matches("Self::");
                             if let Some(container) = &func.container {
@@ -1099,9 +1107,16 @@ impl Pipeline {
                             }
                         }
 
-                        // ============================================================
+                        // ⭐ NEW: Handle Type::method calls (qualified)
+                        if !found
+                            && called_name.contains("::")
+                            && !called_name.starts_with("self::")
+                            && !called_name.starts_with("Self::")
+                        {
+                            // This is already handled by TIER 1, but we double-check here
+                            // to ensure we catch all qualified calls
+                        }
                         // TIER 2: Internal calls within the same file
-                        // ============================================================
                         if !found {
                             // Get all functions in this file with the same name
                             let candidates: Vec<String> = func_by_file
@@ -1160,9 +1175,7 @@ impl Pipeline {
                             }
                         }
 
-                        // ============================================================
                         // TIER 3: Import resolution
-                        // ============================================================
                         if !found {
                             if let Some(imported_paths) = import_map.get(simple_name) {
                                 for imported_path in imported_paths {
@@ -1182,9 +1195,7 @@ impl Pipeline {
                             }
                         }
 
-                        // ============================================================
                         // TIER 4: Name match across files (only if unambiguous)
-                        // ============================================================
                         if !found {
                             if let Some(paths) = func_by_name.get(simple_name) {
                                 let candidates: Vec<_> =
@@ -1205,9 +1216,7 @@ impl Pipeline {
                             }
                         }
 
-                        // ============================================================
                         // TIER 5: Self reference (functions calling themselves)
-                        // ============================================================
                         if !found && simple_name == func.name {
                             // This is a recursive call to itself
                             if let Some(&callee_idx) = func_index.get(&caller_path) {
@@ -1223,9 +1232,7 @@ impl Pipeline {
                             }
                         }
 
-                        // ============================================================
                         // TIER 6: Function calls within the same container
-                        // ============================================================
                         if !found {
                             if let Some(container) = &func.container {
                                 let full_path =

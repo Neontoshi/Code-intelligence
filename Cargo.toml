@@ -95,3 +95,11 @@ path = "benches/compression.rs"
 [features]
 default = ["ml"]
 ml = []
+
+[[bin]]
+name = "evaluate_per_language"
+path = "src/bin/evaluate_per_language.rs"
+
+[[bin]]
+name = "analyze_features_per_language"
+path = "src/bin/analyze_features_per_language.rs"
