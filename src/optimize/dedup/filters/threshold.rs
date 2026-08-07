@@ -1,3 +1,5 @@
+// src/optimize/dedup/filters/threshold.rs
+
 use crate::graph::call_graph::FunctionNode;
 use crate::optimize::dedup::comparators::StructuralComparator;
 use crate::optimize::dedup::types::{combine, ScoreWeights};
@@ -13,7 +15,8 @@ impl ThresholdTuner {
         let sample_size = functions.len().min(100);
         for i in 0..sample_size {
             for j in (i + 1)..(i + 50).min(sample_size) {
-                let sim = Self::calculate_sample_similarity(&functions[i], &functions[j], &weights);
+                let scores = StructuralComparator::compare(&functions[i], &functions[j]);
+                let sim = combine(&scores, &weights);
                 similarities.push(sim);
             }
         }
@@ -37,14 +40,5 @@ impl ThresholdTuner {
         }
 
         best_threshold.clamp(0.6, 0.95)
-    }
-
-    fn calculate_sample_similarity(
-        a: &FunctionNode,
-        b: &FunctionNode,
-        weights: &ScoreWeights,
-    ) -> f64 {
-        let scores = StructuralComparator::compare(a, b);
-        combine(&scores, weights)
     }
 }

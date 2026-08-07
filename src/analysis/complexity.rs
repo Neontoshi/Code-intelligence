@@ -1,6 +1,7 @@
+// src/analysis/complexity.rs
+
 use crate::graph::call_graph::{CallGraph, FunctionNode};
 use crate::parser::tree_sitter::ParsedFile;
-use std::collections::HashMap;
 
 pub struct ComplexityAnalyzer;
 
@@ -25,16 +26,10 @@ impl ComplexityAnalyzer {
             ("try ", 0.2),
         ];
 
-        let mut _control_flow_count = 0;
         for (pattern, weight) in patterns {
             let count = source.matches(pattern).count();
-            _control_flow_count += count;
             complexity += count as f64 * weight;
         }
-
-        // Nesting depth impact
-        let nesting_depth = Self::calculate_nesting_depth(source);
-        complexity += nesting_depth as f64 * 0.2;
 
         // Function length impact
         let lines = source.lines().count();
@@ -44,23 +39,6 @@ impl ComplexityAnalyzer {
 
         // Cap at reasonable maximum
         complexity.min(50.0)
-    }
-
-    fn calculate_nesting_depth(source: &str) -> usize {
-        let mut max_depth = 0;
-        let mut current_depth: usize = 0;
-
-        for line in source.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('{') {
-                current_depth += 1;
-                max_depth = max_depth.max(current_depth);
-            } else if trimmed.starts_with('}') {
-                current_depth = current_depth.saturating_sub(1);
-            }
-        }
-
-        max_depth
     }
 
     /// Calculate overall project complexity metrics
@@ -74,7 +52,6 @@ impl ComplexityAnalyzer {
 
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
-            // Estimate complexity from function name and parameters
             let complexity = func.complexity;
             complexities.push(complexity);
         }
@@ -92,28 +69,7 @@ impl ComplexityAnalyzer {
             max_complexity,
             total_functions: complexities.len(),
             total_lines,
-            complexity_distribution: Self::distribute_complexities(&complexities),
         }
-    }
-
-    fn distribute_complexities(complexities: &[f64]) -> HashMap<String, usize> {
-        let mut distribution = HashMap::new();
-
-        for &complexity in complexities {
-            let bucket = if complexity <= 5.0 {
-                "simple"
-            } else if complexity <= 10.0 {
-                "moderate"
-            } else if complexity <= 20.0 {
-                "complex"
-            } else {
-                "very_complex"
-            };
-
-            *distribution.entry(bucket.to_string()).or_insert(0) += 1;
-        }
-
-        distribution
     }
 }
 
@@ -123,5 +79,4 @@ pub struct ProjectComplexity {
     pub max_complexity: f64,
     pub total_functions: usize,
     pub total_lines: usize,
-    pub complexity_distribution: HashMap<String, usize>,
 }

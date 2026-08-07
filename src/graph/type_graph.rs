@@ -52,10 +52,8 @@ pub enum TypeRelationship {
     References,
 }
 
-// ⭐ The macro creates the struct and new() function
 define_graph!(TypeGraph, TypeNode, TypeEdge);
 
-// ⭐ All other methods go in a separate impl block
 impl TypeGraph {
     pub fn add_type(&mut self, type_node: TypeNode) -> NodeIndex {
         let key = type_node.name.clone();
@@ -134,7 +132,7 @@ impl TypeGraph {
 
         while let Some(&_idx) = self.node_index.get(&current) {
             if visited.contains(&current) {
-                break; // Cycle detected
+                break;
             }
             visited.insert(current.clone());
 
@@ -154,12 +152,12 @@ impl TypeGraph {
         let mut tree = Vec::new();
         if let Some(&idx) = self.node_index.get(root) {
             tree.push(&self.graph[idx]);
-            self.collect_subtypes(idx, &mut tree);
+            self.collect_subtypes_impl(idx, &mut tree);
         }
         tree
     }
 
-    fn collect_subtypes<'a>(&'a self, parent: NodeIndex, tree: &mut Vec<&'a TypeNode>) {
+    fn collect_subtypes_impl<'a>(&'a self, parent: NodeIndex, tree: &mut Vec<&'a TypeNode>) {
         let children: Vec<_> = self
             .graph
             .edges_directed(parent, petgraph::Direction::Incoming)
@@ -169,27 +167,24 @@ impl TypeGraph {
 
         for child in children {
             tree.push(&self.graph[child]);
-            self.collect_subtypes(child, tree);
+            self.collect_subtypes_impl(child, tree);
         }
     }
 
     // ================================================================
-    // ⭐ NEW METHODS
+    // NEW METHODS
     // ================================================================
 
-    /// Iterate over all nodes in the type graph
     pub fn iter_nodes(&self) -> impl Iterator<Item = &TypeNode> {
         self.graph.node_indices().map(|idx| &self.graph[idx])
     }
 
-    /// Get a type by name
     pub fn get_type(&self, name: &str) -> Option<&TypeNode> {
         self.node_index
             .get(name)
             .and_then(|&idx| self.graph.node_weight(idx))
     }
 
-    /// Check if a type is used in any function signature
     pub fn is_type_used_in_functions(
         &self,
         type_name: &str,
@@ -197,15 +192,11 @@ impl TypeGraph {
     ) -> bool {
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
-
-            // Check params
             for param in &func.params {
                 if param == type_name {
                     return true;
                 }
             }
-
-            // Check returns
             for ret in &func.returns {
                 if ret == type_name {
                     return true;
@@ -215,7 +206,6 @@ impl TypeGraph {
         false
     }
 
-    /// Get all types that are never used in any function
     pub fn find_unused_types(
         &self,
         call_graph: &crate::graph::call_graph::CallGraph,
@@ -225,7 +215,6 @@ impl TypeGraph {
             .collect()
     }
 
-    /// Get the inheritance depth of a type (number of parents in the inheritance chain)
     pub fn get_inheritance_depth(&self, type_name: &str) -> usize {
         let mut depth = 0;
         let mut current = type_name;
@@ -233,7 +222,7 @@ impl TypeGraph {
 
         while let Some(_node) = self.get_type(current) {
             if visited.contains(current) {
-                break; // Cycle detected
+                break;
             }
             visited.insert(current);
 
@@ -242,7 +231,6 @@ impl TypeGraph {
                 break;
             }
 
-            // Take the first supertype (simplified)
             current = &supertypes[0].name;
             depth += 1;
         }
@@ -250,7 +238,6 @@ impl TypeGraph {
         depth
     }
 
-    /// Get the maximum inheritance depth in the graph
     pub fn max_inheritance_depth(&self) -> usize {
         self.iter_nodes()
             .map(|node| self.get_inheritance_depth(&node.name))
@@ -258,31 +245,26 @@ impl TypeGraph {
             .unwrap_or(0)
     }
 
-    /// Get all leaf types (types with no subtypes)
     pub fn leaf_types(&self) -> Vec<&TypeNode> {
         self.iter_nodes()
             .filter(|node| self.get_subtypes(&node.name).is_empty())
             .collect()
     }
 
-    /// Get all root types (types with no supertypes)
     pub fn root_types(&self) -> Vec<&TypeNode> {
         self.iter_nodes()
             .filter(|node| self.get_supertypes(&node.name).is_empty())
             .collect()
     }
 
-    /// Check if a type has any subtypes
     pub fn has_subtypes(&self, type_name: &str) -> bool {
         !self.get_subtypes(type_name).is_empty()
     }
 
-    /// Check if a type has any supertypes
     pub fn has_supertypes(&self, type_name: &str) -> bool {
         !self.get_supertypes(type_name).is_empty()
     }
 
-    /// Get the inheritance chain from a type to its root
     pub fn inheritance_chain(&self, type_name: &str) -> Vec<&TypeNode> {
         let mut chain = Vec::new();
         let mut current = type_name;
@@ -290,7 +272,7 @@ impl TypeGraph {
 
         while let Some(node) = self.get_type(current) {
             if visited.contains(current) {
-                break; // Cycle detected
+                break;
             }
             visited.insert(current);
             chain.push(node);
@@ -305,22 +287,18 @@ impl TypeGraph {
         chain
     }
 
-    /// Get all types in the graph
     pub fn get_all_types(&self) -> Vec<&TypeNode> {
         self.iter_nodes().collect()
     }
 
-    /// Get types by kind
     pub fn get_types_by_kind(&self, kind: TypeKind) -> Vec<&TypeNode> {
         self.iter_nodes().filter(|node| node.kind == kind).collect()
     }
 
-    /// Check if a type exists
     pub fn has_type(&self, name: &str) -> bool {
         self.node_index.contains_key(name)
     }
 
-    /// Get the number of types
     pub fn type_count(&self) -> usize {
         self.node_index.len()
     }

@@ -43,17 +43,6 @@ pub enum Normalization {
 
 impl FeatureSchema {
     pub fn new() -> Self {
-        let features = Self::define_features();
-        let name_to_index = features.iter().map(|f| (f.name.clone(), f.index)).collect();
-
-        Self {
-            version: 1,
-            features,
-            name_to_index,
-        }
-    }
-
-    fn define_features() -> Vec<FeatureDefinition> {
         let mut features = Vec::new();
         let mut index = 0;
 
@@ -303,7 +292,13 @@ impl FeatureSchema {
             normalization: Normalization::None,
         });
 
-        features
+        let name_to_index = features.iter().map(|f| (f.name.clone(), f.index)).collect();
+
+        Self {
+            version: 1,
+            features,
+            name_to_index,
+        }
     }
 
     pub fn feature_names(&self) -> Vec<String> {

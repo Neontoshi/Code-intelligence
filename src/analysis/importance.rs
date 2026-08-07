@@ -1,5 +1,6 @@
+// src/analysis/importance.rs
+
 use crate::graph::call_graph::CallGraph;
-use std::collections::HashMap;
 
 pub struct ImportanceScorer {
     complexity_weight: f64,
@@ -21,12 +22,17 @@ impl ImportanceScorer {
     }
 
     pub fn score_all(&self, graph: &mut CallGraph) {
-        let centrality = self.calculate_centrality(graph);
-
         // Get max fan-in for normalization
         let max_fan_in = graph
             .node_indices()
             .map(|idx| graph[idx].fan_in)
+            .max()
+            .unwrap_or(1) as f64;
+
+        // Get max degree for centrality
+        let max_degree = graph
+            .node_indices()
+            .map(|idx| graph.get_callees(idx).len() + graph.get_callers(idx).len())
             .max()
             .unwrap_or(1) as f64;
 
@@ -39,7 +45,9 @@ impl ImportanceScorer {
             score += self.complexity_weight * (func.complexity / 50.0).min(1.0);
 
             // Centrality (higher = more connected)
-            score += self.centrality_weight * centrality.get(&idx).unwrap_or(&0.0);
+            let degree = graph.get_callees(idx).len() + graph.get_callers(idx).len();
+            let centrality = degree as f64 / max_degree.max(1.0);
+            score += self.centrality_weight * centrality;
 
             // Connectivity (total connections)
             let connections = graph.get_callees(idx).len() + graph.get_callers(idx).len();
@@ -70,21 +78,5 @@ impl ImportanceScorer {
         for (idx, score) in scores {
             graph[idx].importance_score = score;
         }
-    }
-
-    fn calculate_centrality(&self, graph: &CallGraph) -> HashMap<petgraph::graph::NodeIndex, f64> {
-        let mut centrality = HashMap::new();
-        let max_degree = graph
-            .node_indices()
-            .map(|idx| graph.get_callees(idx).len() + graph.get_callers(idx).len())
-            .max()
-            .unwrap_or(1) as f64;
-
-        for idx in graph.node_indices() {
-            let degree = graph.get_callees(idx).len() + graph.get_callers(idx).len();
-            centrality.insert(idx, degree as f64 / max_degree.max(1.0));
-        }
-
-        centrality
     }
 }
