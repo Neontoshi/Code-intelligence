@@ -1,10 +1,14 @@
 // src/bin/dead_code_check.rs
 
-use clap::Parser; // ⭐ NEW - for better argument parsing
-use code_intelligence::analysis::dead_code::{DeadCodeAnalysis, DeadCodeDetector};
+use clap::Parser;
+use code_intelligence::analysis::dead_code::{DeadCodeAnalysis, DeadCodeAnalyzer, DeadFunction};
 use code_intelligence::analysis::git_analysis::GitAnalyzer;
-use code_intelligence::ml::classifier::DeadCodeClassifier; // ⭐ NEW
+use code_intelligence::analysis::training_data::{
+    FunctionFeatures, TrainingExample, TrainingLabel,
+};
+use code_intelligence::ml::classifier::DeadCodeClassifier;
 use code_intelligence::Pipeline;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -42,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Try to get git analysis
     let git_analysis = GitAnalyzer::analyze(&args.project_dir).ok();
 
-    // ⭐ NEW: Load ML model if provided
+    // Load ML model if provided
     let ml_model = if let Some(model_path) = &args.model {
         if args.no_ml {
             println!("⚠️ ML model provided but --no-ml flag is set. Ignoring model.");
@@ -65,7 +69,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Run comprehensive dead code analysis
-    let dead_analysis = DeadCodeDetector::analyze(
+    let mut analyzer = DeadCodeAnalyzer::new();
+
+    // Inject the ML model into the analyzer
+    if let Some(model) = ml_model {
+        analyzer = analyzer.with_classifier(model);
+    }
+
+    let dead_analysis = analyzer.analyze(
         &analysis.call_graph,
         &analysis.type_graph,
         &analysis.import_graph,
@@ -74,8 +85,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         git_analysis.as_ref(),
     );
 
-    // ⭐ NEW: Filter with ML model if available
-    let filtered_functions: Vec<_> = if let Some(model) = ml_model {
+    // Filter using the actual FunctionNode from the call graph
+    let filtered_functions: Vec<DeadFunction> = if analyzer.use_ml() {
         // Use ML model to filter
         dead_analysis
             .functions
@@ -86,47 +97,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return false;
                 }
 
-                // Then use ML model if available
-                use code_intelligence::analysis::training_data::{
-                    FunctionFeatures, TrainingExample, TrainingLabel,
+                // Look up the actual FunctionNode from the call graph
+                let actual_node = analysis
+                    .call_graph
+                    .node_indices()
+                    .find(|idx| analysis.call_graph[*idx].full_path == f.full_path)
+                    .map(|idx| &analysis.call_graph[idx]);
+
+                let actual_node = match actual_node {
+                    Some(node) => node,
+                    None => {
+                        // If we can't find it, be conservative — keep it
+                        if args.verbose {
+                            println!("   ⚠️ Could not find actual node for {}, keeping", f.name);
+                        }
+                        return true;
+                    }
                 };
 
+                // Create a training example using the REAL FunctionNode
                 let example = TrainingExample {
-                    function_name: f.name.clone(),
-                    full_path: f.full_path.clone(),
-                    file: f.file.clone(),
-                    language: TrainingExample::detect_language(&f.file),
-                    features: FunctionFeatures::from_function(
-                        &code_intelligence::graph::call_graph::FunctionNode {
-                            name: f.name.clone(),
-                            full_path: f.full_path.clone(),
-                            file: f.file.clone(),
-                            line: f.line,
-                            is_public: false, // Would need actual value
-                            is_async: false,
-                            params: vec![],
-                            returns: vec![],
-                            complexity: f.impact.complexity,
-                            importance_score: 0.0,
-                            doc_comment: None,
-                            writes_to: vec![],
-                            reads_from: vec![],
-                            errors: vec![],
-                            fan_in: 0,
-                            fan_out: 0,
-                            is_cycle: false,
-                            depth: 0,
-                            layer: String::new(),
-                            trait_impl: None,
-                        },
-                        &analysis.call_graph,
-                    ),
+                    function_name: actual_node.name.clone(),
+                    full_path: actual_node.full_path.clone(),
+                    file: actual_node.file.clone(),
+                    language: TrainingExample::detect_language(&actual_node.file),
+                    features: FunctionFeatures::from_function(actual_node, &analysis.call_graph),
                     label: TrainingLabel::Unknown,
                     confidence: 0.0,
                     source: "ml".to_string(),
                 };
 
-                let prob = model.predict_probability(&example);
+                let prob = analyzer
+                    .get_ml_model()
+                    .map(|model| model.predict_probability(&example))
+                    .unwrap_or(0.5);
 
                 // If ML says it's highly likely alive, skip it
                 if prob > 0.85 {
@@ -151,7 +155,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect()
     };
 
-    // ⭐ Create filtered analysis
+    // Create filtered analysis
     let filtered_analysis = DeadCodeAnalysis {
         functions: filtered_functions.clone(),
         types: dead_analysis.types,
@@ -160,11 +164,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         summary: dead_analysis.summary,
     };
 
-    // Generate report with filtered results
-    let report = DeadCodeDetector::generate_report(&filtered_analysis);
+    // ⭐ FIX: Use the analyzer instance to generate the report
+    let report = analyzer.generate_report(&filtered_analysis);
     println!("{}", report);
 
-    // ⭐ Show detailed filtered stats
+    // Show detailed filtered stats
     println!("\n📊 Filtered Results:");
     println!(
         "   Original dead functions: {}",
@@ -186,10 +190,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("   ML Model: disabled");
     }
 
-    // ⭐ Show what was filtered out
+    // Show what was filtered out
     if dead_analysis.functions.len() > filtered_analysis.functions.len() {
         println!("\n📋 Filtered out (false positives):");
-        let filtered_names: std::collections::HashSet<String> = filtered_analysis
+        let filtered_names: HashSet<String> = filtered_analysis
             .functions
             .iter()
             .map(|f| f.full_path.clone())

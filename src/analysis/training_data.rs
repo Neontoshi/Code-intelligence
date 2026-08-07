@@ -496,4 +496,27 @@ impl TrainingDataCollector {
             .filter(|e| e.label == TrainingLabel::Dead)
             .collect()
     }
+
+    pub fn add_high_confidence_example(
+        &mut self,
+        func: &crate::graph::call_graph::FunctionNode,
+        call_graph: &crate::graph::call_graph::CallGraph,
+        label: TrainingLabel,
+        confidence: f64,
+        source: &str,
+    ) {
+        let example = TrainingExample {
+            function_name: func.name.clone(),
+            full_path: func.full_path.clone(),
+            file: func.file.clone(),
+            language: TrainingExample::detect_language(&func.file),
+            features: FunctionFeatures::from_function(func, call_graph),
+            label: label.clone(),
+            confidence,
+            source: source.to_string(),
+        };
+
+        self.examples.push(example.clone());
+        self.update_stats(&example);
+    }
 }

@@ -101,6 +101,15 @@ impl DeadCodeAnalyzer {
         }
     }
 
+    pub fn use_ml(&self) -> bool {
+        self.use_ml
+    }
+
+    /// Get the ML model (if available)
+    pub fn get_ml_model(&self) -> Option<&DeadCodeClassifier> {
+        self.ml_model.as_ref()
+    }
+
     // ⭐ NEW: Enable ML with a loaded classifier
     pub fn with_classifier(mut self, classifier: DeadCodeClassifier) -> Self {
         self.ml_model = Some(classifier);
