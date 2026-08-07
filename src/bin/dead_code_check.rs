@@ -6,7 +6,6 @@ use code_intelligence::analysis::git_analysis::GitAnalyzer;
 use code_intelligence::graph::GraphMetrics;
 use code_intelligence::ml::classifier::DeadCodeClassifier;
 use code_intelligence::Pipeline;
-use std::collections::HashSet;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -100,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut in_test = 0;
         let mut trait_impl = 0;
         let mut whitelisted = 0;
-        let mut low_confidence = 0;
+        let _low_confidence = 0;
         let mut has_callers = 0;
 
         for idx in analysis.call_graph.node_indices() {

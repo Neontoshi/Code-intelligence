@@ -17,7 +17,7 @@ use crate::graph::traits::GraphMetrics;
 #[cfg(feature = "ml")]
 use crate::ml::classifier::DeadCodeClassifier;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct DeadCodeAnalysis {
@@ -112,172 +112,6 @@ impl DeadCodeAnalyzer {
         self.ml_model.as_ref()
     }
 
-    // ================================================================
-    // UPDATED: Less aggressive exclusion
-    // ================================================================
-
-    fn is_excluded_function(&self, func: &FunctionNode) -> bool {
-        // ============================================================
-        // 1️⃣ FIRST: Entry points — definitely alive
-        // ============================================================
-        let entry_points = ["main", "async_main", "run", "start", "init", "setup"];
-        if entry_points.contains(&func.name.as_str()) {
-            return true;
-        }
-
-        // ============================================================
-        // 2️⃣ SECOND: Test functions — called by test runner
-        // ============================================================
-        if func.name.starts_with("test_")
-            || func.name.starts_with("Test")
-            || func.name.starts_with("bench_")
-            || func.name.starts_with("Benchmark")
-            || func.file.contains("/tests/")
-            || func.file.ends_with("_test.rs")
-            || func.file.ends_with("_test.go")
-        {
-            return true;
-        }
-
-        // ============================================================
-        // 3️⃣ THIRD: ML Model (if available)
-        // ============================================================
-        if self.use_ml {
-            if let Some(model) = &self.ml_model {
-                use crate::analysis::training_data::{TrainingExample, TrainingLabel};
-                use crate::graph::call_graph::CallGraph;
-
-                let example = TrainingExample {
-                    function_name: func.name.clone(),
-                    full_path: func.full_path.clone(),
-                    file: func.file.clone(),
-                    language: TrainingExample::detect_language(&func.file),
-                    features: crate::analysis::training_data::FunctionFeatures::from_function(
-                        func,
-                        &CallGraph::new(),
-                    ),
-                    label: TrainingLabel::Unknown,
-                    confidence: 0.0,
-                    source: "ml".to_string(),
-                };
-
-                let prob = model.predict_probability(&example);
-
-                // High confidence ALIVE → skip
-                if prob > 0.85 {
-                    return true;
-                }
-
-                // High confidence DEAD → don't skip
-                if prob < 0.15 {
-                    return false;
-                }
-
-                // If uncertain (0.15-0.85), fall through to other checks
-            }
-        }
-
-        // ============================================================
-        // 4️⃣ FOURTH: Whitelist (fallback)
-        // ============================================================
-        if WHITELIST.is_whitelisted(&func.name) {
-            return true;
-        }
-        if WHITELIST.is_whitelisted_path(&func.file) {
-            return true;
-        }
-
-        // ============================================================
-        // 5️⃣ FIFTH: Trait implementations — only skip if actually used
-        // ============================================================
-        if let Some(trait_name) = &func.trait_impl {
-            // We need to check if this trait is actually used anywhere
-            // For now, be conservative: don't skip trait impls
-            // They might be used polymorphically
-            // return true; // OLD: always skip
-            // NEW: only skip if it's a standard trait
-            let standard_traits = [
-                "Clone", "Debug", "Default", "Display", "From", "Into", "TryFrom",
-            ];
-            if standard_traits.contains(&trait_name.as_str()) {
-                return true;
-            }
-            // For custom traits, we still report them as potentially dead
-            // They'll be scored and filtered by confidence
-        }
-
-        // ============================================================
-        // 6️⃣ SIXTH: Generated files
-        // ============================================================
-        if Self::is_generated_file(func) {
-            return true;
-        }
-
-        // ============================================================
-        // 7️⃣ SEVENTH: React components (not relevant for Rust)
-        // ============================================================
-        if Self::is_likely_react_code(func) {
-            return true;
-        }
-
-        // ============================================================
-        // 8️⃣ EIGHTH: Bundled JS (not relevant for Rust)
-        // ============================================================
-        if Self::is_bundled_js(func) {
-            return true;
-        }
-
-        // ============================================================
-        // 9️⃣ NINTH: Library exports — don't automatically skip
-        // ============================================================
-        // OLD: if func.is_public && func.fan_in == 0 { return true; }
-        // NEW: Only skip if it's in a lib.rs or mod.rs AND has documentation
-        if func.is_public && func.fan_in == 0 {
-            // Check if it's a library root
-            if func.file.contains("lib.rs") || func.file.contains("mod.rs") {
-                // If it has documentation, it's probably intentional
-                if func.doc_comment.is_some() {
-                    return true;
-                }
-                // If it's a standard library export pattern
-                let export_patterns = ["new", "default", "from", "into", "try_from"];
-                if export_patterns.contains(&func.name.as_str()) {
-                    return true;
-                }
-            }
-            // Otherwise, we don't skip it — let the scorer decide
-        }
-
-        // ============================================================
-        // 🔟 TENTH: Functions with callers — don't automatically skip
-        // ============================================================
-        // OLD: if func.fan_in > 0 { return true; }
-        // NEW: Only skip if the callers are reachable from entry points
-        // For now, we'll let the scorer handle it
-
-        // If we made it here, the function is a candidate for dead code
-        false
-    }
-
-    // ================================================================
-    // Helper methods (unchanged from original)
-    // ================================================================
-
-    fn is_bundled_js(func: &FunctionNode) -> bool {
-        if !func.file.ends_with(".js") && !func.file.ends_with(".js.map") {
-            return false;
-        }
-        func.file.contains("/dist/")
-            || func.file.contains("/build/")
-            || func.file.contains("/assets/")
-            || func.file.ends_with(".min.js")
-            || func.file.contains("browser-")
-            || func.file.contains("main-")
-            || func.file.contains("index-")
-            || func.file.contains("chunk-")
-            || func.file.contains("node_modules/")
-    }
-
     fn is_generated_file(func: &FunctionNode) -> bool {
         func.file.contains(".gen.go")
             || func.file.contains("_gen.go")
@@ -318,18 +152,12 @@ impl DeadCodeAnalyzer {
             && (is_component || is_hook || is_setter || is_react_file || is_state_hook)
     }
 
-    fn is_exported_but_unused(&self, func: &FunctionNode, import_graph: &ImportGraph) -> bool {
-        let is_exported = func.file.contains("export") || func.file.contains("pub fn");
-        let is_imported = import_graph.get_importers(&func.full_path).len() > 0;
-        is_exported && !is_imported
-    }
-
     fn get_cache_key(call_graph: &CallGraph) -> String {
         format!("cg_{}", call_graph.node_count())
     }
 
     // ================================================================
-    // MAIN ANALYSIS METHOD — Updated with debug output
+    // MAIN ANALYSIS METHOD
     // ================================================================
 
     pub fn analyze(
@@ -441,10 +269,9 @@ impl DeadCodeAnalyzer {
                 continue;
             }
 
-            // ⭐ NEW: Don't skip exported functions automatically
-            // Instead, score them and let the confidence threshold decide
+            // Don't skip exported functions automatically
+            // Score them and let the confidence threshold decide
             if func.is_public && func.fan_in == 0 {
-                // Check if it's a library root with documentation
                 if func.file.contains("lib.rs") || func.file.contains("mod.rs") {
                     if func.doc_comment.is_some() {
                         skipped_exported += 1;
@@ -457,9 +284,6 @@ impl DeadCodeAnalyzer {
                     }
                 }
             }
-
-            // ⭐ NEW: Don't skip functions with callers automatically
-            // They might be dead if all their callers are dead
 
             // Score the function
             let git_info =
