@@ -1,7 +1,7 @@
 use crate::analysis::features::FeatureExtractor;
 use crate::engine::cache::FileCache;
 use crate::engine::indexer::RichIndexes;
-use crate::engine::pipeline::LLMAnalysis;
+use crate::engine::llm_analysis::LLMAnalysis;
 use crate::graph::call_graph::CallGraph;
 use crate::graph::call_graph::FunctionNode;
 use crate::graph::dependency_graph::DependencyGraph;
@@ -414,7 +414,7 @@ impl ProjectAnalysis {
         if let Some(ref llm) = self.llm_analysis {
             output.push_str("## 🤖 LLM Analysis\n\n");
 
-            if let Some(ref doc) = llm.documentation {
+            if let Some(doc) = &llm.documentation {
                 output.push_str(&doc);
                 output.push_str("\n\n");
             }
@@ -548,7 +548,7 @@ impl ProjectAnalysis {
         // LLM Analysis first
         if let Some(ref llm) = self.llm_analysis {
             output.push_str("## 🤖 LLM Analysis\n\n");
-            if let Some(ref doc) = llm.documentation {
+            if let Some(doc) = &llm.documentation {
                 output.push_str(&doc);
                 output.push_str("\n\n");
             }

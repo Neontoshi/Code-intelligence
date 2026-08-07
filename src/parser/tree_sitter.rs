@@ -490,7 +490,9 @@ impl TreeSitterParser {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             match child.kind() {
+                // ============================================================
                 // CALL EXPRESSION: function_name() or self.method() or Type::method()
+                // ============================================================
                 "call_expression" => {
                     if let Some(func) = child.child_by_field_name("function") {
                         // Case 1: Field expression — x.method() or self.method()
@@ -504,13 +506,10 @@ impl TreeSitterParser {
                             if let Some(method) = func.child_by_field_name("field") {
                                 if let Ok(method_name) = method.utf8_text(source.as_bytes()) {
                                     if receiver == "self" {
-                                        // self.method() → self::method
                                         calls.push(format!("self::{}", method_name));
                                     } else if receiver == "Self" {
-                                        // Self::method()
                                         calls.push(format!("Self::{}", method_name));
                                     } else if receiver.contains("::") {
-                                        // Type::method() or module::method()
                                         calls.push(format!("{}::{}", receiver, method_name));
                                     } else {
                                         // variable.method() — store as method call
@@ -533,7 +532,9 @@ impl TreeSitterParser {
                         }
                     }
                 }
+                // ============================================================
                 // METHOD CALL: Generic method call detection
+                // ============================================================
                 "method_call" | "method_invocation" => {
                     if let Some(receiver) = child.child_by_field_name("receiver") {
                         let receiver_text = receiver
@@ -556,15 +557,21 @@ impl TreeSitterParser {
                         }
                     }
                 }
+                // ============================================================
                 // CHAIN EXPRESSION: x.y().z()
+                // ============================================================
                 "chain_expression" | "chained_call" => {
                     Self::walk_for_calls_with_context(&child, source, calls, receiver_type);
                 }
+                // ============================================================
                 // INDEX EXPRESSION: a[b] → op::index
+                // ============================================================
                 "index_expression" => {
                     calls.push("op::index".to_string());
                 }
+                // ============================================================
                 // BINARY EXPRESSION: a + b → op::add
+                // ============================================================
                 "binary_expression" => {
                     if let Some(op_node) = child.child_by_field_name("operator") {
                         if let Ok(op) = op_node.utf8_text(source.as_bytes()) {
@@ -582,11 +589,12 @@ impl TreeSitterParser {
                         }
                     }
                 }
+                // ============================================================
                 // SCOPED IDENTIFIER: Type::method (standalone)
+                // ============================================================
                 "scoped_identifier" | "qualified_identifier" => {
                     if let Ok(text) = child.utf8_text(source.as_bytes()) {
                         if text.contains("::") {
-                            // Check if it's a function call context
                             if let Some(parent) = child.parent() {
                                 if parent.kind() == "call_expression" {
                                     calls.push(text.to_string());
@@ -595,7 +603,9 @@ impl TreeSitterParser {
                         }
                     }
                 }
+                // ============================================================
                 // FIELD EXPRESSION: self.method (standalone)
+                // ============================================================
                 "field_expression" => {
                     if let (Some(value), Some(field)) = (
                         child.child_by_field_name("value"),
@@ -612,13 +622,14 @@ impl TreeSitterParser {
                                 calls.push(format!("Self::{}", method_name));
                             } else if receiver.contains("::") {
                                 calls.push(format!("{}::{}", receiver, method_name));
+                            } else {
+                                calls.push(format!("{}.{}", receiver, method_name));
                             }
                         }
                     }
                 }
                 _ => {}
             }
-            // Recurse into children
             Self::walk_for_calls_with_context(&child, source, calls, receiver_type);
         }
     }

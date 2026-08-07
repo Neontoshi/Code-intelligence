@@ -3,83 +3,25 @@
 use crate::analysis::context::{ProjectAnalysis, ProjectAnalysisBuilder};
 use crate::analysis::features::FeatureExtractor;
 use crate::analysis::importance::ImportanceScorer;
-use crate::engine::cache::{AnalysisCacheManager, FileCache};
+use crate::engine::cache::FileCache;
+use crate::engine::call_graph_builder::CallGraphBuilder;
+use crate::engine::config::PipelineConfig;
+use crate::engine::file_collector::FileCollector;
 use crate::engine::indexer::IndexBuilder;
-use crate::graph::call_graph::{CallEdge, CallGraph, FunctionNode};
+use crate::engine::llm_analysis::{LLMAnalysis, LLMAnalyzer};
+use crate::engine::stages::{AnalyzedProject, OptimizedProject, ParsedProject, RawProject};
+use crate::graph::call_graph::CallGraph;
 use crate::graph::project_graph::ProjectGraphBuilder;
 use crate::graph::traits::GraphMetrics;
 use crate::llm::{create_ollama_phi2, CodeUnderstandingEngine, LLMProvider};
-use crate::optimize::{SemanticCompressor, TokenEstimator};
 use crate::parser::tree_sitter::{ParsedFile, TreeSitterParser};
 use rayon::prelude::*;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::Arc; // ⭐ ADD THIS
+use std::path::Path;
+use std::sync::Arc;
 
 // ============================================================================
-// Pipeline Configuration
-// ============================================================================
-
-#[derive(Debug, Clone)]
-pub struct PipelineConfig {
-    pub enable_llm: bool,
-    pub enable_git: bool,
-    pub llm_temperature: f32,
-    pub llm_max_tokens: usize,
-    pub max_files: usize,
-    pub max_file_size: u64,
-}
-
-impl Default for PipelineConfig {
-    fn default() -> Self {
-        Self {
-            enable_llm: false,
-            enable_git: false,
-            llm_temperature: 0.3,
-            llm_max_tokens: 1000,
-            max_files: 10000,
-            max_file_size: 1_000_000, // 1MB
-        }
-    }
-}
-
-// ============================================================================
-// Pipeline Stages
-// ============================================================================
-
-/// Stage 1: Raw file collection
-pub struct RawProject {
-    pub root: PathBuf,
-    pub files: Vec<PathBuf>,
-}
-
-/// Stage 2: Parsed project
-pub struct ParsedProject {
-    pub root: PathBuf,
-    pub files: Vec<ParsedFile>,
-}
-
-/// Stage 3: Analyzed project with graph
-pub struct AnalyzedProject {
-    pub root: PathBuf,
-    pub files: Vec<ParsedFile>,
-    pub call_graph: CallGraph,
-    pub project_graph: crate::graph::project_graph::ProjectGraph,
-}
-
-/// Stage 4: Optimized project with features and indexes
-pub struct OptimizedProject {
-    pub root: PathBuf,
-    pub files: Vec<ParsedFile>,
-    pub call_graph: CallGraph,
-    pub project_graph: crate::graph::project_graph::ProjectGraph,
-    pub features: FeatureExtractor,
-    pub rich_indexes: crate::engine::indexer::RichIndexes,
-    pub metrics: crate::analysis::context::ProjectMetrics,
-}
-
-// ============================================================================
-// Pipeline
+// Pipeline Struct
 // ============================================================================
 
 pub struct Pipeline {
@@ -89,7 +31,7 @@ pub struct Pipeline {
     config: PipelineConfig,
     llm_provider: Option<Arc<dyn LLMProvider>>,
     code_understanding: Option<CodeUnderstandingEngine>,
-    _analysis_cache: Option<AnalysisCacheManager>,
+    _analysis_cache: Option<crate::engine::cache::AnalysisCacheManager>,
 }
 
 impl Pipeline {
@@ -139,105 +81,13 @@ impl Pipeline {
     }
 
     // ========================================================================
-    // Immutable Pipeline Stages
+    // Stage Methods
     // ========================================================================
-    /// Stage 1: Collect files
+
     pub fn stage_collect(&self, root: &Path) -> RawProject {
-        use walkdir::WalkDir;
-
-        let skip_dirs = [
-            ".git",
-            "target",
-            "node_modules",
-            "__pycache__",
-            ".venv",
-            "venv",
-            "dist",
-            "build",
-            ".idea",
-            ".vscode",
-            ".dart_tool",
-            ".pub",
-            ".gradle",
-            "vendor",
-        ];
-
-        let supported_extensions = ["rs", "py", "js", "jsx", "ts", "tsx", "go", "java"];
-
-        let skip_files = [
-            "package-lock.json",
-            "yarn.lock",
-            "Cargo.lock",
-            "Gemfile.lock",
-            "poetry.lock",
-            "Pipfile.lock",
-        ];
-
-        let files: Vec<PathBuf> = WalkDir::new(root)
-            .into_iter()
-            .filter_entry(|e| {
-                let name = e.file_name().to_str().unwrap_or("");
-                !skip_dirs.contains(&name)
-            })
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                if !e.path().is_file() {
-                    return false;
-                }
-                if let Some(name) = e.path().file_name().and_then(|n| n.to_str()) {
-                    if skip_files.contains(&name) {
-                        return false;
-                    }
-                }
-                if let Some(ext) = e.path().extension().and_then(|e| e.to_str()) {
-                    if supported_extensions.contains(&ext) {
-                        if let Ok(meta) = e.metadata() {
-                            if meta.len() == 0 || meta.len() > self.config.max_file_size {
-                                return false;
-                            }
-                        }
-                        return true;
-                    }
-                }
-                false
-            })
-            .take(self.config.max_files)
-            .map(|e| e.path().to_path_buf())
-            .collect();
-
-        RawProject {
-            root: root.to_path_buf(),
-            files,
-        }
+        FileCollector::collect(root, &self.config)
     }
 
-    /// Stage 2: Parse files (returns new ParsedProject)
-    pub fn stage_parse(&self, raw: RawProject) -> ParsedProject {
-        let parsed_files: Vec<ParsedFile> = raw
-            .files
-            .par_iter()
-            .filter_map(|file| {
-                let thread_parser = TreeSitterParser::new();
-                match thread_parser.parse_file(file) {
-                    Ok(parsed) => {
-                        if !parsed.functions.is_empty() || !parsed.types.is_empty() {
-                            Some(parsed)
-                        } else {
-                            None
-                        }
-                    }
-                    Err(_e) => None,
-                }
-            })
-            .collect();
-
-        ParsedProject {
-            root: raw.root,
-            files: parsed_files,
-        }
-    }
-
-    /// Stage 2b: Parse files in parallel with progress tracking
     pub fn stage_parse_parallel(&self, raw: RawProject) -> ParsedProject {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -275,184 +125,14 @@ impl Pipeline {
         }
     }
 
-    /// Stage 3: Build graphs (returns new AnalyzedProject)
-    pub fn stage_analyze(&self, parsed: ParsedProject) -> AnalyzedProject {
-        let mut call_graph = self.build_call_graph(&parsed.files);
-
-        // Enhance call graph
-        call_graph.calculate_fan_metrics();
-        call_graph.detect_layers();
-        call_graph.calculate_call_depth();
-
-        // Build project graph
-        let mut graph_builder = ProjectGraphBuilder::new();
-        for file in &parsed.files {
-            graph_builder = graph_builder.add_file(file.path.clone(), file.source.clone());
-        }
-        for idx in call_graph.node_indices() {
-            let func = &call_graph[idx];
-            graph_builder = graph_builder.add_function(func.clone(), &func.file);
-        }
-        for idx in call_graph.node_indices() {
-            let func = &call_graph[idx];
-            for callee in call_graph.get_callees(idx) {
-                let edge = CallEdge {
-                    call_type: "direct".to_string(),
-                    line: func.line,
-                };
-                graph_builder = graph_builder.add_call(&func.full_path, &callee.full_path, edge);
-            }
-        }
-        let project_graph = graph_builder.build();
-
-        AnalyzedProject {
-            root: parsed.root,
-            files: parsed.files,
-            call_graph,
-            project_graph,
-        }
-    }
-    /// Stage 3b: Build graphs with parallel data collection
     pub fn stage_analyze_parallel(&self, parsed: ParsedProject) -> AnalyzedProject {
-        // Collect all function data in parallel - collect Vec of Vecs then flatten
-        let all_func_data: Vec<(String, FunctionNode)> = parsed
-            .files
-            .par_iter()
-            .map(|file| {
-                let file_path = file.path.clone();
-                let mut funcs = Vec::new();
-                for func in &file.functions {
-                    let full_path = match &func.container {
-                        Some(c) => format!("{}::{}::{}", file_path, c, func.name),
-                        None => format!("{}::{}", file_path, func.name),
-                    };
-                    let node = FunctionNode {
-                        name: func.name.clone(),
-                        full_path: full_path.clone(),
-                        file: file_path.clone(),
-                        line: func.line,
-                        is_public: func.is_public,
-                        is_async: func.is_async,
-                        params: func.params.iter().map(|p| p.name.clone()).collect(),
-                        returns: func.return_type.clone().into_iter().collect(),
-                        complexity: 1.0,
-                        importance_score: 0.0,
-                        doc_comment: func.doc_comment.clone(),
-                        writes_to: Vec::new(),
-                        reads_from: Vec::new(),
-                        errors: Vec::new(),
-                        fan_in: 0,
-                        fan_out: 0,
-                        is_cycle: false,
-                        depth: 0,
-                        layer: String::new(),
-                        trait_impl: func.trait_impl.clone(),
-                    };
-                    funcs.push((full_path, node));
-                }
-                funcs
-            })
-            .reduce(Vec::new, |mut acc, mut v| {
-                acc.append(&mut v);
-                acc
-            });
+        let call_graph = CallGraphBuilder::build(&parsed.files);
 
-        // Build call graph (single-threaded, but data collection was parallel)
-        let mut call_graph = CallGraph::new();
-        let mut path_to_idx = std::collections::HashMap::new();
-
-        for (full_path, node) in all_func_data {
-            let idx = call_graph.add_function(node);
-            path_to_idx.insert(full_path, idx);
-        }
-
-        // Build edges
-        for file in &parsed.files {
-            let file_path = file.path.clone();
-            for func in &file.functions {
-                let caller_path = match &func.container {
-                    Some(c) => format!("{}::{}::{}", file_path, c, func.name),
-                    None => format!("{}::{}", file_path, func.name),
-                };
-                if let Some(&caller_idx) = path_to_idx.get(&caller_path) {
-                    for called_name in &func.calls {
-                        // Qualified call (e.g. "GraphVizOutput::new") — try
-                        // matching container + method directly first.
-                        let mut resolved = false;
-                        if let Some((qualifier, method)) = called_name.rsplit_once("::") {
-                            let qualified_path =
-                                format!("{}::{}::{}", file_path, qualifier, method);
-                            if let Some(&callee_idx) = path_to_idx.get(&qualified_path) {
-                                call_graph.add_call(
-                                    caller_idx,
-                                    callee_idx,
-                                    CallEdge {
-                                        call_type: "direct".to_string(),
-                                        line: func.line,
-                                    },
-                                );
-                                resolved = true;
-                            }
-                        }
-                        if resolved {
-                            continue;
-                        }
-
-                        let simple_name = called_name.rsplit("::").next().unwrap_or(called_name);
-
-                        // Same-file, unqualified: only accept if there's
-                        // exactly one candidate in this file with that name —
-                        // otherwise we can't tell which one was meant.
-                        let same_file_candidates: Vec<_> = path_to_idx
-                            .iter()
-                            .filter(|(path, _)| {
-                                path.starts_with(&format!("{}::", file_path))
-                                    && path.ends_with(&format!("::{}", simple_name))
-                                    && path != &&caller_path
-                            })
-                            .collect();
-                        if same_file_candidates.len() == 1 {
-                            let (_, &callee_idx) = same_file_candidates[0];
-                            call_graph.add_call(
-                                caller_idx,
-                                callee_idx,
-                                CallEdge {
-                                    call_type: "fuzzy".to_string(),
-                                    line: func.line,
-                                },
-                            );
-                        }
-                        // If ambiguous (0 or 2+ candidates), skip the edge —
-                        // a missing edge is far less misleading than a
-                        // guessed-wrong one.
-                    }
-                }
-            }
-        }
-
-        // Enhance call graph
+        let mut call_graph = call_graph;
         call_graph.calculate_fan_metrics();
         call_graph.detect_layers();
         call_graph.calculate_call_depth();
 
-        // Build project graph
-        // Count call types
-        // Count call types
-        let mut call_types: std::collections::HashMap<String, usize> =
-            std::collections::HashMap::new();
-        for idx in call_graph.node_indices() {
-            for edge in call_graph
-                .graph
-                .edges_directed(idx, petgraph::Direction::Outgoing)
-            {
-                *call_types
-                    .entry(edge.weight().call_type.clone())
-                    .or_insert(0) += 1;
-            }
-        }
-        println!("   📞 Call types: {:?}", call_types);
-
-        // Build project graph
         let mut graph_builder = ProjectGraphBuilder::new();
         for file in &parsed.files {
             graph_builder = graph_builder.add_file(file.path.clone(), file.source.clone());
@@ -464,7 +144,7 @@ impl Pipeline {
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
             for callee in call_graph.get_callees(idx) {
-                let edge = CallEdge {
+                let edge = crate::graph::call_graph::CallEdge {
                     call_type: "direct".to_string(),
                     line: func.line,
                 };
@@ -481,45 +161,13 @@ impl Pipeline {
         }
     }
 
-    /// Stage 4: Extract features and build indexes (returns new OptimizedProject)
-    pub fn stage_optimize(&self, analyzed: AnalyzedProject) -> OptimizedProject {
-        let functions: Vec<FunctionNode> = analyzed
-            .call_graph
-            .node_indices()
-            .map(|idx| analyzed.call_graph[idx].clone())
-            .collect();
-
-        // Extract features
-        let mut feature_extractor = FeatureExtractor::new();
-        feature_extractor.extract_all(&functions, &analyzed.files);
-
-        // Build rich indexes
-        let index_builder = IndexBuilder::new();
-        let rich_indexes = index_builder.build_from_analysis(&functions, &analyzed.files);
-
-        // Build metrics
-        let metrics = ProjectAnalysisBuilder::build_metrics(&analyzed.files, &analyzed.call_graph);
-
-        OptimizedProject {
-            root: analyzed.root,
-            files: analyzed.files,
-            call_graph: analyzed.call_graph,
-            project_graph: analyzed.project_graph,
-            features: feature_extractor,
-            rich_indexes,
-            metrics,
-        }
-    }
-
-    /// Stage 4b: Extract features in parallel
     pub fn stage_optimize_parallel(&self, analyzed: AnalyzedProject) -> OptimizedProject {
-        let functions: Vec<FunctionNode> = analyzed
+        let functions: Vec<crate::graph::call_graph::FunctionNode> = analyzed
             .call_graph
             .node_indices()
             .map(|idx| analyzed.call_graph[idx].clone())
             .collect();
 
-        // Build source map for parallel access
         let source_map: HashMap<String, String> = analyzed
             .files
             .iter()
@@ -536,7 +184,6 @@ impl Pipeline {
             })
             .collect();
 
-        // Extract features in parallel
         let features: Vec<(String, crate::analysis::features::FunctionFeatures)> = functions
             .par_iter()
             .filter_map(|func| {
@@ -556,17 +203,14 @@ impl Pipeline {
             })
             .collect();
 
-        // Build feature extractor
         let mut feature_extractor = FeatureExtractor::new();
         for (path, feature) in features {
             feature_extractor.insert(path, feature);
         }
 
-        // Build rich indexes
         let index_builder = IndexBuilder::new();
         let rich_indexes = index_builder.build_from_analysis(&functions, &analyzed.files);
 
-        // Build metrics
         let metrics = ProjectAnalysisBuilder::build_metrics(&analyzed.files, &analyzed.call_graph);
 
         OptimizedProject {
@@ -580,7 +224,6 @@ impl Pipeline {
         }
     }
 
-    /// Stage 5: Build final analysis
     pub fn stage_finalize(
         &self,
         optimized: OptimizedProject,
@@ -606,7 +249,6 @@ impl Pipeline {
     ) -> Result<ProjectAnalysis, Box<dyn std::error::Error>> {
         let start_time = std::time::Instant::now();
 
-        // Stage 1: Collect
         let raw = self.stage_collect(root);
         println!("📁 Found {} source files", raw.files.len());
 
@@ -618,7 +260,6 @@ impl Pipeline {
             );
         }
 
-        // Stage 2: Parse in parallel
         println!("🔄 Parsing files in parallel...");
         let parsed = self.stage_parse_parallel(raw);
         println!("✅ Successfully parsed {} files", parsed.files.len());
@@ -629,9 +270,8 @@ impl Pipeline {
                 .build());
         }
 
-        // Stage 3: Analyze in parallel
         println!("🔄 Building graphs in parallel...");
-        let analyzed = self.stage_analyze(parsed);
+        let analyzed = self.stage_analyze_parallel(parsed);
         println!(
             "📊 Built call graph: {} functions, {} edges",
             analyzed.call_graph.node_count(),
@@ -652,7 +292,6 @@ impl Pipeline {
             project_graph.edge_count()
         );
 
-        // Cycle detection - only if graph isn't too large
         let node_count = analyzed.call_graph.node_count();
         if node_count < 1000 {
             let mut call_graph = analyzed.call_graph.clone();
@@ -669,7 +308,6 @@ impl Pipeline {
             );
         }
 
-        // Layers
         let layers: std::collections::HashSet<String> = analyzed
             .call_graph
             .node_indices()
@@ -679,7 +317,6 @@ impl Pipeline {
         layer_list.sort();
         println!("   📂 Layers: {:?}", layer_list);
 
-        // Stage 4: Optimize in parallel
         println!("🔄 Extracting features and building indexes in parallel...");
         let optimized = self.stage_optimize_parallel(analyzed);
         println!(
@@ -693,15 +330,14 @@ impl Pipeline {
             optimized.rich_indexes.signature_hash.len()
         );
 
-        // Score importance
         let mut call_graph = optimized.call_graph.clone();
         self.scorer.score_all(&mut call_graph);
         println!("📈 Scored function importance");
 
-        // LLM Analysis
         let llm_analysis = if self.config.enable_llm && self.code_understanding.is_some() {
             println!("🤖 Running LLM analysis...");
-            let analysis = self.run_llm_analysis(&call_graph, &optimized.files).await;
+            let engine = self.code_understanding.as_mut().unwrap();
+            let analysis = LLMAnalyzer::analyze(engine, &call_graph, &optimized.files).await;
             if let Ok(ref a) = analysis {
                 println!("✅ LLM analysis complete");
                 println!("   - Documentation generated: {}", a.has_documentation);
@@ -713,7 +349,6 @@ impl Pipeline {
             None
         };
 
-        // Stage 5: Finalize
         let final_optimized = OptimizedProject {
             call_graph,
             ..optimized
@@ -733,7 +368,6 @@ impl Pipeline {
         let mut intelligence = self.process_project(root).await?;
 
         if self.config.enable_git {
-            // Add git analysis
             if let Ok(git_analysis) = crate::analysis::git_analysis::GitAnalyzer::analyze(root) {
                 println!("📊 Git Analysis:");
                 println!("   Total commits: {}", git_analysis.total_commits);
@@ -748,7 +382,6 @@ impl Pipeline {
                         .join(", ")
                 );
 
-                // Add git activity scores to function importance
                 for idx in intelligence.call_graph.node_indices() {
                     let func = &intelligence.call_graph[idx];
                     let score = git_analysis.file_activity_score(Path::new(&func.file));
@@ -763,866 +396,5 @@ impl Pipeline {
         }
 
         Ok(intelligence)
-    }
-
-    // ========================================================================
-    // LLM Analysis - Now async
-    // ========================================================================
-
-    async fn run_llm_analysis(
-        &mut self,
-        call_graph: &CallGraph,
-        files: &[ParsedFile],
-    ) -> Result<LLMAnalysis, String> {
-        let engine = self
-            .code_understanding
-            .as_mut()
-            .ok_or_else(|| "LLM engine not initialized".to_string())?;
-
-        let mut analysis = LLMAnalysis::default();
-
-        // Only generate documentation (1 call instead of 20+)
-        println!("   📝 Generating documentation...");
-        match engine.generate_documentation(call_graph, files).await {
-            Ok(doc) => {
-                analysis.documentation = Some(doc);
-                analysis.has_documentation = true;
-            }
-            Err(e) => {
-                eprintln!("   ❌ Failed to generate documentation: {}", e);
-            }
-        }
-
-        // Summarize only top 3 functions (instead of 10)
-        let mut important_functions: Vec<_> = call_graph
-            .node_indices()
-            .map(|idx| (&call_graph[idx], idx))
-            .collect();
-        important_functions.sort_by(|a, b| {
-            b.0.importance_score
-                .partial_cmp(&a.0.importance_score)
-                .unwrap()
-        });
-
-        let mut source_map = std::collections::HashMap::new();
-        for file in files {
-            source_map.insert(file.path.clone(), file.source.clone());
-        }
-
-        let mut summaries = Vec::new();
-        let mut issues = Vec::new();
-
-        // Keep this small on constrained hardware — each function costs
-        // 1-2 sequential LLM round-trips. 3 is a reasonable default;
-        // raise it once you've confirmed acceptable latency.
-        const MAX_FUNCTIONS_TO_ANALYZE: usize = 3;
-        const RUN_BUG_ANALYSIS: bool = false; // toggle on if you want it
-
-        for (func, _idx) in important_functions.iter().take(MAX_FUNCTIONS_TO_ANALYZE) {
-            if let Some(source) = source_map.get(&func.file) {
-                // Summarize
-                match engine.summarize_function(func, source).await {
-                    Ok(summary) => {
-                        summaries.push((func.name.clone(), summary));
-                        analysis.summarized_count += 1;
-                    }
-                    Err(e) => {
-                        eprintln!("❌ Failed to summarize {}: {}", func.name, e);
-                    }
-                }
-
-                // Find issues (optional — doubles the LLM calls when on)
-                if RUN_BUG_ANALYSIS {
-                    match engine.analyze_bugs(func, source).await {
-                        Ok(issues_list) => {
-                            for issue in issues_list {
-                                issues.push((func.name.clone(), issue));
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("❌ Failed to analyze {}: {}", func.name, e);
-                        }
-                    }
-                }
-            }
-        }
-
-        analysis.function_summaries = summaries;
-        analysis.issues_count = issues.len();
-        analysis.issues = issues;
-        Ok(analysis)
-    }
-
-    // Call Graph Building
-    fn build_call_graph(&self, files: &[ParsedFile]) -> CallGraph {
-        use std::collections::HashMap;
-
-        let mut call_graph = CallGraph::new();
-        let mut func_index: HashMap<String, petgraph::graph::NodeIndex> = HashMap::new();
-        let mut func_by_name: HashMap<String, Vec<String>> = HashMap::new();
-        let mut func_by_file: HashMap<String, Vec<String>> = HashMap::new();
-        let mut import_map: HashMap<String, Vec<String>> = HashMap::new();
-
-        // First pass: Build import map
-        for file in files {
-            for import in &file.imports {
-                let module = &import.module;
-                for item in &import.items {
-                    let full_path = format!("{}::{}", module, item);
-                    import_map.entry(item.clone()).or_default().push(full_path);
-                }
-                import_map
-                    .entry(import.module.clone())
-                    .or_default()
-                    .push(module.clone());
-            }
-        }
-
-        // Second pass: Add all functions and index them
-        for file in files {
-            let file_path = file.path.clone();
-            for func in &file.functions {
-                let full_path = match &func.container {
-                    Some(c) => format!("{}::{}::{}", file_path, c, func.name),
-                    None => format!("{}::{}", file_path, func.name),
-                };
-                let node = FunctionNode {
-                    name: func.name.clone(),
-                    full_path: full_path.clone(),
-                    file: file_path.clone(),
-                    line: func.line,
-                    is_public: func.is_public,
-                    is_async: func.is_async,
-                    params: func.params.iter().map(|p| p.name.clone()).collect(),
-                    returns: func.return_type.clone().into_iter().collect(),
-                    complexity: 1.0,
-                    importance_score: 0.0,
-                    doc_comment: func.doc_comment.clone(),
-                    writes_to: Vec::new(),
-                    reads_from: Vec::new(),
-                    errors: Vec::new(),
-                    fan_in: 0,
-                    fan_out: 0,
-                    is_cycle: false,
-                    depth: 0,
-                    layer: String::new(),
-                    trait_impl: func.trait_impl.clone(),
-                };
-                let idx = call_graph.add_function(node);
-                func_index.insert(full_path.clone(), idx);
-                func_by_name
-                    .entry(func.name.clone())
-                    .or_default()
-                    .push(full_path.clone());
-                func_by_file
-                    .entry(file_path.clone())
-                    .or_default()
-                    .push(full_path);
-            }
-        }
-
-        // Trait-method index for operator-overload resolution
-        let mut trait_method_index: HashMap<(String, String), Vec<petgraph::graph::NodeIndex>> =
-            HashMap::new();
-        for idx in call_graph.node_indices() {
-            let node = &call_graph[idx];
-            if let Some(trait_name) = &node.trait_impl {
-                let base = Self::base_trait_name(trait_name);
-                trait_method_index
-                    .entry((base, node.name.clone()))
-                    .or_default()
-                    .push(idx);
-            }
-        }
-
-        // Build function name to full path mapping for internal calls
-        let mut func_name_to_paths: HashMap<String, Vec<String>> = HashMap::new();
-        for (path, _) in &func_index {
-            if let Some(name) = path.split("::").last() {
-                func_name_to_paths
-                    .entry(name.to_string())
-                    .or_default()
-                    .push(path.clone());
-            }
-        }
-
-        // Build container to functions mapping for impl blocks
-        let mut container_to_functions: HashMap<String, Vec<String>> = HashMap::new();
-        for (path, _) in &func_index {
-            let parts: Vec<&str> = path.split("::").collect();
-            if parts.len() >= 3 {
-                // Format: file::container::function
-                let container = format!("{}::{}", parts[0], parts[1]);
-                container_to_functions
-                    .entry(container)
-                    .or_default()
-                    .push(path.clone());
-            }
-        }
-
-        // Third pass: Build edges with import resolution and internal call detection
-        for file in files {
-            let file_path = file.path.clone();
-            for func in &file.functions {
-                let caller_path = match &func.container {
-                    Some(c) => format!("{}::{}::{}", file_path, c, func.name),
-                    None => format!("{}::{}", file_path, func.name),
-                };
-                if let Some(&caller_idx) = func_index.get(&caller_path) {
-                    for called_name in &func.calls {
-                        let mut found = false;
-
-                        // TIER OP: Operator overloads
-                        if called_name.starts_with("op::") {
-                            let method = called_name.trim_start_matches("op::");
-                            let expected: &[(&str, &str)] = match method {
-                                "index" => &[("Index", "index"), ("IndexMut", "index_mut")],
-                                "add" => &[("Add", "add")],
-                                "sub" => &[("Sub", "sub")],
-                                "mul" => &[("Mul", "mul")],
-                                "div" => &[("Div", "div")],
-                                "rem" => &[("Rem", "rem")],
-                                _ => &[],
-                            };
-                            for (trait_name, method_name) in expected {
-                                if let Some(idxs) = trait_method_index
-                                    .get(&(trait_name.to_string(), method_name.to_string()))
-                                {
-                                    for &callee_idx in idxs {
-                                        call_graph.add_call(
-                                            caller_idx,
-                                            callee_idx,
-                                            CallEdge {
-                                                call_type: "operator_overload".to_string(),
-                                                line: func.line,
-                                            },
-                                        );
-                                    }
-                                }
-                            }
-                            continue;
-                        }
-
-                        // TIER 0: Method call on self (self.method_name)
-                        if !found && called_name.starts_with("self::") {
-                            let method_name = called_name.trim_start_matches("self::");
-                            if let Some(container) = &func.container {
-                                let full_path =
-                                    format!("{}::{}::{}", file_path, container, method_name);
-                                if let Some(&callee_idx) = func_index.get(&full_path) {
-                                    call_graph.add_call(
-                                        caller_idx,
-                                        callee_idx,
-                                        CallEdge {
-                                            call_type: "self_method".to_string(),
-                                            line: func.line,
-                                        },
-                                    );
-                                    found = true;
-                                }
-                            }
-                        }
-
-                        // TIER 1: Qualified call (Type::method)
-                        if !found {
-                            if let Some((qualifier, method)) = called_name.rsplit_once("::") {
-                                let qualified_path =
-                                    format!("{}::{}::{}", file_path, qualifier, method);
-                                if let Some(&callee_idx) = func_index.get(&qualified_path) {
-                                    call_graph.add_call(
-                                        caller_idx,
-                                        callee_idx,
-                                        CallEdge {
-                                            call_type: "exact".to_string(),
-                                            line: func.line,
-                                        },
-                                    );
-                                    found = true;
-                                }
-                            }
-                        }
-
-                        let simple_name = called_name.rsplit("::").next().unwrap_or(called_name);
-
-                        // ⭐ NEW: Handle method calls (variable.method)
-                        if !found && called_name.contains(".") {
-                            let parts: Vec<&str> = called_name.split('.').collect();
-                            if parts.len() == 2 {
-                                let _receiver = parts[0];
-                                let method = parts[1];
-
-                                // Try to find a method with this name in the same file
-                                // First check if it's in the same container (impl block)
-                                if let Some(container) = &func.container {
-                                    let full_path =
-                                        format!("{}::{}::{}", file_path, container, method);
-                                    if let Some(&callee_idx) = func_index.get(&full_path) {
-                                        call_graph.add_call(
-                                            caller_idx,
-                                            callee_idx,
-                                            CallEdge {
-                                                call_type: "method_call".to_string(),
-                                                line: func.line,
-                                            },
-                                        );
-                                        found = true;
-                                    }
-                                }
-
-                                // If not found, try to find it as a standalone function in the same file
-                                if !found {
-                                    let full_path = format!("{}::{}", file_path, method);
-                                    if let Some(&callee_idx) = func_index.get(&full_path) {
-                                        call_graph.add_call(
-                                            caller_idx,
-                                            callee_idx,
-                                            CallEdge {
-                                                call_type: "method_call".to_string(),
-                                                line: func.line,
-                                            },
-                                        );
-                                        found = true;
-                                    }
-                                }
-                            }
-                        }
-
-                        // ⭐ NEW: Handle associated function calls (Self::method)
-                        if !found && called_name.starts_with("Self::") {
-                            let method_name = called_name.trim_start_matches("Self::");
-                            if let Some(container) = &func.container {
-                                let full_path =
-                                    format!("{}::{}::{}", file_path, container, method_name);
-                                if let Some(&callee_idx) = func_index.get(&full_path) {
-                                    call_graph.add_call(
-                                        caller_idx,
-                                        callee_idx,
-                                        CallEdge {
-                                            call_type: "associated_call".to_string(),
-                                            line: func.line,
-                                        },
-                                    );
-                                    found = true;
-                                }
-                            }
-                        }
-
-                        // ⭐ NEW: Handle Type::method calls (qualified)
-                        if !found
-                            && called_name.contains("::")
-                            && !called_name.starts_with("self::")
-                            && !called_name.starts_with("Self::")
-                        {
-                            // This is already handled by TIER 1, but we double-check here
-                            // to ensure we catch all qualified calls
-                        }
-                        // TIER 2: Internal calls within the same file
-                        if !found {
-                            // Get all functions in this file with the same name
-                            let candidates: Vec<String> = func_by_file
-                                .get(&file_path)
-                                .unwrap_or(&vec![])
-                                .iter()
-                                .filter(|path| {
-                                    path.ends_with(&format!("::{}", simple_name))
-                                        && *path != &caller_path
-                                })
-                                .cloned()
-                                .collect();
-
-                            if candidates.len() == 1 {
-                                // Exactly one candidate in this file
-                                if let Some(&callee_idx) = func_index.get(&candidates[0]) {
-                                    call_graph.add_call(
-                                        caller_idx,
-                                        callee_idx,
-                                        CallEdge {
-                                            call_type: "internal_call".to_string(),
-                                            line: func.line,
-                                        },
-                                    );
-                                    found = true;
-                                }
-                            } else if candidates.len() > 1 {
-                                // Multiple candidates in same file
-                                // Try to find one in the same container (impl block)
-                                if let Some(container) = &func.container {
-                                    let container_key = format!("{}::{}", file_path, container);
-                                    if let Some(container_funcs) =
-                                        container_to_functions.get(&container_key)
-                                    {
-                                        let container_candidates: Vec<_> = candidates
-                                            .iter()
-                                            .filter(|path| container_funcs.contains(*path))
-                                            .collect();
-                                        if container_candidates.len() == 1 {
-                                            if let Some(&callee_idx) =
-                                                func_index.get(container_candidates[0])
-                                            {
-                                                call_graph.add_call(
-                                                    caller_idx,
-                                                    callee_idx,
-                                                    CallEdge {
-                                                        call_type: "internal_call".to_string(),
-                                                        line: func.line,
-                                                    },
-                                                );
-                                                found = true;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // TIER 3: Import resolution
-                        if !found {
-                            if let Some(imported_paths) = import_map.get(simple_name) {
-                                for imported_path in imported_paths {
-                                    if let Some(&callee_idx) = func_index.get(imported_path) {
-                                        call_graph.add_call(
-                                            caller_idx,
-                                            callee_idx,
-                                            CallEdge {
-                                                call_type: "imported".to_string(),
-                                                line: func.line,
-                                            },
-                                        );
-                                        found = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-
-                        // TIER 4: Name match across files (only if unambiguous)
-                        if !found {
-                            if let Some(paths) = func_by_name.get(simple_name) {
-                                let candidates: Vec<_> =
-                                    paths.iter().filter(|p| *p != &caller_path).collect();
-                                if candidates.len() == 1 {
-                                    if let Some(&callee_idx) = func_index.get(candidates[0]) {
-                                        call_graph.add_call(
-                                            caller_idx,
-                                            callee_idx,
-                                            CallEdge {
-                                                call_type: "by_name".to_string(),
-                                                line: func.line,
-                                            },
-                                        );
-                                        found = true;
-                                    }
-                                }
-                            }
-                        }
-
-                        // TIER 5: Self reference (functions calling themselves)
-                        if !found && simple_name == func.name {
-                            // This is a recursive call to itself
-                            if let Some(&callee_idx) = func_index.get(&caller_path) {
-                                call_graph.add_call(
-                                    caller_idx,
-                                    callee_idx,
-                                    CallEdge {
-                                        call_type: "recursive".to_string(),
-                                        line: func.line,
-                                    },
-                                );
-                                found = true;
-                            }
-                        }
-
-                        // TIER 6: Function calls within the same container
-                        if !found {
-                            if let Some(container) = &func.container {
-                                let full_path =
-                                    format!("{}::{}::{}", file_path, container, simple_name);
-                                if let Some(&callee_idx) = func_index.get(&full_path) {
-                                    call_graph.add_call(
-                                        caller_idx,
-                                        callee_idx,
-                                        CallEdge {
-                                            call_type: "container_method".to_string(),
-                                            line: func.line,
-                                        },
-                                    );
-                                    found = true;
-                                }
-                            }
-                        }
-
-                        // If still not found, skip it
-                        if !found {
-                            // Unresolved call - skip it
-                        }
-                    }
-                }
-            }
-        }
-
-        // ================================================================
-        // ⭐ MANUAL EDGES FOR KNOWN INTERNAL CALLS
-        // ================================================================
-
-        // 1. run_llm_analysis is called by process_project
-        let process_project_idx = call_graph
-            .node_indices()
-            .find(|idx| call_graph[*idx].name == "process_project");
-        let run_llm_idx = call_graph
-            .node_indices()
-            .find(|idx| call_graph[*idx].name == "run_llm_analysis");
-        if let (Some(caller), Some(callee)) = (process_project_idx, run_llm_idx) {
-            call_graph.add_call(
-                caller,
-                callee,
-                CallEdge {
-                    call_type: "manual".to_string(),
-                    line: 0,
-                },
-            );
-            println!("   ✅ Added manual edge: process_project -> run_llm_analysis");
-        }
-
-        // 2. base_trait_name is called by build_call_graph
-        let build_call_graph_idx = call_graph
-            .node_indices()
-            .find(|idx| call_graph[*idx].name == "build_call_graph");
-        let base_trait_idx = call_graph
-            .node_indices()
-            .find(|idx| call_graph[*idx].name == "base_trait_name");
-        if let (Some(caller), Some(callee)) = (build_call_graph_idx, base_trait_idx) {
-            call_graph.add_call(
-                caller,
-                callee,
-                CallEdge {
-                    call_type: "manual".to_string(),
-                    line: 0,
-                },
-            );
-            println!("   ✅ Added manual edge: build_call_graph -> base_trait_name");
-        }
-
-        // 3. update_stats is called by add_high_confidence_example
-        let add_high_conf_idx = call_graph
-            .node_indices()
-            .find(|idx| call_graph[*idx].name == "add_high_confidence_example");
-        let update_stats_idx = call_graph
-            .node_indices()
-            .find(|idx| call_graph[*idx].name == "update_stats");
-        if let (Some(caller), Some(callee)) = (add_high_conf_idx, update_stats_idx) {
-            call_graph.add_call(
-                caller,
-                callee,
-                CallEdge {
-                    call_type: "manual".to_string(),
-                    line: 0,
-                },
-            );
-            println!("   ✅ Added manual edge: add_high_confidence_example -> update_stats");
-        }
-
-        // 4. check_availability is called by new() in openai.rs
-        let new_idx = call_graph.node_indices().find(|idx| {
-            call_graph[*idx].name == "new" && call_graph[*idx].file.contains("openai.rs")
-        });
-        let check_avail_idx = call_graph
-            .node_indices()
-            .find(|idx| call_graph[*idx].name == "check_availability");
-        if let (Some(caller), Some(callee)) = (new_idx, check_avail_idx) {
-            call_graph.add_call(
-                caller,
-                callee,
-                CallEdge {
-                    call_type: "manual".to_string(),
-                    line: 0,
-                },
-            );
-            println!("   ✅ Added manual edge: OpenAIProvider::new -> check_availability");
-        }
-
-        // 5. generate_signature_candidates and generate_param_candidates are called by generate()
-        let generate_idx = call_graph.node_indices().find(|idx| {
-            call_graph[*idx].name == "generate" && call_graph[*idx].file.contains("candidates.rs")
-        });
-        let sig_candidates_idx = call_graph
-            .node_indices()
-            .find(|idx| call_graph[*idx].name == "generate_signature_candidates");
-        let param_candidates_idx = call_graph
-            .node_indices()
-            .find(|idx| call_graph[*idx].name == "generate_param_candidates");
-        let pairs_from_buckets_idx = call_graph
-            .node_indices()
-            .find(|idx| call_graph[*idx].name == "pairs_from_buckets");
-
-        if let (Some(caller), Some(callee)) = (generate_idx, sig_candidates_idx) {
-            call_graph.add_call(
-                caller,
-                callee,
-                CallEdge {
-                    call_type: "manual".to_string(),
-                    line: 0,
-                },
-            );
-            println!("   ✅ Added manual edge: generate -> generate_signature_candidates");
-        }
-        if let (Some(caller), Some(callee)) = (generate_idx, param_candidates_idx) {
-            call_graph.add_call(
-                caller,
-                callee,
-                CallEdge {
-                    call_type: "manual".to_string(),
-                    line: 0,
-                },
-            );
-            println!("   ✅ Added manual edge: generate -> generate_param_candidates");
-        }
-        if let (Some(caller), Some(callee)) = (generate_idx, pairs_from_buckets_idx) {
-            call_graph.add_call(
-                caller,
-                callee,
-                CallEdge {
-                    call_type: "manual".to_string(),
-                    line: 0,
-                },
-            );
-            println!("   ✅ Added manual edge: generate -> pairs_from_buckets");
-        }
-
-        call_graph
-    }
-    /// Normalizes a captured trait name for matching — strips generics
-    /// ("Index<usize>" → "Index") and path qualifiers ("std::ops::Add" → "Add").
-    fn base_trait_name(raw: &str) -> String {
-        let no_generics = raw.split('<').next().unwrap_or(raw).trim();
-        no_generics
-            .rsplit("::")
-            .next()
-            .unwrap_or(no_generics)
-            .to_string()
-    }
-}
-
-// ============================================================================
-// Project Intelligence (deprecated - kept for compatibility)
-// ============================================================================
-
-pub struct ProjectIntelligence {
-    pub call_graph: CallGraph,
-    pub files: Vec<ParsedFile>,
-    pub root: PathBuf,
-    pub llm_analysis: Option<LLMAnalysis>,
-}
-
-impl ProjectIntelligence {
-    pub fn to_markdown(&self) -> String {
-        let mut output = String::new();
-
-        output.push_str(&format!(
-            "# Code Intelligence: {}\n\n",
-            self.root.file_name().unwrap_or_default().to_string_lossy()
-        ));
-
-        // Stats
-        output.push_str("## 📊 Statistics\n\n");
-        output.push_str(&format!(
-            "- **Functions**: {}\n",
-            self.call_graph.node_count()
-        ));
-        output.push_str(&format!("- **Files**: {}\n", self.files.len()));
-        output.push_str(&format!(
-            "- **Relationships**: {}\n\n",
-            self.call_graph.edge_count()
-        ));
-
-        // LLM Analysis
-        if let Some(ref llm) = self.llm_analysis {
-            output.push_str("## 🤖 LLM Analysis\n\n");
-
-            if let Some(ref doc) = llm.documentation {
-                output.push_str(&doc);
-                output.push_str("\n\n");
-            }
-
-            if !llm.function_summaries.is_empty() {
-                output.push_str("### 📝 Function Summaries\n\n");
-                for (name, summary) in &llm.function_summaries {
-                    output.push_str(&format!("- **{}**: {}\n", name, summary));
-                }
-                output.push('\n');
-            }
-
-            if !llm.issues.is_empty() {
-                output.push_str("### 🐛 Issues Found\n\n");
-                for (name, issue) in &llm.issues {
-                    output.push_str(&format!(
-                        "- **{}**: [{}] {} → {}\n",
-                        name, issue.severity, issue.description, issue.suggestion
-                    ));
-                }
-                output.push('\n');
-            }
-        }
-
-        // Important functions
-        output.push_str("## 🔥 Important Functions\n\n");
-        let mut functions: Vec<_> = self
-            .call_graph
-            .node_indices()
-            .map(|idx| (idx, self.call_graph[idx].importance_score))
-            .collect();
-        functions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-
-        for (idx, score) in functions.iter().take(10) {
-            let func = &self.call_graph[*idx];
-            let emoji = if *score > 0.8 {
-                "🔥"
-            } else if *score > 0.5 {
-                "📌"
-            } else {
-                "📄"
-            };
-            output.push_str(&format!(
-                "- {} **{}** (importance: {:.2})\n",
-                emoji, func.name, score
-            ));
-            output.push_str(&format!("  - File: {}\n", func.file));
-            output.push_str(&format!("  - Line: {}\n", func.line));
-        }
-
-        output
-    }
-
-    pub fn to_json(&self) -> String {
-        let mut report = serde_json::Map::new();
-
-        report.insert(
-            "project".to_string(),
-            serde_json::Value::String(
-                self.root
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string(),
-            ),
-        );
-        report.insert(
-            "total_functions".to_string(),
-            serde_json::Value::Number(self.call_graph.node_count().into()),
-        );
-        report.insert(
-            "total_files".to_string(),
-            serde_json::Value::Number(self.files.len().into()),
-        );
-
-        if let Some(ref llm) = self.llm_analysis {
-            report.insert(
-                "llm_analysis".to_string(),
-                serde_json::json!({
-                    "has_documentation": llm.has_documentation,
-                    "summarized_count": llm.summarized_count,
-                    "issues_count": llm.issues_count,
-                }),
-            );
-        }
-
-        serde_json::to_string_pretty(&report).unwrap_or_default()
-    }
-
-    pub fn to_training_json(&self) -> String {
-        crate::output::JsonOutput::generate(&self.call_graph, &self.files, &self.root)
-    }
-
-    pub fn to_graphviz(&self) -> String {
-        self.call_graph.to_dot()
-    }
-
-    pub fn to_full_report(&self) -> String {
-        let compressor = SemanticCompressor::new();
-        let full = compressor.full_report(&self.call_graph, &self.files);
-
-        let original_content: String = self
-            .files
-            .iter()
-            .map(|f| f.source.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let (orig_tokens, comp_tokens, reduction) =
-            TokenEstimator::compare(&original_content, &full);
-
-        let mut output = String::new();
-        output.push_str(&format!(
-            "# Code Intelligence: {}\n\n",
-            self.root.file_name().unwrap_or_default().to_string_lossy()
-        ));
-        output.push_str(&format!(
-            "> 📊 Original: ~{} tokens | Compressed: ~{} tokens | **{:.1}% reduction**\n\n",
-            orig_tokens, comp_tokens, reduction
-        ));
-        output.push_str("---\n\n");
-
-        // LLM Analysis first
-        if let Some(ref llm) = self.llm_analysis {
-            output.push_str("## 🤖 LLM Analysis\n\n");
-            if let Some(ref doc) = llm.documentation {
-                output.push_str(&doc);
-                output.push_str("\n\n");
-            }
-        }
-
-        output.push_str(&full);
-        output
-    }
-}
-
-// ============================================================================
-// LLM Analysis Results
-// ============================================================================
-
-#[derive(Debug, Clone, Default)]
-pub struct LLMAnalysis {
-    pub has_documentation: bool,
-    pub documentation: Option<String>,
-    pub function_summaries: Vec<(String, String)>,
-    pub issues: Vec<(String, crate::llm::CodeIssue)>,
-    pub summarized_count: usize,
-    pub issues_count: usize,
-}
-
-// ============================================================================
-// Tests
-// ============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_pipeline_config_default() {
-        let config = PipelineConfig::default();
-        assert!(!config.enable_llm);
-        assert!(!config.enable_git);
-        assert_eq!(config.llm_temperature, 0.3);
-        assert_eq!(config.max_files, 10000);
-    }
-
-    #[test]
-    fn test_pipeline_new() {
-        let pipeline = Pipeline::new();
-        assert!(!pipeline.config.enable_llm);
-        assert!(pipeline.llm_provider.is_none());
-        assert!(pipeline.code_understanding.is_none());
-    }
-
-    #[test]
-    fn test_pipeline_with_config() {
-        let config = PipelineConfig {
-            enable_llm: true,
-            max_files: 100,
-            ..Default::default()
-        };
-        let pipeline = Pipeline::new().with_config(config);
-        assert!(pipeline.config.enable_llm);
-        assert_eq!(pipeline.config.max_files, 100);
     }
 }

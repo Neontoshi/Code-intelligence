@@ -110,7 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("📊 Output format: {}", args.format);
 
     // Build pipeline with configuration
-    let config = code_intelligence::engine::pipeline::PipelineConfig {
+    let config = code_intelligence::PipelineConfig {
         enable_llm: args.llm,
         enable_git: args.git,
         llm_temperature: args.llm_temperature,

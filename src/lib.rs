@@ -16,8 +16,10 @@ pub use analysis::git_analysis::GitAnalyzer;
 pub use analysis::importance::ImportanceScorer;
 pub use engine::cache::FileCache;
 pub use engine::indexer::IndexBuilder;
-pub use engine::pipeline::Pipeline;
-pub use engine::pipeline::ProjectIntelligence;
+pub use engine::{
+    AnalyzedProject, OptimizedProject, ParsedProject, Pipeline, PipelineConfig,
+    ProjectIntelligence, RawProject,
+};
 pub use graph::call_graph::CallGraph;
 pub use graph::call_graph::FunctionNode;
 pub use graph::dependency_graph::DependencyGraph;
