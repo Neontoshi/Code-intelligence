@@ -312,53 +312,71 @@ Provide suggestions in JSON format:
     // ========================================================================
     // Project-Level Analysis
     // ========================================================================
-
-    /// Generate comprehensive project documentation
     pub async fn generate_documentation(
         &mut self,
         call_graph: &CallGraph,
         files: &[ParsedFile],
     ) -> Result<String, String> {
+        // Build languages inline
+        let languages: Vec<String> = files.iter().map(|f| f.language.clone()).collect();
+        let mut langs = languages;
+        langs.sort();
+        langs.dedup();
+        let langs_str = langs.join(", ");
+
+        // Build key files inline
+        let mut key_files_output = String::new();
+        for file in files.iter().take(5) {
+            let func_count = file.functions.len();
+            let type_count = file.types.len();
+            key_files_output.push_str(&format!(
+                "  - {} ({} functions, {} types)\n",
+                file.path.split('/').last().unwrap_or(&file.path),
+                func_count,
+                type_count
+            ));
+        }
+
         // Build project context
         let prompt = format!(
             r#"Generate comprehensive documentation for this codebase.
 
-## Project Context
+    ## Project Context
 
-Total Functions: {}
-Total Files: {}
-Languages: {}
+    Total Functions: {}
+    Total Files: {}
+    Languages: {}
 
-## Architecture Overview
+    ## Architecture Overview
 
-Most Important Functions (by importance):
-{}
+    Most Important Functions (by importance):
+    {}
 
-## Key Files
-{}
+    ## Key Files
+    {}
 
-## Entry Points
-{}
+    ## Entry Points
+    {}
 
-## Complexity Summary
-{}
+    ## Complexity Summary
+    {}
 
-Based on this context, generate:
-1. A high-level overview of what this codebase does (2-3 paragraphs)
-2. The main components and their responsibilities
-3. How data flows through the system
-4. Key architectural patterns used
-5. Important entry points and APIs
-6. Dependencies and external integrations
-7. Potential areas for improvement
+    Based on this context, generate:
+    1. A high-level overview of what this codebase does (2-3 paragraphs)
+    2. The main components and their responsibilities
+    3. How data flows through the system
+    4. Key architectural patterns used
+    5. Important entry points and APIs
+    6. Dependencies and external integrations
+    7. Potential areas for improvement
 
-## Documentation
-"#,
+    ## Documentation
+    "#,
             call_graph.node_count(),
             files.len(),
-            self.get_languages(files).join(", "),
+            langs_str,
             self.get_important_functions(call_graph, 10),
-            self.get_key_files(files, 5),
+            key_files_output,
             self.get_entry_points(call_graph, 5),
             self.get_complexity_summary(call_graph)
         );
@@ -370,7 +388,6 @@ Based on this context, generate:
 
         self.generate_with_options(&messages, 0.5, 1000).await
     }
-
     /// Analyze project architecture
     pub async fn analyze_architecture(
         &mut self,
@@ -708,10 +725,13 @@ Provide analysis in JSON format:
 
         context.push_str(&format!("Total Functions: {}\n", call_graph.node_count()));
         context.push_str(&format!("Total Files: {}\n", files.len()));
-        context.push_str(&format!(
-            "Languages: {}\n\n",
-            self.get_languages(files).join(", ")
-        ));
+        context.push_str(&format!("Languages: {}\n\n", {
+            let languages: Vec<String> = files.iter().map(|f| f.language.clone()).collect();
+            let mut langs = languages;
+            langs.sort();
+            langs.dedup();
+            langs.join(", ")
+        }));
 
         // Important functions
         context.push_str("Most Important Functions:\n");
@@ -731,14 +751,6 @@ Provide analysis in JSON format:
         context
     }
 
-    /// Get list of languages from files
-    fn get_languages(&self, files: &[ParsedFile]) -> Vec<String> {
-        let mut langs: Vec<String> = files.iter().map(|f| f.language.clone()).collect();
-        langs.sort();
-        langs.dedup();
-        langs
-    }
-
     /// Get most important functions as a string
     fn get_important_functions(&self, call_graph: &CallGraph, count: usize) -> String {
         let mut sorted: Vec<_> = call_graph
@@ -754,22 +766,6 @@ Provide analysis in JSON format:
                 func.name,
                 func.importance_score,
                 func.file.split('/').last().unwrap_or(&func.file)
-            ));
-        }
-        output
-    }
-
-    /// Get key files as a string
-    fn get_key_files(&self, files: &[ParsedFile], count: usize) -> String {
-        let mut output = String::new();
-        for file in files.iter().take(count) {
-            let func_count = file.functions.len();
-            let type_count = file.types.len();
-            output.push_str(&format!(
-                "  - {} ({} functions, {} types)\n",
-                file.path.split('/').last().unwrap_or(&file.path),
-                func_count,
-                type_count
             ));
         }
         output

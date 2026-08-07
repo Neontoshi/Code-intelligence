@@ -324,11 +324,6 @@ impl DeadCodeClassifier {
             feature_count,
         })
     }
-
-    /// Get the number of features this classifier expects
-    pub fn feature_count(&self) -> usize {
-        self.feature_count
-    }
 }
 
 impl Default for DeadCodeClassifier {

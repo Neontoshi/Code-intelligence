@@ -1,7 +1,6 @@
 // src/graph/dependency_graph.rs
 
 use crate::define_graph;
-use crate::graph::traits::GraphMetrics;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use std::collections::{HashMap, HashSet};
@@ -172,20 +171,5 @@ impl DependencyGraph {
     }
 }
 
-impl std::ops::Index<NodeIndex> for DependencyGraph {
-    type Output = DependencyNode;
-
-    fn index(&self, index: NodeIndex) -> &Self::Output {
-        &self.graph[index]
-    }
-}
-
-impl GraphMetrics for DependencyGraph {
-    fn node_count(&self) -> usize {
-        self.graph.node_count()
-    }
-
-    fn edge_count(&self) -> usize {
-        self.graph.edge_count()
-    }
-}
+crate::impl_graph_metrics!(DependencyGraph);
+crate::impl_graph_index!(DependencyGraph, DependencyNode);

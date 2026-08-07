@@ -1,4 +1,5 @@
 // src/graph/mod.rs
+// src/graph/mod.rs
 
 pub mod call_graph;
 pub mod dependency_graph;
@@ -7,6 +8,10 @@ pub mod import_graph;
 pub mod project_graph;
 pub mod traits;
 pub mod type_graph;
+
+// Re-export macros
+pub use crate::impl_graph_index;
+pub use crate::impl_graph_metrics;
 
 // Re-export traits
 pub use traits::{GraphIndex, GraphMetrics, Indexable};

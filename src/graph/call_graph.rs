@@ -1,4 +1,3 @@
-use crate::graph::traits::GraphMetrics;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use serde::{Deserialize, Serialize};
@@ -401,26 +400,14 @@ impl CallGraph {
     }
 }
 
-impl std::ops::Index<NodeIndex> for CallGraph {
+crate::impl_graph_metrics!(CallGraph);
+crate::impl_graph_index!(CallGraph, FunctionNode);
+
+// Allow indexing into &CallGraph (this is fine)
+impl std::ops::Index<petgraph::graph::NodeIndex> for &CallGraph {
     type Output = FunctionNode;
 
-    fn index(&self, index: NodeIndex) -> &Self::Output {
+    fn index(&self, index: petgraph::graph::NodeIndex) -> &Self::Output {
         &self.graph[index]
-    }
-}
-
-impl std::ops::IndexMut<NodeIndex> for CallGraph {
-    fn index_mut(&mut self, index: NodeIndex) -> &mut Self::Output {
-        &mut self.graph[index]
-    }
-}
-
-impl GraphMetrics for CallGraph {
-    fn node_count(&self) -> usize {
-        self.graph.node_count()
-    }
-
-    fn edge_count(&self) -> usize {
-        self.graph.edge_count()
     }
 }

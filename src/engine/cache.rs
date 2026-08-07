@@ -1,3 +1,5 @@
+// src/engine/cache.rs
+
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -43,10 +45,6 @@ impl FileCache {
         self
     }
 
-    fn encode_hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{:02x}", b)).collect()
-    }
-
     pub fn get_or_compute<F>(&self, path: &Path, compute: F) -> String
     where
         F: FnOnce() -> String,
@@ -63,7 +61,7 @@ impl FileCache {
 
         // Check persistent cache
         if let Some(dir) = &self.persistent_dir {
-            let cache_path = dir.join(format!("{}.cache", Self::encode_hex(hash.as_bytes())));
+            let cache_path = dir.join(format!("{}.cache", hash));
             if let Ok(data) = std::fs::read_to_string(&cache_path) {
                 if let Ok(entry) = serde_json::from_str::<CacheEntry<String>>(&data) {
                     if entry.hash == hash && entry.version == self.version {
@@ -95,7 +93,7 @@ impl FileCache {
 
         // Store persistent
         if let Some(dir) = &self.persistent_dir {
-            let cache_path = dir.join(format!("{}.cache", Self::encode_hex(hash.as_bytes())));
+            let cache_path = dir.join(format!("{}.cache", hash));
             if let Ok(json) = serde_json::to_string(&entry) {
                 let _ = std::fs::write(cache_path, json);
             }

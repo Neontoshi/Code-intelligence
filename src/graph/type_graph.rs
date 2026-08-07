@@ -1,7 +1,6 @@
 // src/graph/type_graph.rs
 
 use crate::define_graph;
-use crate::graph::traits::GraphMetrics;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use std::collections::{HashMap, HashSet};
@@ -281,12 +280,4 @@ impl TypeGraph {
     }
 }
 
-impl GraphMetrics for TypeGraph {
-    fn node_count(&self) -> usize {
-        self.graph.node_count()
-    }
-
-    fn edge_count(&self) -> usize {
-        self.graph.edge_count()
-    }
-}
+crate::impl_graph_metrics!(TypeGraph);

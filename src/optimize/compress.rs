@@ -1,13 +1,14 @@
-use crate::graph::traits::GraphMetrics;
+// src/optimize/compress.rs
+
 use crate::graph::call_graph::{CallGraph, FunctionNode};
+use crate::graph::traits::GraphMetrics;
 use crate::optimize::symbols::SymbolTable;
 use crate::parser::tree_sitter::ParsedFile;
-use regex::Regex;
 
 pub struct SemanticCompressor {
     max_functions: usize,
     _include_bodies: bool,
-    use_symbols: bool,
+    _use_symbols: bool,
     symbol_table: SymbolTable,
 }
 
@@ -16,7 +17,7 @@ impl SemanticCompressor {
         Self {
             max_functions: 100,
             _include_bodies: true,
-            use_symbols: true,
+            _use_symbols: true,
             symbol_table: SymbolTable::universal(),
         }
     }
@@ -24,7 +25,6 @@ impl SemanticCompressor {
     pub fn compress(&self, call_graph: &CallGraph, files: &[ParsedFile]) -> String {
         let mut output = String::new();
 
-        // Architecture summary
         output.push_str("## Project Architecture\n\n");
         output.push_str(&format!(
             "Functions: {} | Files: {} | Relationships: {}\n\n",
@@ -33,7 +33,6 @@ impl SemanticCompressor {
             call_graph.edge_count()
         ));
 
-        // Entry points
         output.push_str("### 🚀 Public API\n\n");
         let entry_points: Vec<_> = call_graph
             .node_indices()
@@ -48,7 +47,6 @@ impl SemanticCompressor {
             output.push_str(&self.format_function(func, call_graph));
         }
 
-        // Core functions
         output.push_str("\n### 🔥 Core Functions\n\n");
         let mut sorted: Vec<_> = call_graph
             .node_indices()
@@ -62,7 +60,6 @@ impl SemanticCompressor {
             }
         }
 
-        // Call relationships
         output.push_str("\n### 📞 Call Graph\n\n```\n");
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
@@ -83,9 +80,8 @@ impl SemanticCompressor {
 
         output
     }
-    /// Enhanced compression with better symbol substitution
+
     pub fn compress_enhanced(&self, call_graph: &CallGraph, files: &[ParsedFile]) -> String {
-        // Build a more comprehensive symbol table with owned strings
         let mut symbols: Vec<(String, String)> = self
             .symbol_table
             .replacements
@@ -93,7 +89,6 @@ impl SemanticCompressor {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
 
-        // Add file-specific symbols
         for file in files {
             let short_name = file
                 .path
@@ -105,21 +100,17 @@ impl SemanticCompressor {
             symbols.push((short_name, symbol));
         }
 
-        // Add function-specific symbols
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
             let short_name = func.name.chars().take(4).collect::<String>();
             let symbol = format!("ƒ{}", short_name);
-            // Only add if not already in symbols
             if !symbols.iter().any(|(s, _)| *s == func.name) {
                 symbols.push((func.name.clone(), symbol));
             }
         }
 
-        // Sort by length for longest match first
         symbols.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
 
-        // Apply compression
         let mut compressed = String::new();
         for file in files {
             let mut content = file.source.clone();
@@ -133,7 +124,6 @@ impl SemanticCompressor {
         compressed
     }
 
-    /// Generate compressed source code with symbols
     pub fn compress_source(&self, files: &[ParsedFile]) -> String {
         let mut output = String::new();
 
@@ -147,7 +137,6 @@ impl SemanticCompressor {
             let filename = file.path.split('/').last().unwrap_or(&file.path);
             output.push_str(&format!("### `{}`\n\n", filename));
 
-            // Types
             for t in &file.types {
                 output.push_str(&format!(
                     "∁ {} ({})\n",
@@ -156,7 +145,6 @@ impl SemanticCompressor {
                 ));
             }
 
-            // Functions with compressed bodies
             for func in &file.functions {
                 output.push_str(&format!("ƒ {}(", func.name));
                 output.push_str(
@@ -166,7 +154,7 @@ impl SemanticCompressor {
                         .map(|p| {
                             let mut s = p.name.clone();
                             if let Some(t) = &p.type_hint {
-                                s.push_str(&format!(":{}", self.compress_text(t)));
+                                s.push_str(&format!(":{}", t));
                             }
                             s
                         })
@@ -176,18 +164,17 @@ impl SemanticCompressor {
                 output.push_str(")");
 
                 if let Some(ret) = &func.return_type {
-                    output.push_str(&format!("→{}", self.compress_text(ret)));
+                    output.push_str(&format!("→{}", ret));
                 }
 
                 output.push_str(" {");
 
-                // Compressed calls
                 if !func.calls.is_empty() {
                     output.push_str(&format!(
                         " 📞{}",
                         func.calls
                             .iter()
-                            .map(|c| self.compress_text(c))
+                            .map(|c| c.to_string())
                             .collect::<Vec<_>>()
                             .join("→")
                     ));
@@ -202,41 +189,10 @@ impl SemanticCompressor {
         output
     }
 
-    /// Full report: architecture + compressed source
     pub fn full_report(&self, call_graph: &CallGraph, files: &[ParsedFile]) -> String {
         let mut output = self.compress(call_graph, files);
         output.push_str(&self.compress_source(files));
         output
-    }
-
-    fn compress_text(&self, text: &str) -> String {
-        if !self.use_symbols {
-            return text.to_string();
-        }
-
-        let mut result = text.to_string();
-        let mut sorted: Vec<_> = self.symbol_table.replacements.iter().collect();
-        sorted.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
-
-        for (pattern, symbol) in sorted {
-            let has_ascii = pattern.chars().any(|c| c.is_ascii_alphabetic());
-            if !has_ascii {
-                continue;
-            }
-
-            if pattern
-                .chars()
-                .all(|c| c.is_ascii_alphabetic() || c == '_' || c == '<' || c == '>')
-            {
-                let regex_pattern = format!(r"\b{}\b", regex::escape(pattern));
-                if let Ok(re) = Regex::new(&regex_pattern) {
-                    result = re.replace_all(&result, *symbol).to_string();
-                }
-            } else {
-                result = result.replace(pattern, symbol);
-            }
-        }
-        result
     }
 
     fn format_function(&self, func: &FunctionNode, call_graph: &CallGraph) -> String {

@@ -3,7 +3,6 @@
 use crate::graph::call_graph::{CallEdge, FunctionNode};
 use crate::graph::dependency_graph::{DependencyEdge, DependencyNode};
 use crate::graph::import_graph::{ImportEdge, ImportNode};
-use crate::graph::traits::GraphMetrics;
 use crate::graph::type_graph::{TypeEdge, TypeNode};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
@@ -554,15 +553,6 @@ impl ProjectGraph {
         dist
     }
 }
-
-impl std::ops::Index<NodeIndex> for ProjectGraph {
-    type Output = ProjectNode;
-
-    fn index(&self, index: NodeIndex) -> &Self::Output {
-        &self.graph[index]
-    }
-}
-
 // ============================================================================
 // Builder for ProjectGraph
 // ============================================================================
@@ -621,13 +611,5 @@ impl Default for ProjectGraph {
         Self::new()
     }
 }
-// ⭐ ADD THIS
-impl GraphMetrics for ProjectGraph {
-    fn node_count(&self) -> usize {
-        self.graph.node_count()
-    }
-
-    fn edge_count(&self) -> usize {
-        self.graph.edge_count()
-    }
-}
+crate::impl_graph_metrics!(ProjectGraph);
+crate::impl_graph_index!(ProjectGraph, ProjectNode);
