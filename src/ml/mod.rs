@@ -1,14 +1,14 @@
 // src/ml/mod.rs
 
-//! Machine Learning module for code intelligence
-
 pub mod classifier;
 pub mod duplicate_classifier;
+pub mod feature_schema;
 pub mod features;
 
-// Re-export main types
 pub use classifier::DeadCodeClassifier;
-pub use duplicate_classifier::DuplicateClassifier;
-pub use duplicate_classifier::DuplicateExample;
-pub use duplicate_classifier::DuplicateLabel;
+pub use duplicate_classifier::{DuplicateClassifier, DuplicateExample, DuplicateLabel};
+pub use feature_schema::{
+    feature_count, feature_names, FeatureCategory, FeatureDefinition, FeatureSchema,
+    FeatureVectorBuilder, Normalization, FEATURE_SCHEMA,
+};
 pub use features::FeatureExtractor;

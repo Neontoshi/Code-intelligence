@@ -3,6 +3,7 @@
 //! Training data generation for ML-based dead code detection
 
 use crate::graph::call_graph::{CallGraph, FunctionNode};
+use crate::ml::feature_schema::{FeatureVectorBuilder, FEATURE_SCHEMA};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -15,14 +16,14 @@ pub struct TrainingExample {
     pub features: FunctionFeatures,
     pub label: TrainingLabel,
     pub confidence: f64,
-    pub source: String, // "whitelist", "manual", "auto"
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TrainingLabel {
-    Alive,   // Confirmed alive (from whitelist or manual)
-    Dead,    // Confirmed dead (removed or verified)
-    Unknown, // Not yet classified
+    Alive,
+    Dead,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,20 +78,19 @@ pub struct FunctionFeatures {
     pub name_contains_verify: bool,
     pub name_contains_audit: bool,
 
-    // ⭐ NEW: Type context features
-    pub type_name: Option<String>,  // "Allocator", "MemoryPool", etc.
-    pub type_path: Option<String>,  // Full path to the type
-    pub is_method: bool,            // True if this is a method (has self)
-    pub is_trait_impl: bool,        // True if this is a trait implementation
-    pub trait_name: Option<String>, // Name of the trait if implemented
-    pub is_associated: bool,        // True if associated function (like new())
+    // Type context features
+    pub type_name: Option<String>,
+    pub type_path: Option<String>,
+    pub is_method: bool,
+    pub is_trait_impl: bool,
+    pub trait_name: Option<String>,
+    pub is_associated: bool,
 }
 
 impl FunctionFeatures {
     pub fn from_function(func: &FunctionNode, _call_graph: &CallGraph) -> Self {
         let name_lower = func.name.to_lowercase();
 
-        // Determine if it's a test file
         let is_in_test_file = func.file.contains("/tests/")
             || func.file.contains("/test/")
             || func.file.ends_with("_test.rs")
@@ -103,16 +103,10 @@ impl FunctionFeatures {
             || func.file.contains("_gen.go")
             || func.file.contains(".pb.go");
 
-        // File extension
         let file_extension = func.file.split('.').last().unwrap_or("").to_string();
-
-        // Check if it's a trait impl
         let contains_trait_impl = func.trait_impl.is_some();
-
-        // Get call depth
         let call_depth = func.depth;
 
-        // ⭐ NEW: Extract type context
         let type_info = Self::extract_type_info(func);
 
         Self {
@@ -159,7 +153,6 @@ impl FunctionFeatures {
             name_contains_fetch: name_lower.contains("fetch"),
             name_contains_verify: name_lower.contains("verify"),
             name_contains_audit: name_lower.contains("audit"),
-            // ⭐ NEW: Type context
             type_name: type_info.type_name,
             type_path: type_info.type_path,
             is_method: type_info.is_method,
@@ -169,7 +162,6 @@ impl FunctionFeatures {
         }
     }
 
-    /// ⭐ NEW: Extract type information from function context
     fn extract_type_info(func: &FunctionNode) -> TypeInfo {
         let mut type_name = None;
         let mut type_path = None;
@@ -178,13 +170,11 @@ impl FunctionFeatures {
         let mut trait_name = None;
         let mut is_associated = false;
 
-        // 1. Check if it's a trait implementation
         if let Some(trait_impl_name) = &func.trait_impl {
             is_trait_impl = true;
             trait_name = Some(trait_impl_name.clone());
         }
 
-        // 2. Check if it's a method (has self parameter)
         if func
             .params
             .first()
@@ -194,22 +184,18 @@ impl FunctionFeatures {
             is_method = true;
         }
 
-        // 3. Check if it's an associated function (like new())
         if func.name == "new" || func.name == "default" || func.name == "from" {
             is_associated = true;
         }
 
-        // 4. Extract type from file path heuristics
         let file = &func.file;
         let name = &func.name;
 
-        // Look for common patterns
         if let Some(type_name_from_file) = Self::parse_type_from_file(file, name) {
             type_name = Some(type_name_from_file);
             type_path = Some(format!("{}::{}", file, type_name.as_ref().unwrap()));
         }
 
-        // If it's a trait impl, use the trait name as the type name
         if type_name.is_none() && is_trait_impl {
             type_name = trait_name.clone();
             type_path = trait_name.clone().map(|t| format!("trait::{}", t));
@@ -225,9 +211,7 @@ impl FunctionFeatures {
         }
     }
 
-    /// Parse type name from file path heuristics
     fn parse_type_from_file(file: &str, func_name: &str) -> Option<String> {
-        // Check if the file is alloc.rs
         if file.ends_with("alloc.rs") {
             if func_name == "reset" {
                 if file.contains("Allocator") {
@@ -239,7 +223,6 @@ impl FunctionFeatures {
             return None;
         }
 
-        // Graph types
         if file.contains("graph/")
             && (func_name == "index" || func_name == "node_count" || func_name == "edge_count")
         {
@@ -254,7 +237,6 @@ impl FunctionFeatures {
             }
         }
 
-        // LLM providers
         if file.contains("llm/providers/") {
             if file.contains("ollama") {
                 return Some("OllamaProvider".to_string());
@@ -270,69 +252,89 @@ impl FunctionFeatures {
         None
     }
 
-    /// Convert features to a numeric vector for ML
+    /// Convert features to a numeric vector using the schema
     pub fn to_feature_vector(&self) -> Vec<f64> {
-        vec![
-            // Original features
-            self.param_count as f64 / 10.0,
-            self.return_count as f64 / 5.0,
-            if self.is_public { 1.0 } else { 0.0 },
-            if self.is_async { 1.0 } else { 0.0 },
-            self.name_length as f64 / 50.0,
-            if self.starts_with_use { 1.0 } else { 0.0 },
-            if self.starts_with_test { 1.0 } else { 0.0 },
-            if self.starts_with_bench { 1.0 } else { 0.0 },
-            if self.ends_with_test { 1.0 } else { 0.0 },
-            if self.contains_trait_impl { 1.0 } else { 0.0 },
-            self.fan_in as f64 / 50.0,
-            self.fan_out as f64 / 50.0,
-            self.complexity / 50.0,
-            self.call_depth as f64 / 10.0,
-            if self.is_cycle { 1.0 } else { 0.0 },
-            if self.is_in_test_file { 1.0 } else { 0.0 },
-            if self.is_in_benches { 1.0 } else { 0.0 },
-            if self.is_in_meta { 1.0 } else { 0.0 },
-            if self.is_in_examples { 1.0 } else { 0.0 },
-            if self.is_generated { 1.0 } else { 0.0 },
-            if self.name_contains_use { 1.0 } else { 0.0 },
-            if self.name_contains_test { 1.0 } else { 0.0 },
-            if self.name_contains_init { 1.0 } else { 0.0 },
-            if self.name_contains_get { 1.0 } else { 0.0 },
-            if self.name_contains_set { 1.0 } else { 0.0 },
-            if self.name_contains_new { 1.0 } else { 0.0 },
-            if self.name_contains_create { 1.0 } else { 0.0 },
-            if self.name_contains_build { 1.0 } else { 0.0 },
-            if self.name_contains_parse { 1.0 } else { 0.0 },
-            if self.name_contains_validate {
-                1.0
-            } else {
-                0.0
-            },
-            if self.name_contains_handle { 1.0 } else { 0.0 },
-            if self.name_contains_process { 1.0 } else { 0.0 },
-            if self.name_contains_convert { 1.0 } else { 0.0 },
-            // ⭐ NEW: Type context features
-            if self.is_method { 1.0 } else { 0.0 },
-            if self.is_trait_impl { 1.0 } else { 0.0 },
-            if self.is_associated { 1.0 } else { 0.0 },
-            self.type_name
-                .as_ref()
-                .map(|s| s.len() as f64 / 20.0)
-                .unwrap_or(0.0),
-            self.trait_name
-                .as_ref()
-                .map(|s| s.len() as f64 / 20.0)
-                .unwrap_or(0.0),
-            if self.type_name == self.trait_name {
-                1.0
-            } else {
-                0.0
-            },
-        ]
+        let mut builder = FeatureVectorBuilder::new();
+
+        // Graph features (4)
+        builder
+            .push_normalized(self.fan_in as f64, 50.0)
+            .push_normalized(self.fan_out as f64, 50.0)
+            .push_normalized(self.call_depth as f64, 10.0)
+            .push_bool(self.is_cycle);
+
+        // Signature features (4)
+        builder
+            .push_normalized(self.param_count as f64, 10.0)
+            .push_normalized(self.return_count as f64, 5.0)
+            .push_bool(self.is_public)
+            .push_bool(self.is_async);
+
+        // Complexity (1)
+        builder.push_normalized(self.complexity, 50.0);
+
+        // Name contains (21)
+        builder
+            .push_bool(self.name_contains_use)
+            .push_bool(self.name_contains_test)
+            .push_bool(self.name_contains_init)
+            .push_bool(self.name_contains_get)
+            .push_bool(self.name_contains_set)
+            .push_bool(self.name_contains_new)
+            .push_bool(self.name_contains_create)
+            .push_bool(self.name_contains_build)
+            .push_bool(self.name_contains_parse)
+            .push_bool(self.name_contains_validate)
+            .push_bool(self.name_contains_handle)
+            .push_bool(self.name_contains_process)
+            .push_bool(self.name_contains_convert)
+            .push_bool(self.name_contains_commit)
+            .push_bool(self.name_contains_reveal)
+            .push_bool(self.name_contains_submit)
+            .push_bool(self.name_contains_upload)
+            .push_bool(self.name_contains_download)
+            .push_bool(self.name_contains_fetch)
+            .push_bool(self.name_contains_verify)
+            .push_bool(self.name_contains_audit);
+
+        // Name starts/ends (5)
+        builder
+            .push_bool(self.starts_with_use)
+            .push_bool(self.starts_with_test)
+            .push_bool(self.starts_with_bench)
+            .push_bool(self.ends_with_test)
+            .push_normalized(self.name_length as f64, 50.0);
+
+        // File context (5)
+        builder
+            .push_bool(self.is_in_test_file)
+            .push_bool(self.is_in_benches)
+            .push_bool(self.is_in_meta)
+            .push_bool(self.is_in_examples)
+            .push_bool(self.is_generated);
+
+        // Type context (6)
+        builder
+            .push_bool(self.is_method)
+            .push_bool(self.is_trait_impl)
+            .push_bool(self.is_associated)
+            .push_opt(self.type_name.as_ref().map(|s| s.len() as f64 / 20.0), 0.0)
+            .push_opt(self.trait_name.as_ref().map(|s| s.len() as f64 / 20.0), 0.0)
+            .push_bool(self.type_name == self.trait_name);
+
+        let features = builder.build();
+
+        // Validate against schema in debug mode
+        if cfg!(debug_assertions) {
+            if let Err(e) = FEATURE_SCHEMA.validate_vector(&features) {
+                panic!("Feature vector validation failed: {}", e);
+            }
+        }
+
+        features
     }
 }
 
-/// ⭐ NEW: Type information container
 #[derive(Debug, Clone)]
 struct TypeInfo {
     type_name: Option<String>,
@@ -389,7 +391,6 @@ impl TrainingExample {
     }
 }
 
-/// Training data collection
 #[derive(Debug, Clone, Default)]
 pub struct TrainingDataCollector {
     pub examples: Vec<TrainingExample>,
@@ -419,7 +420,6 @@ impl TrainingDataCollector {
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
 
-            // Check if it's a test function
             let is_test_function = func.name.starts_with("test_")
                 || func.name.starts_with("Test")
                 || func.name.starts_with("bench_")
@@ -454,53 +454,11 @@ impl TrainingDataCollector {
         }
     }
 
-    fn update_stats(&mut self, example: &TrainingExample) {
-        self.stats.total_functions += 1;
-        *self
-            .stats
-            .by_language
-            .entry(example.language.clone())
-            .or_insert(0) += 1;
-
-        match example.label {
-            TrainingLabel::Alive => self.stats.alive_count += 1,
-            TrainingLabel::Dead => self.stats.dead_count += 1,
-            TrainingLabel::Unknown => self.stats.unknown_count += 1,
-        }
-    }
-
-    /// Export to JSONL format (one JSON per line)
-    pub fn to_jsonl(&self) -> String {
-        self.examples
-            .iter()
-            .filter_map(|e| serde_json::to_string(e).ok())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    /// Export to pretty JSON
-    pub fn to_json(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(&self.examples)
-    }
-
-    pub fn get_alive_examples(&self) -> Vec<&TrainingExample> {
-        self.examples
-            .iter()
-            .filter(|e| e.label == TrainingLabel::Alive)
-            .collect()
-    }
-
-    pub fn get_dead_examples(&self) -> Vec<&TrainingExample> {
-        self.examples
-            .iter()
-            .filter(|e| e.label == TrainingLabel::Dead)
-            .collect()
-    }
-
+    /// Add a high-confidence labeled example
     pub fn add_high_confidence_example(
         &mut self,
-        func: &crate::graph::call_graph::FunctionNode,
-        call_graph: &crate::graph::call_graph::CallGraph,
+        func: &FunctionNode,
+        call_graph: &CallGraph,
         label: TrainingLabel,
         confidence: f64,
         source: &str,
@@ -518,5 +476,46 @@ impl TrainingDataCollector {
 
         self.examples.push(example.clone());
         self.update_stats(&example);
+    }
+
+    fn update_stats(&mut self, example: &TrainingExample) {
+        self.stats.total_functions += 1;
+        *self
+            .stats
+            .by_language
+            .entry(example.language.clone())
+            .or_insert(0) += 1;
+
+        match example.label {
+            TrainingLabel::Alive => self.stats.alive_count += 1,
+            TrainingLabel::Dead => self.stats.dead_count += 1,
+            TrainingLabel::Unknown => self.stats.unknown_count += 1,
+        }
+    }
+
+    pub fn to_jsonl(&self) -> String {
+        self.examples
+            .iter()
+            .filter_map(|e| serde_json::to_string(e).ok())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(&self.examples)
+    }
+
+    pub fn get_alive_examples(&self) -> Vec<&TrainingExample> {
+        self.examples
+            .iter()
+            .filter(|e| e.label == TrainingLabel::Alive)
+            .collect()
+    }
+
+    pub fn get_dead_examples(&self) -> Vec<&TrainingExample> {
+        self.examples
+            .iter()
+            .filter(|e| e.label == TrainingLabel::Dead)
+            .collect()
     }
 }

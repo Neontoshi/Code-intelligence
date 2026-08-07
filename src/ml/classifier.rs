@@ -1,16 +1,21 @@
 // src/ml/classifier.rs
 
 use crate::analysis::training_data::{TrainingExample, TrainingLabel};
+use crate::ml::feature_schema::{feature_count, feature_names, FeatureCategory, FEATURE_SCHEMA};
 use crate::utils::serialization::{load_from_file, save_to_file};
-use serde::{Deserialize, Serialize}; // ⭐ NEW
+use serde::{Deserialize, Serialize};
 
-// Simple linear classifier with gradient descent
+// ============================================================================
+// Linear Classifier
+// ============================================================================
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinearClassifier {
     weights: Vec<f64>,
     bias: f64,
     learning_rate: f64,
     epochs: usize,
+    feature_count: usize,
 }
 
 impl LinearClassifier {
@@ -20,7 +25,12 @@ impl LinearClassifier {
             bias: 0.0,
             learning_rate: 0.01,
             epochs: 100,
+            feature_count,
         }
+    }
+
+    pub fn new_with_schema() -> Self {
+        Self::new(feature_count())
     }
 
     pub fn with_learning_rate(mut self, lr: f64) -> Self {
@@ -43,15 +53,9 @@ impl LinearClassifier {
             return 0.0;
         }
 
-        let feature_count = if let Some(first) = labeled.first() {
-            first.features.to_feature_vector().len()
-        } else {
-            33
-        };
-
-        // Initialize weights if not set
-        if self.weights.len() != feature_count {
-            self.weights = vec![0.0; feature_count];
+        // Ensure we have the right number of features
+        if self.weights.len() != self.feature_count {
+            self.weights = vec![0.0; self.feature_count];
         }
 
         // Train using gradient descent
@@ -93,7 +97,7 @@ impl LinearClassifier {
 
             let avg_loss = total_loss / shuffled.len() as f64;
 
-            if epoch % 20 == 0 {
+            if epoch % 20 == 0 && epoch > 0 {
                 println!("   Epoch {}: loss = {:.4}", epoch, avg_loss);
             }
         }
@@ -136,8 +140,9 @@ impl LinearClassifier {
         correct as f64 / labeled.len() as f64
     }
 
-    pub fn feature_importance(&self, feature_names: &[String]) -> Vec<(String, f64)> {
-        let mut importance: Vec<(String, f64)> = feature_names
+    pub fn feature_importance(&self) -> Vec<(String, f64)> {
+        let names = feature_names();
+        let mut importance: Vec<(String, f64)> = names
             .iter()
             .zip(self.weights.iter())
             .map(|(name, &weight)| (name.clone(), weight))
@@ -146,11 +151,76 @@ impl LinearClassifier {
         importance.sort_by(|a, b| b.1.abs().partial_cmp(&a.1.abs()).unwrap());
         importance
     }
+
+    pub fn print_feature_importance(&self) {
+        println!("\n📊 Feature Importance (top 15):");
+        println!(
+            "   {:>30} | {:>10} | {:>15}",
+            "Feature", "Weight", "Direction"
+        );
+        println!("   {:-<30}-+-{:-<10}-+-{:-<15}", "", "", "");
+
+        for (name, weight) in self.feature_importance().iter().take(15) {
+            let direction = if *weight > 0.05 {
+                "→ ALIVE"
+            } else if *weight < -0.05 {
+                "→ DEAD"
+            } else {
+                "→ UNCERTAIN"
+            };
+            println!("   {:>30} | {:>10.3} | {:>15}", name, weight, direction);
+        }
+
+        // Also show feature category breakdown
+        println!("\n   By Category (average absolute weight):");
+        for category in [
+            FeatureCategory::Graph,
+            FeatureCategory::Signature,
+            FeatureCategory::Complexity,
+            FeatureCategory::Name,
+            FeatureCategory::File,
+            FeatureCategory::Type,
+        ] {
+            let features = FEATURE_SCHEMA.get_by_category(&category);
+            if !features.is_empty() {
+                let avg_weight: f64 = features
+                    .iter()
+                    .filter_map(|f| self.weights.get(f.index).map(|w| w.abs()))
+                    .sum::<f64>()
+                    / features.len() as f64;
+                println!("      {:?}: {:.3}", category, avg_weight);
+            }
+        }
+    }
+
+    pub fn get_weights(&self) -> &[f64] {
+        &self.weights
+    }
+
+    pub fn get_bias(&self) -> f64 {
+        self.bias
+    }
+
+    pub fn feature_count(&self) -> usize {
+        self.feature_count
+    }
 }
 
+impl Default for LinearClassifier {
+    fn default() -> Self {
+        Self::new_with_schema()
+    }
+}
+
+// ============================================================================
+// Dead Code Classifier (Wrapper)
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeadCodeClassifier {
     model: Option<LinearClassifier>,
     accuracy: f64,
+    feature_count: usize,
 }
 
 impl DeadCodeClassifier {
@@ -158,6 +228,7 @@ impl DeadCodeClassifier {
         Self {
             model: None,
             accuracy: 0.0,
+            feature_count: feature_count(),
         }
     }
 
@@ -204,6 +275,14 @@ impl DeadCodeClassifier {
         }
     }
 
+    pub fn predict_features(&self, features: &[f64]) -> f64 {
+        if let Some(model) = &self.model {
+            model.predict(features)
+        } else {
+            0.5
+        }
+    }
+
     pub fn get_accuracy(&self) -> f64 {
         self.accuracy
     }
@@ -212,54 +291,19 @@ impl DeadCodeClassifier {
         self.model.is_some()
     }
 
+    pub fn get_model(&self) -> Option<&LinearClassifier> {
+        self.model.as_ref()
+    }
+
+    pub fn get_model_mut(&mut self) -> Option<&mut LinearClassifier> {
+        self.model.as_mut()
+    }
+
     pub fn print_feature_importance(&self) {
         if let Some(model) = &self.model {
-            let feature_names = vec![
-                "param_count".to_string(),
-                "return_count".to_string(),
-                "is_public".to_string(),
-                "is_async".to_string(),
-                "name_length".to_string(),
-                "starts_with_use".to_string(),
-                "starts_with_test".to_string(),
-                "starts_with_bench".to_string(),
-                "ends_with_test".to_string(),
-                "contains_trait_impl".to_string(),
-                "fan_in".to_string(),
-                "fan_out".to_string(),
-                "complexity".to_string(),
-                "call_depth".to_string(),
-                "is_cycle".to_string(),
-                "is_in_test_file".to_string(),
-                "is_in_benches".to_string(),
-                "is_in_meta".to_string(),
-                "is_in_examples".to_string(),
-                "is_generated".to_string(),
-                "name_contains_use".to_string(),
-                "name_contains_test".to_string(),
-                "name_contains_init".to_string(),
-                "name_contains_get".to_string(),
-                "name_contains_set".to_string(),
-                "name_contains_new".to_string(),
-                "name_contains_create".to_string(),
-                "name_contains_build".to_string(),
-                "name_contains_parse".to_string(),
-                "name_contains_validate".to_string(),
-                "name_contains_handle".to_string(),
-                "name_contains_process".to_string(),
-                "name_contains_convert".to_string(),
-            ];
-            let importance = model.feature_importance(&feature_names);
-
-            println!("\n📊 Feature Importance (top 10):");
-            for (name, weight) in importance.iter().take(10) {
-                let direction = if *weight > 0.0 {
-                    "→ ALIVE"
-                } else {
-                    "→ DEAD"
-                };
-                println!("   {}: {:.3} {}", name, weight, direction);
-            }
+            model.print_feature_importance();
+        } else {
+            println!("No model trained yet.");
         }
     }
 
@@ -272,16 +316,116 @@ impl DeadCodeClassifier {
     }
 
     pub fn load(path: &str) -> Result<Self, String> {
-        let model = load_from_file(path)?;
+        let model: LinearClassifier = load_from_file(path)?;
+        let feature_count = model.feature_count();
         Ok(Self {
             model: Some(model),
             accuracy: 0.0,
+            feature_count,
         })
+    }
+
+    /// Get the number of features this classifier expects
+    pub fn feature_count(&self) -> usize {
+        self.feature_count
     }
 }
 
 impl Default for DeadCodeClassifier {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graph::call_graph::FunctionNode;
+
+    fn create_test_function(name: &str, fan_in: usize, is_public: bool) -> FunctionNode {
+        FunctionNode {
+            name: name.to_string(),
+            full_path: format!("test::{}", name),
+            file: "test.rs".to_string(),
+            line: 1,
+            is_public,
+            is_async: false,
+            params: vec![],
+            returns: vec![],
+            complexity: 1.0,
+            importance_score: 0.0,
+            doc_comment: None,
+            writes_to: vec![],
+            reads_from: vec![],
+            errors: vec![],
+            fan_in,
+            fan_out: 0,
+            is_cycle: false,
+            depth: 0,
+            layer: "core".to_string(),
+            trait_impl: None,
+        }
+    }
+
+    #[test]
+    fn test_linear_classifier_new() {
+        let classifier = LinearClassifier::new_with_schema();
+        assert_eq!(classifier.feature_count(), feature_count());
+        assert_eq!(classifier.weights.len(), feature_count());
+    }
+
+    #[test]
+    fn test_linear_classifier_train_and_predict() {
+        let mut classifier = LinearClassifier::new(10)
+            .with_learning_rate(0.1)
+            .with_epochs(10);
+
+        // Create synthetic training data
+        let mut examples = Vec::new();
+
+        // Alive examples (high fan_in)
+        for i in 0..10 {
+            let func = create_test_function(&format!("alive_{}", i), 5 + i, true);
+            let features = crate::analysis::training_data::FunctionFeatures::from_function(
+                &func,
+                &crate::graph::call_graph::CallGraph::new(),
+            );
+            examples.push(TrainingExample {
+                function_name: func.name.clone(),
+                full_path: func.full_path.clone(),
+                file: func.file.clone(),
+                language: "rust".to_string(),
+                features,
+                label: TrainingLabel::Alive,
+                confidence: 0.9,
+                source: "test".to_string(),
+            });
+        }
+
+        // Dead examples (low fan_in)
+        for i in 0..10 {
+            let func = create_test_function(&format!("dead_{}", i), 0, false);
+            let features = crate::analysis::training_data::FunctionFeatures::from_function(
+                &func,
+                &crate::graph::call_graph::CallGraph::new(),
+            );
+            examples.push(TrainingExample {
+                function_name: func.name.clone(),
+                full_path: func.full_path.clone(),
+                file: func.file.clone(),
+                language: "rust".to_string(),
+                features,
+                label: TrainingLabel::Dead,
+                confidence: 0.9,
+                source: "test".to_string(),
+            });
+        }
+
+        let accuracy = classifier.train(&examples);
+        assert!(accuracy > 0.5);
     }
 }
