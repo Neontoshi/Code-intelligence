@@ -14,11 +14,10 @@ use super::types::{DeadTypeReport, TypeDeadCodeDetector};
 use super::whitelist::WHITELIST;
 use crate::graph::traits::GraphMetrics;
 
-// ⭐ NEW: Import ML
 #[cfg(feature = "ml")]
 use crate::ml::classifier::DeadCodeClassifier;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub struct DeadCodeAnalysis {
@@ -70,7 +69,6 @@ pub struct AnalysisSummary {
 pub struct DeadCodeAnalyzer {
     scorer: ConfidenceScorer,
     cache: HashMap<String, DeadCodeAnalysis>,
-    // ⭐ NEW: Optional ML model
     ml_model: Option<DeadCodeClassifier>,
     use_ml: bool,
 }
@@ -85,7 +83,6 @@ impl DeadCodeAnalyzer {
         }
     }
 
-    // ⭐ NEW: Enable ML model
     pub fn with_ml(mut self, model_path: &str) -> Result<Self, String> {
         #[cfg(feature = "ml")]
         {
@@ -101,33 +98,55 @@ impl DeadCodeAnalyzer {
         }
     }
 
-    pub fn use_ml(&self) -> bool {
-        self.use_ml
-    }
-
-    /// Get the ML model (if available)
-    pub fn get_ml_model(&self) -> Option<&DeadCodeClassifier> {
-        self.ml_model.as_ref()
-    }
-
-    // ⭐ NEW: Enable ML with a loaded classifier
     pub fn with_classifier(mut self, classifier: DeadCodeClassifier) -> Self {
         self.ml_model = Some(classifier);
         self.use_ml = true;
         self
     }
 
-    // ⭐ CHANGED: This is the key method - now uses ML first, then whitelist
+    pub fn use_ml(&self) -> bool {
+        self.use_ml
+    }
+
+    pub fn get_ml_model(&self) -> Option<&DeadCodeClassifier> {
+        self.ml_model.as_ref()
+    }
+
+    // ================================================================
+    // UPDATED: Less aggressive exclusion
+    // ================================================================
+
     fn is_excluded_function(&self, func: &FunctionNode) -> bool {
         // ============================================================
-        // 1️⃣ FIRST: Try ML Model (if available)
+        // 1️⃣ FIRST: Entry points — definitely alive
+        // ============================================================
+        let entry_points = ["main", "async_main", "run", "start", "init", "setup"];
+        if entry_points.contains(&func.name.as_str()) {
+            return true;
+        }
+
+        // ============================================================
+        // 2️⃣ SECOND: Test functions — called by test runner
+        // ============================================================
+        if func.name.starts_with("test_")
+            || func.name.starts_with("Test")
+            || func.name.starts_with("bench_")
+            || func.name.starts_with("Benchmark")
+            || func.file.contains("/tests/")
+            || func.file.ends_with("_test.rs")
+            || func.file.ends_with("_test.go")
+        {
+            return true;
+        }
+
+        // ============================================================
+        // 3️⃣ THIRD: ML Model (if available)
         // ============================================================
         if self.use_ml {
             if let Some(model) = &self.ml_model {
-                // Create a training example from the function
                 use crate::analysis::training_data::{TrainingExample, TrainingLabel};
+                use crate::graph::call_graph::CallGraph;
 
-                // Skip if we can't create features
                 let example = TrainingExample {
                     function_name: func.name.clone(),
                     full_path: func.full_path.clone(),
@@ -135,9 +154,7 @@ impl DeadCodeAnalyzer {
                     language: TrainingExample::detect_language(&func.file),
                     features: crate::analysis::training_data::FunctionFeatures::from_function(
                         func,
-                        // We don't have call_graph here, but we can pass a dummy
-                        // In a real implementation, you'd want to pass the actual call_graph
-                        &crate::graph::call_graph::CallGraph::new(),
+                        &CallGraph::new(),
                     ),
                     label: TrainingLabel::Unknown,
                     confidence: 0.0,
@@ -146,22 +163,22 @@ impl DeadCodeAnalyzer {
 
                 let prob = model.predict_probability(&example);
 
-                // High confidence ALIVE → skip (don't report)
+                // High confidence ALIVE → skip
                 if prob > 0.85 {
                     return true;
                 }
 
-                // High confidence DEAD → report
+                // High confidence DEAD → don't skip
                 if prob < 0.15 {
                     return false;
                 }
 
-                // If uncertain (0.15-0.85), fall through to whitelist
+                // If uncertain (0.15-0.85), fall through to other checks
             }
         }
 
         // ============================================================
-        // 2️⃣ SECOND: Whitelist (fallback for uncertain cases)
+        // 4️⃣ FOURTH: Whitelist (fallback)
         // ============================================================
         if WHITELIST.is_whitelisted(&func.name) {
             return true;
@@ -171,72 +188,85 @@ impl DeadCodeAnalyzer {
         }
 
         // ============================================================
-        // 3️⃣ THIRD: Basic pattern filters
+        // 5️⃣ FIFTH: Trait implementations — only skip if actually used
         // ============================================================
-
-        // Skip React components and hooks
-        if Self::is_likely_react_code(func) {
-            return true;
+        if let Some(trait_name) = &func.trait_impl {
+            // We need to check if this trait is actually used anywhere
+            // For now, be conservative: don't skip trait impls
+            // They might be used polymorphically
+            // return true; // OLD: always skip
+            // NEW: only skip if it's a standard trait
+            let standard_traits = [
+                "Clone", "Debug", "Default", "Display", "From", "Into", "TryFrom",
+            ];
+            if standard_traits.contains(&trait_name.as_str()) {
+                return true;
+            }
+            // For custom traits, we still report them as potentially dead
+            // They'll be scored and filtered by confidence
         }
 
-        // Skip React Router hooks
-        if Self::is_react_router_hook(func) {
-            return true;
-        }
-
-        // Skip Router components
-        if Self::is_router_component(func) {
-            return true;
-        }
-
-        // Skip alive API methods
-        if Self::is_alive_api_method(func) {
-            return true;
-        }
-
-        // Skip bundled/minified JS
-        if Self::is_bundled_js(func) {
-            return true;
-        }
-
-        // Skip trait implementations
-        if func.trait_impl.is_some() {
-            return true;
-        }
-
-        // Skip default implementations
-        if func.name == "default" {
-            return true;
-        }
-
-        // Skip functions in test modules
-        if func.file.contains("/tests/")
-            || func.file.ends_with("_test.rs")
-            || func.file.ends_with("_test.go")
-        {
-            return true;
-        }
-
-        // Skip benchmark functions
-        if func.file.contains("/benches/") {
-            return true;
-        }
-
-        // Skip generated files
+        // ============================================================
+        // 6️⃣ SIXTH: Generated files
+        // ============================================================
         if Self::is_generated_file(func) {
             return true;
         }
 
+        // ============================================================
+        // 7️⃣ SEVENTH: React components (not relevant for Rust)
+        // ============================================================
+        if Self::is_likely_react_code(func) {
+            return true;
+        }
+
+        // ============================================================
+        // 8️⃣ EIGHTH: Bundled JS (not relevant for Rust)
+        // ============================================================
+        if Self::is_bundled_js(func) {
+            return true;
+        }
+
+        // ============================================================
+        // 9️⃣ NINTH: Library exports — don't automatically skip
+        // ============================================================
+        // OLD: if func.is_public && func.fan_in == 0 { return true; }
+        // NEW: Only skip if it's in a lib.rs or mod.rs AND has documentation
+        if func.is_public && func.fan_in == 0 {
+            // Check if it's a library root
+            if func.file.contains("lib.rs") || func.file.contains("mod.rs") {
+                // If it has documentation, it's probably intentional
+                if func.doc_comment.is_some() {
+                    return true;
+                }
+                // If it's a standard library export pattern
+                let export_patterns = ["new", "default", "from", "into", "try_from"];
+                if export_patterns.contains(&func.name.as_str()) {
+                    return true;
+                }
+            }
+            // Otherwise, we don't skip it — let the scorer decide
+        }
+
+        // ============================================================
+        // 🔟 TENTH: Functions with callers — don't automatically skip
+        // ============================================================
+        // OLD: if func.fan_in > 0 { return true; }
+        // NEW: Only skip if the callers are reachable from entry points
+        // For now, we'll let the scorer handle it
+
+        // If we made it here, the function is a candidate for dead code
         false
     }
 
-    // ⭐ NEW: Helper to detect bundled JS
+    // ================================================================
+    // Helper methods (unchanged from original)
+    // ================================================================
+
     fn is_bundled_js(func: &FunctionNode) -> bool {
         if !func.file.ends_with(".js") && !func.file.ends_with(".js.map") {
             return false;
         }
-
-        // Check for bundle patterns
         func.file.contains("/dist/")
             || func.file.contains("/build/")
             || func.file.contains("/assets/")
@@ -248,7 +278,6 @@ impl DeadCodeAnalyzer {
             || func.file.contains("node_modules/")
     }
 
-    // ⭐ NEW: Helper to detect generated files
     fn is_generated_file(func: &FunctionNode) -> bool {
         func.file.contains(".gen.go")
             || func.file.contains("_gen.go")
@@ -257,11 +286,7 @@ impl DeadCodeAnalyzer {
             || func.file.ends_with(".d.ts")
     }
 
-    // ... keep the rest of the methods (is_likely_react_code, is_react_router_hook, etc.)
-    // They stay exactly the same as before
-
     fn is_likely_react_code(func: &FunctionNode) -> bool {
-        // ... unchanged ...
         let is_tsx = func.file.ends_with(".tsx") || func.file.ends_with(".jsx");
         let is_jsx = func.file.ends_with(".jsx");
         let is_component = func
@@ -293,57 +318,6 @@ impl DeadCodeAnalyzer {
             && (is_component || is_hook || is_setter || is_react_file || is_state_hook)
     }
 
-    fn is_react_router_hook(func: &FunctionNode) -> bool {
-        let router_hooks = [
-            "useLocation",
-            "useNavigate",
-            "useParams",
-            "useSearchParams",
-            "useRouteMatch",
-            "useRoutes",
-            "useOutletContext",
-            "useOutlet",
-            "useResolvedPath",
-            "useHref",
-            "useInRouterContext",
-            "useNavigationType",
-            "useSubmit",
-            "useFetcher",
-            "useFetchers",
-            "useRevalidator",
-            "useNavigation",
-        ];
-        let is_router_var = router_hooks.contains(&func.name.as_str());
-        let is_destructured = func.name == "location"
-            || func.name == "navigate"
-            || func.name == "params"
-            || func.name == "searchParams"
-            || func.name == "match"
-            || func.name == "routes";
-        let is_router_file = func.file.contains("App.tsx")
-            || func.file.contains("Router")
-            || func.file.contains("routes");
-
-        is_router_var || (is_destructured && is_router_file)
-    }
-
-    fn is_router_component(func: &FunctionNode) -> bool {
-        let router_components = ["CreatePage", "SearchPage", "App"];
-        router_components.contains(&func.name.as_str())
-    }
-
-    fn is_alive_api_method(func: &FunctionNode) -> bool {
-        let alive_methods = [
-            "constructor",
-            "request",
-            "buildCreateAndCommitGiveaway",
-            "submitGiveaway",
-            "buildReveal",
-            "submitReveal",
-        ];
-        alive_methods.contains(&func.name.as_str())
-    }
-
     fn is_exported_but_unused(&self, func: &FunctionNode, import_graph: &ImportGraph) -> bool {
         let is_exported = func.file.contains("export") || func.file.contains("pub fn");
         let is_imported = import_graph.get_importers(&func.full_path).len() > 0;
@@ -354,7 +328,10 @@ impl DeadCodeAnalyzer {
         format!("cg_{}", call_graph.node_count())
     }
 
-    // ⭐ MAIN ANALYSIS METHOD - Updated to use the new is_excluded_function
+    // ================================================================
+    // MAIN ANALYSIS METHOD — Updated with debug output
+    // ================================================================
+
     pub fn analyze(
         &mut self,
         call_graph: &CallGraph,
@@ -377,23 +354,112 @@ impl DeadCodeAnalyzer {
         let mut dead_functions = Vec::new();
         let mut total_loc = 0;
 
+        // Debug counters
+        let mut skipped_entry = 0;
+        let mut skipped_test = 0;
+        let mut skipped_ml = 0;
+        let mut skipped_whitelist = 0;
+        let mut skipped_trait = 0;
+        let mut skipped_generated = 0;
+        let mut skipped_react = 0;
+        let mut skipped_exported = 0;
+        let mut scored = 0;
+        let mut low_confidence = 0;
+
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
 
-            // ⭐ NEW: Use the enhanced exclusion check (ML + whitelist + patterns)
-            if self.is_excluded_function(func) {
+            // Track why functions are skipped
+            let entry_points = ["main", "async_main", "run", "start", "init", "setup"];
+            if entry_points.contains(&func.name.as_str()) {
+                skipped_entry += 1;
                 continue;
             }
 
-            // Skip functions with callers
-            if func.fan_in > 0 {
+            if func.name.starts_with("test_")
+                || func.name.starts_with("Test")
+                || func.name.starts_with("bench_")
+                || func.name.starts_with("Benchmark")
+                || func.file.contains("/tests/")
+                || func.file.ends_with("_test.rs")
+                || func.file.ends_with("_test.go")
+            {
+                skipped_test += 1;
                 continue;
             }
 
-            // Skip exported but unused functions (they might be used externally)
-            if self.is_exported_but_unused(func, import_graph) {
+            // ML filter
+            if self.use_ml {
+                if let Some(model) = &self.ml_model {
+                    use crate::analysis::training_data::{TrainingExample, TrainingLabel};
+                    let example = TrainingExample {
+                        function_name: func.name.clone(),
+                        full_path: func.full_path.clone(),
+                        file: func.file.clone(),
+                        language: TrainingExample::detect_language(&func.file),
+                        features: crate::analysis::training_data::FunctionFeatures::from_function(
+                            func, call_graph,
+                        ),
+                        label: TrainingLabel::Unknown,
+                        confidence: 0.0,
+                        source: "ml".to_string(),
+                    };
+                    let prob = model.predict_probability(&example);
+                    if prob > 0.85 {
+                        skipped_ml += 1;
+                        continue;
+                    }
+                }
+            }
+
+            // Whitelist
+            if WHITELIST.is_whitelisted(&func.name) || WHITELIST.is_whitelisted_path(&func.file) {
+                skipped_whitelist += 1;
                 continue;
             }
+
+            // Trait implementations - only skip standard ones
+            if let Some(trait_name) = &func.trait_impl {
+                let standard_traits = [
+                    "Clone", "Debug", "Default", "Display", "From", "Into", "TryFrom",
+                ];
+                if standard_traits.contains(&trait_name.as_str()) {
+                    skipped_trait += 1;
+                    continue;
+                }
+            }
+
+            // Generated files
+            if Self::is_generated_file(func) {
+                skipped_generated += 1;
+                continue;
+            }
+
+            // React components (not relevant for Rust)
+            if Self::is_likely_react_code(func) {
+                skipped_react += 1;
+                continue;
+            }
+
+            // ⭐ NEW: Don't skip exported functions automatically
+            // Instead, score them and let the confidence threshold decide
+            if func.is_public && func.fan_in == 0 {
+                // Check if it's a library root with documentation
+                if func.file.contains("lib.rs") || func.file.contains("mod.rs") {
+                    if func.doc_comment.is_some() {
+                        skipped_exported += 1;
+                        continue;
+                    }
+                    let export_patterns = ["new", "default", "from", "into", "try_from"];
+                    if export_patterns.contains(&func.name.as_str()) {
+                        skipped_exported += 1;
+                        continue;
+                    }
+                }
+            }
+
+            // ⭐ NEW: Don't skip functions with callers automatically
+            // They might be dead if all their callers are dead
 
             // Score the function
             let git_info =
@@ -419,8 +485,25 @@ impl DeadCodeAnalyzer {
                     impact,
                     removal_order: 0,
                 });
+                scored += 1;
+            } else {
+                low_confidence += 1;
             }
         }
+
+        // Print debug info
+        println!("\n🔍 Dead Code Analyzer Debug:");
+        println!("   Total functions: {}", call_graph.node_count());
+        println!("   Skipped (entry points): {}", skipped_entry);
+        println!("   Skipped (test functions): {}", skipped_test);
+        println!("   Skipped (ML model): {}", skipped_ml);
+        println!("   Skipped (whitelist): {}", skipped_whitelist);
+        println!("   Skipped (trait impls): {}", skipped_trait);
+        println!("   Skipped (generated): {}", skipped_generated);
+        println!("   Skipped (React): {}", skipped_react);
+        println!("   Skipped (exported API): {}", skipped_exported);
+        println!("   Scored (high confidence): {}", scored);
+        println!("   Scored (low confidence): {}", low_confidence);
 
         // 3. Type dead code analysis
         let type_report = TypeDeadCodeDetector::detect_dead_types(type_graph, call_graph);
@@ -469,7 +552,6 @@ impl DeadCodeAnalyzer {
     }
 
     fn calculate_impact(&self, func: &FunctionNode, call_graph: &CallGraph) -> FunctionImpact {
-        // Find the function index
         let mut idx = None;
         for i in call_graph.node_indices() {
             if call_graph[i].full_path == func.full_path {
@@ -488,7 +570,6 @@ impl DeadCodeAnalyzer {
             }
         }
 
-        // Estimate LOC (rough)
         let lines_of_code = 20 + (func.complexity * 5.0) as usize;
 
         let (estimated_removal_impact, removal_cost) = if dependencies.is_empty() {

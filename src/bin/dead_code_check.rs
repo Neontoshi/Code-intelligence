@@ -1,11 +1,9 @@
-// src/bin/dead_code_check.rs
+// src/bin/dead_code_check.rs — add this debug version
 
 use clap::Parser;
 use code_intelligence::analysis::dead_code::{DeadCodeAnalysis, DeadCodeAnalyzer, DeadFunction};
 use code_intelligence::analysis::git_analysis::GitAnalyzer;
-use code_intelligence::analysis::training_data::{
-    FunctionFeatures, TrainingExample, TrainingLabel,
-};
+use code_intelligence::graph::GraphMetrics;
 use code_intelligence::ml::classifier::DeadCodeClassifier;
 use code_intelligence::Pipeline;
 use std::collections::HashSet;
@@ -32,6 +30,10 @@ struct Args {
     /// Verbose output
     #[arg(short, long)]
     verbose: bool,
+
+    /// Show debug info about why functions are excluded
+    #[arg(long)]
+    debug: bool,
 }
 
 #[tokio::main]
@@ -85,19 +87,89 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         git_analysis.as_ref(),
     );
 
+    // ================================================================
+    // DEBUG: Show why functions are being excluded
+    // ================================================================
+    if args.debug {
+        println!("\n🔍 DEBUG: Analyzing why no dead functions found");
+        println!("   Total functions: {}", analysis.call_graph.node_count());
+
+        let mut no_callers = 0;
+        let mut private = 0;
+        let mut exported = 0;
+        let mut in_test = 0;
+        let mut trait_impl = 0;
+        let mut whitelisted = 0;
+        let mut low_confidence = 0;
+        let mut has_callers = 0;
+
+        for idx in analysis.call_graph.node_indices() {
+            let func = &analysis.call_graph[idx];
+
+            if func.fan_in == 0 {
+                no_callers += 1;
+            }
+
+            if !func.is_public {
+                private += 1;
+            }
+
+            if func.is_public && func.fan_in == 0 {
+                exported += 1;
+            }
+
+            if func.file.contains("/tests/") || func.file.ends_with("_test.rs") {
+                in_test += 1;
+            }
+
+            if func.trait_impl.is_some() {
+                trait_impl += 1;
+            }
+
+            if code_intelligence::analysis::dead_code::WHITELIST.is_whitelisted(&func.name) {
+                whitelisted += 1;
+            }
+
+            if func.fan_in > 0 {
+                has_callers += 1;
+            }
+        }
+
+        println!("\n   Functions with no callers: {}", no_callers);
+        println!("   Private functions: {}", private);
+        println!("   Exported (public + no callers): {}", exported);
+        println!("   Test functions: {}", in_test);
+        println!("   Trait implementations: {}", trait_impl);
+        println!("   Whitelisted functions: {}", whitelisted);
+        println!("   Functions with callers: {}", has_callers);
+
+        // Show some examples of functions with no callers
+        println!("\n   Sample functions with no callers:");
+        let mut count = 0;
+        for idx in analysis.call_graph.node_indices() {
+            let func = &analysis.call_graph[idx];
+            if func.fan_in == 0 && count < 20 {
+                println!(
+                    "      - {} (public: {}, file: {})",
+                    func.name,
+                    func.is_public,
+                    func.file.split('/').last().unwrap_or(&func.file)
+                );
+                count += 1;
+            }
+        }
+    }
+
     // Filter using the actual FunctionNode from the call graph
     let filtered_functions: Vec<DeadFunction> = if analyzer.use_ml() {
-        // Use ML model to filter
         dead_analysis
             .functions
             .iter()
             .filter(|f| {
-                // First check confidence threshold
                 if f.score.score < args.threshold {
                     return false;
                 }
 
-                // Look up the actual FunctionNode from the call graph
                 let actual_node = analysis
                     .call_graph
                     .node_indices()
@@ -107,7 +179,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let actual_node = match actual_node {
                     Some(node) => node,
                     None => {
-                        // If we can't find it, be conservative — keep it
                         if args.verbose {
                             println!("   ⚠️ Could not find actual node for {}, keeping", f.name);
                         }
@@ -115,7 +186,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                // Create a training example using the REAL FunctionNode
+                use code_intelligence::analysis::training_data::{
+                    FunctionFeatures, TrainingExample, TrainingLabel,
+                };
                 let example = TrainingExample {
                     function_name: actual_node.name.clone(),
                     full_path: actual_node.full_path.clone(),
@@ -132,7 +205,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .map(|model| model.predict_probability(&example))
                     .unwrap_or(0.5);
 
-                // If ML says it's highly likely alive, skip it
                 if prob > 0.85 {
                     if args.verbose {
                         println!("   ML filtered: {} (prob: {:.2})", f.name, prob);
@@ -140,13 +212,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return false;
                 }
 
-                // Keep if ML says it's dead or uncertain
                 true
             })
             .cloned()
             .collect()
     } else {
-        // Use traditional filtering without ML
         dead_analysis
             .functions
             .iter()
@@ -155,7 +225,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect()
     };
 
-    // Create filtered analysis
     let filtered_analysis = DeadCodeAnalysis {
         functions: filtered_functions.clone(),
         types: dead_analysis.types,
@@ -164,11 +233,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         summary: dead_analysis.summary,
     };
 
-    // ⭐ FIX: Use the analyzer instance to generate the report
     let report = analyzer.generate_report(&filtered_analysis);
     println!("{}", report);
 
-    // Show detailed filtered stats
     println!("\n📊 Filtered Results:");
     println!(
         "   Original dead functions: {}",
@@ -188,26 +255,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("   ML Model: enabled ✅");
     } else {
         println!("   ML Model: disabled");
-    }
-
-    // Show what was filtered out
-    if dead_analysis.functions.len() > filtered_analysis.functions.len() {
-        println!("\n📋 Filtered out (false positives):");
-        let filtered_names: HashSet<String> = filtered_analysis
-            .functions
-            .iter()
-            .map(|f| f.full_path.clone())
-            .collect();
-
-        for f in dead_analysis.functions.iter() {
-            if !filtered_names.contains(&f.full_path) {
-                println!(
-                    "   - {} (from {})",
-                    f.name,
-                    f.file.split('/').last().unwrap_or("")
-                );
-            }
-        }
     }
 
     Ok(())
