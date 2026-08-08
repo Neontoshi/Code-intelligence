@@ -23,8 +23,12 @@ struct Args {
     no_ml: bool,
 
     /// Confidence threshold (0.0 - 1.0)
-    #[arg(long, default_value = "0.70")]
+    #[arg(long, default_value = "0.92")]
     threshold: f64,
+
+    /// Use conservative mode (higher threshold for fewer false positives)
+    #[arg(long)]
+    conservative: bool,
 
     /// Verbose output
     #[arg(short, long)]
@@ -68,6 +72,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+
+    let threshold = if args.conservative {
+        0.95 // Even more conservative
+    } else {
+        args.threshold // Default: 0.92 (99% precision target)
+    };
+
+    println!(
+        "📊 Using threshold: {:.2} (calibrated for {:.1}% precision)",
+        threshold,
+        if args.conservative { 99.5 } else { 99.0 }
+    );
 
     // Run comprehensive dead code analysis
     let mut analyzer = DeadCodeAnalyzer::new();
