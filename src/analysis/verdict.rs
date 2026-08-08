@@ -5,6 +5,7 @@
 //! This module provides a single source of truth for determining if a function
 //! is dead, alive, or needs review.
 
+use crate::analysis::dynamic_refs::DynamicReference;
 use crate::analysis::roots::ReachabilityMap;
 use crate::analysis::training_data::{TrainingExample, TrainingLabel};
 use crate::graph::call_graph::{CallGraph, FunctionNode};
@@ -132,6 +133,7 @@ impl Default for VerdictConfig {
 pub struct VerdictEngine {
     config: VerdictConfig,
     ml_model: Option<DeadCodeClassifier>,
+    dynamic_refs: Option<Vec<DynamicReference>>, // ⭐ NEW
 }
 
 impl VerdictEngine {
@@ -139,12 +141,18 @@ impl VerdictEngine {
         Self {
             config,
             ml_model: None,
+            dynamic_refs: None,
         }
     }
 
     pub fn with_ml(mut self, model: DeadCodeClassifier) -> Self {
         self.ml_model = Some(model);
         self.config.enable_ml = true;
+        self
+    }
+
+    pub fn with_dynamic_refs(mut self, refs: Vec<DynamicReference>) -> Self {
+        self.dynamic_refs = Some(refs);
         self
     }
 
@@ -377,6 +385,25 @@ impl VerdictEngine {
                 weight: 0.1,
                 explanation: "Has documentation".to_string(),
             });
+        }
+
+        if let Some(dynamic_refs) = &self.dynamic_refs {
+            let is_dynamically_referenced = dynamic_refs.iter().any(|r| {
+                r.source_function
+                    .as_ref()
+                    .map(|f| f == &func.name)
+                    .unwrap_or(false)
+            });
+
+            if is_dynamically_referenced {
+                signals.push(Signal {
+                    name: "dynamic_reference".to_string(),
+                    value: 1.0,
+                    direction: SignalDirection::SupportsAlive,
+                    weight: 0.3,
+                    explanation: "Referenced dynamically (reflection/callback)".to_string(),
+                });
+            }
         }
 
         signals

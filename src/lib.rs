@@ -12,6 +12,7 @@ pub mod utils;
 pub use analysis::complexity::ComplexityAnalyzer;
 pub use analysis::context::ProjectAnalysis;
 pub use analysis::dead_code::DeadCodeDetector;
+pub use analysis::dynamic_refs::{DynamicRefDetector, DynamicRefType, DynamicReference};
 pub use analysis::git_analysis::GitAnalyzer;
 pub use analysis::importance::ImportanceScorer;
 pub use analysis::roots::{

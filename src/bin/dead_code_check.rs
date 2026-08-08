@@ -4,6 +4,7 @@ use clap::Parser;
 use code_intelligence::analysis::dead_code::{
     ConfidenceLevel, DeadCodeAnalysis, DeadCodeAnalyzer, DeadFunction, FunctionImpact, RemovalCost,
 };
+use code_intelligence::analysis::dynamic_refs::DynamicRefDetector;
 use code_intelligence::analysis::git_analysis::GitAnalyzer;
 use code_intelligence::analysis::roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector};
 use code_intelligence::analysis::verdict::{Verdict, VerdictConfig, VerdictEngine};
@@ -141,6 +142,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(model) = ml_model {
         verdict_engine = verdict_engine.with_ml(model);
     }
+
+    // 4.5 Detect dynamic references and add to verdict engine
+    let dynamic_detector = DynamicRefDetector::new();
+    let dynamic_refs = dynamic_detector.detect_all(&analysis.call_graph, &analysis.files);
+
+    if args.verbose && !dynamic_refs.is_empty() {
+        println!("\n🔄 Dynamic references found: {}", dynamic_refs.len());
+        let report = dynamic_detector.generate_report(&dynamic_refs);
+        println!("{}", report);
+    }
+
+    verdict_engine = verdict_engine.with_dynamic_refs(dynamic_refs);
 
     // 5. Generate verdicts for all functions
     let verdicts = verdict_engine.evaluate_all(&analysis.call_graph, &reachability);

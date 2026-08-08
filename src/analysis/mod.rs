@@ -3,6 +3,7 @@
 pub mod complexity;
 pub mod context;
 pub mod dead_code;
+pub mod dynamic_refs; // ⭐ NEW
 pub mod features;
 pub mod git_analysis;
 pub mod importance;
