@@ -61,15 +61,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("⚠️ ML model provided but --no-ml flag is set. Ignoring model.");
             None
         } else {
-            match DeadCodeClassifier::load(&model_path.to_string_lossy()) {
-                Ok(model) => {
-                    println!("✅ Loaded ML model from: {:?}", model_path);
-                    Some(model)
+            // Try loading as versioned model first
+            match code_intelligence::ml::model_serialization::VersionedModel::load(
+                &model_path.to_string_lossy(),
+            ) {
+                Ok(versioned) => {
+                    println!("✅ Loaded versioned model from: {:?}", model_path);
+                    println!("   Version: {}", versioned.version);
+                    println!("   Created: {}", versioned.created_at);
+                    if let Some(perf) = versioned.get_performance() {
+                        println!(
+                            "   Performance: F1={:.1}%, Precision={:.1}%",
+                            perf.f1 * 100.0,
+                            perf.precision * 100.0
+                        );
+                    }
+                    // Extract classifier from versioned model
+                    let classifier = DeadCodeClassifier {
+                        model: Some(versioned.classifier.clone()),
+                        accuracy: versioned
+                            .performance
+                            .as_ref()
+                            .map(|p| p.accuracy)
+                            .unwrap_or(0.0),
+                        feature_count: versioned.feature_schema.feature_count(),
+                    };
+                    Some(classifier)
                 }
-                Err(e) => {
-                    eprintln!("⚠️ Failed to load ML model: {}", e);
-                    eprintln!("   Continuing without ML support.");
-                    None
+                Err(_) => {
+                    // Fallback: try loading legacy model
+                    match DeadCodeClassifier::load(&model_path.to_string_lossy()) {
+                        Ok(model) => {
+                            println!("✅ Loaded legacy model from: {:?}", model_path);
+                            Some(model)
+                        }
+                        Err(e) => {
+                            eprintln!("⚠️ Failed to load model: {}", e);
+                            None
+                        }
+                    }
                 }
             }
         }

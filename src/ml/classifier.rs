@@ -217,9 +217,9 @@ impl Default for LinearClassifier {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeadCodeClassifier {
-    model: Option<LinearClassifier>,
-    accuracy: f64,
-    feature_count: usize,
+    pub model: Option<LinearClassifier>,
+    pub accuracy: f64,
+    pub feature_count: usize,
 }
 
 impl DeadCodeClassifier {

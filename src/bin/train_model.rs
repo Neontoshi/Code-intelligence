@@ -52,9 +52,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Print feature importance
     classifier.print_feature_importance();
 
-    // Save model
+    // Create versioned model
+    use code_intelligence::ml::{ModelPerformance, TrainingMetadata, VersionedModel};
+
+    let metadata = TrainingMetadata {
+        training_repositories: vec!["combined".to_string()],
+        examples_count: examples.len(),
+        alive_count,
+        dead_count,
+        languages: vec!["rust".to_string(), "python".to_string(), "js".to_string()],
+        training_date: chrono::Utc::now().to_rfc3339(),
+        training_duration_secs: 0.0,
+    };
+
+    let performance = ModelPerformance {
+        accuracy: classifier.accuracy,
+        precision: 0.0,
+        recall: 0.0,
+        f1: 0.0,
+        fpr: 0.0,
+        fnr: 0.0,
+        threshold: 0.92,
+    };
+
+    // Clone the model for versioned format (so we keep the original)
+    if let Some(inner_model) = classifier.model.clone() {
+        let versioned = VersionedModel::new(inner_model, metadata, Some(performance));
+        let versioned_path = model_file.with_extension("v2.json");
+        versioned.save(&versioned_path.to_string_lossy())?;
+        println!("✅ Versioned model saved to: {:?}", versioned_path);
+    }
+
+    // Also save legacy format for backward compatibility
     classifier.save(&model_file.to_string_lossy())?;
-    println!("\n✅ Model saved to: {:?}", model_file);
+    println!("✅ Legacy model saved to: {:?}", model_file);
 
     // Show predictions
     println!("\n🔮 Sample Predictions:");
