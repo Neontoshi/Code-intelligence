@@ -58,9 +58,7 @@ impl DynamicRefDetector {
     }
 
     fn init_patterns(&mut self) {
-        // ================================================================
         // Rust Patterns
-        // ================================================================
         self.rust_patterns.push(RefPattern {
             name: "Any trait".to_string(),
             pattern: "Any".to_string(),
@@ -85,9 +83,7 @@ impl DynamicRefDetector {
             language: "rust".to_string(),
         });
 
-        // ================================================================
         // JavaScript/TypeScript Patterns
-        // ================================================================
         self.js_patterns.push(RefPattern {
             name: "Dynamic import".to_string(),
             pattern: "import(".to_string(),
@@ -120,17 +116,7 @@ impl DynamicRefDetector {
             language: "js".to_string(),
         });
 
-        self.js_patterns.push(RefPattern {
-            name: "Property access".to_string(),
-            pattern: "[]".to_string(),
-            ref_type: DynamicRefType::StringDispatch,
-            confidence: 0.5,
-            language: "js".to_string(),
-        });
-
-        // ================================================================
         // Python Patterns
-        // ================================================================
         self.python_patterns.push(RefPattern {
             name: "Getattr".to_string(),
             pattern: "getattr(".to_string(),
@@ -155,17 +141,7 @@ impl DynamicRefDetector {
             language: "python".to_string(),
         });
 
-        self.python_patterns.push(RefPattern {
-            name: "Decorator registration".to_string(),
-            pattern: "@".to_string(),
-            ref_type: DynamicRefType::Framework,
-            confidence: 0.6,
-            language: "python".to_string(),
-        });
-
-        // ================================================================
         // Go Patterns
-        // ================================================================
         self.go_patterns.push(RefPattern {
             name: "Reflection".to_string(),
             pattern: "reflect.".to_string(),
@@ -182,22 +158,12 @@ impl DynamicRefDetector {
             language: "go".to_string(),
         });
 
-        // ================================================================
         // Java Patterns
-        // ================================================================
         self.java_patterns.push(RefPattern {
             name: "Reflection".to_string(),
             pattern: "Class.forName".to_string(),
             ref_type: DynamicRefType::Reflection,
             confidence: 0.9,
-            language: "java".to_string(),
-        });
-
-        self.java_patterns.push(RefPattern {
-            name: "Annotation".to_string(),
-            pattern: "@".to_string(),
-            ref_type: DynamicRefType::Framework,
-            confidence: 0.5,
             language: "java".to_string(),
         });
     }
@@ -353,19 +319,49 @@ impl DynamicRefDetector {
             });
         }
 
-        // Python Flask/FastAPI routes
+        // Python Flask/FastAPI routes - only specific patterns
         if file.path.contains("routes") || file.path.contains("handlers") {
             if func_info.doc_comment.is_some() {
                 let doc = func_info.doc_comment.as_ref().unwrap();
-                if doc.contains("@app.route") || doc.contains("@router.") {
+                // Look for specific route decorator patterns
+                if doc.contains("@app.route")
+                    || doc.contains("@router.")
+                    || doc.contains("@blueprint.")
+                {
                     refs.push(DynamicReference {
                         source_file: file.path.clone(),
                         source_function: Some(func_info.name.clone()),
                         target_function: None,
                         target_pattern: "RouteHandler".to_string(),
                         reference_type: DynamicRefType::Framework,
+                        confidence: 0.9, // Higher confidence for specific patterns
+                        context: format!(
+                            "Route decorator found: {}",
+                            doc.lines().next().unwrap_or("")
+                        ),
+                    });
+                }
+            }
+        }
+
+        // Java Spring annotations - specific patterns
+        if file.path.contains("Controller") || file.path.contains("RestController") {
+            if func_info.doc_comment.is_some() {
+                let doc = func_info.doc_comment.as_ref().unwrap();
+                if doc.contains("@GetMapping")
+                    || doc.contains("@PostMapping")
+                    || doc.contains("@PutMapping")
+                    || doc.contains("@DeleteMapping")
+                    || doc.contains("@RequestMapping")
+                {
+                    refs.push(DynamicReference {
+                        source_file: file.path.clone(),
+                        source_function: Some(func_info.name.clone()),
+                        target_function: None,
+                        target_pattern: "SpringMapping".to_string(),
+                        reference_type: DynamicRefType::Framework,
                         confidence: 0.9,
-                        context: "Flask/FastAPI route handler".to_string(),
+                        context: "Spring mapping annotation".to_string(),
                     });
                 }
             }

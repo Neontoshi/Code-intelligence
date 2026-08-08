@@ -315,17 +315,57 @@ impl DeadCodeClassifier {
                 CalibrationMethod::TemperatureScaling,
             );
             self.model = Some(calibrated.classifier);
-            // Store calibration info (would need to extend DeadCodeClassifier)
+            self.calibration = Some(calibrated.calibration);
             Ok(())
         } else {
             Err("No model to calibrate".to_string())
         }
     }
 
-    /// Get calibrated prediction
     pub fn predict_calibrated(&self, features: &[f64]) -> f64 {
-        // For now, use raw prediction
-        // In the future, store CalibratedModel alongside
-        self.predict_features(features)
+        let raw = self.predict_features(features);
+
+        // If we have calibration parameters, apply them
+        if let Some(calibration) = &self.calibration {
+            match calibration.method {
+                CalibrationMethod::TemperatureScaling => {
+                    // Apply temperature scaling
+                    1.0 / (1.0 + (-(-((1.0 - raw).ln()) / calibration.temperature)).exp())
+                }
+                CalibrationMethod::HistogramBinning => {
+                    // Find which bin the prediction falls into
+                    for bin in &calibration.bins {
+                        if raw >= bin.lower && raw < bin.upper {
+                            return bin.empirical_accuracy;
+                        }
+                    }
+                    raw
+                }
+                CalibrationMethod::IsotonicRegression => {
+                    // For now, fall back to histogram binning
+                    for bin in &calibration.bins {
+                        if raw >= bin.lower && raw < bin.upper {
+                            return bin.empirical_accuracy;
+                        }
+                    }
+                    raw
+                }
+                CalibrationMethod::None => raw,
+            }
+        } else {
+            // No calibration available, return raw prediction
+            raw
+        }
+    }
+
+    /// Predict calibrated probability that the function is ALIVE
+    pub fn predict_alive_calibrated(&self, example: &TrainingExample) -> f64 {
+        let features = example.features.to_feature_vector();
+        self.predict_calibrated(&features)
+    }
+
+    /// Predict calibrated probability that the function is DEAD
+    pub fn predict_dead_calibrated(&self, example: &TrainingExample) -> f64 {
+        1.0 - self.predict_alive_calibrated(example)
     }
 }

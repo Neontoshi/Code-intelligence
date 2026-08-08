@@ -286,7 +286,37 @@ impl DeadCodeAnalyzer {
     }
 
     fn get_cache_key(call_graph: &CallGraph) -> String {
-        format!("cg_{}", call_graph.node_count())
+        use crate::utils::hashing::HashUtils;
+
+        // Create a hash of the call graph content
+        let mut content = String::new();
+
+        // Sort node indices to ensure deterministic order
+        let mut indices: Vec<_> = call_graph.node_indices().collect();
+        indices.sort_by_key(|idx| idx.index());
+
+        for idx in indices {
+            let func = &call_graph[idx];
+            content.push_str(&func.full_path);
+            content.push('|');
+
+            // Get callees and sort for determinism
+            let mut callees: Vec<_> = call_graph
+                .get_callees(idx)
+                .iter()
+                .map(|f| f.full_path.clone())
+                .collect();
+            callees.sort();
+
+            for callee in callees {
+                content.push_str(&callee);
+                content.push(',');
+            }
+            content.push(';');
+        }
+
+        // Hash the content
+        HashUtils::hash_string(&content)
     }
 
     // ================================================================
@@ -559,30 +589,33 @@ impl DeadCodeAnalyzer {
         let mut complexity = func.complexity;
 
         if let Some(idx) = idx {
+            // Get callees (what this function calls)
             for callee in call_graph.get_callees(idx) {
                 dependencies.push(callee.full_path.clone());
                 complexity += callee.complexity * 0.1;
             }
         }
 
-        let lines_of_code = 20 + (func.complexity * 5.0) as usize;
+        let lines_of_code = if func.complexity > 0.0 {
+            (10.0 + func.complexity * 3.5) as usize
+        } else {
+            10
+        };
 
-        let (estimated_removal_impact, removal_cost) = if dependencies.is_empty() {
+        let caller_count = func.fan_in;
+        let (estimated_removal_impact, removal_cost) = if caller_count == 0 {
             (
-                "Low impact - self-contained function".to_string(),
+                "Low impact - no direct callers".to_string(),
                 RemovalCost::Low,
             )
-        } else if dependencies.len() <= 3 {
+        } else if caller_count <= 3 {
             (
-                format!(
-                    "Medium impact - affects {} dependencies",
-                    dependencies.len()
-                ),
+                format!("Medium impact - {} direct callers", caller_count),
                 RemovalCost::Medium,
             )
         } else {
             (
-                format!("High impact - affects {} dependencies", dependencies.len()),
+                format!("High impact - {} direct callers", caller_count),
                 RemovalCost::High,
             )
         };

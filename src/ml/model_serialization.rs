@@ -66,7 +66,6 @@ impl VersionedModel {
         }
     }
 
-    /// Create a model with all components
     pub fn new_with_components(
         classifier: LinearClassifier,
         scaler: Option<FeatureScaler>,
@@ -101,10 +100,7 @@ impl VersionedModel {
             std::fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
         let model: VersionedModel =
             serde_json::from_str(&data).map_err(|e| format!("Failed to parse JSON: {}", e))?;
-
-        // Validate schema compatibility
         model.validate_schema()?;
-
         Ok(model)
     }
 
@@ -126,7 +122,6 @@ impl VersionedModel {
             ));
         }
 
-        // Validate feature names match
         let model_names: Vec<_> = self.feature_schema.feature_names();
         let current_names: Vec<_> = current.feature_names();
 
@@ -178,7 +173,6 @@ impl VersionedModel {
         self.threshold = threshold;
     }
 }
-
 // Legacy Model Compatibility
 
 impl VersionedModel {

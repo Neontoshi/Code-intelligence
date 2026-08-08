@@ -27,6 +27,7 @@ pub struct FunctionInfo {
     pub role: FunctionRole,
     pub purpose: String,
     pub trait_impl: Option<String>,
+    pub decorators: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -279,6 +280,36 @@ impl TreeSitterParser {
         self.languages.get(ext)
     }
 
+    fn extract_decorators(node: &Node, source: &str) -> Vec<String> {
+        let mut decorators = Vec::new();
+
+        let start_byte = node.start_byte();
+        let text_before = if start_byte > 0 && start_byte <= source.len() {
+            &source[..start_byte]
+        } else {
+            ""
+        };
+
+        let decorator_pattern = regex::Regex::new(r"@([a-zA-Z_][a-zA-Z0-9_.]*)\s*(?:\()?").unwrap();
+
+        for cap in decorator_pattern.captures_iter(text_before) {
+            if let Some(matched) = cap.get(1) {
+                decorators.push(matched.as_str().to_string());
+            }
+        }
+
+        let mut child_cursor = node.walk();
+        for child in node.children(&mut child_cursor) {
+            if child.kind() == "decorator" {
+                if let Ok(text) = child.utf8_text(source.as_bytes()) {
+                    decorators.push(text.trim_start_matches('@').to_string());
+                }
+            }
+        }
+
+        decorators
+    }
+
     pub fn parse_file(&self, path: &Path) -> Result<ParsedFile, String> {
         println!("📄 Parsing file: {:?}", path); // ← ADD THIS
         let config = self
@@ -384,6 +415,8 @@ impl TreeSitterParser {
         let role = Self::infer_role(&name, &params);
         let purpose = Self::infer_purpose(&name, &params, &return_type);
 
+        let decorators = Self::extract_decorators(node, source);
+
         Some(FunctionInfo {
             name,
             line,
@@ -398,6 +431,7 @@ impl TreeSitterParser {
             role,
             purpose,
             trait_impl: trait_impl.map(|s| s.to_string()),
+            decorators,
         })
     }
 

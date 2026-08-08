@@ -2,6 +2,7 @@
 
 use crate::analysis::training_data::{TrainingExample, TrainingLabel};
 use crate::ml::feature_schema::{feature_count, feature_names, FeatureCategory, FEATURE_SCHEMA};
+use crate::ml::CalibrationParams;
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -220,6 +221,7 @@ pub struct DeadCodeClassifier {
     pub model: Option<LinearClassifier>,
     pub accuracy: f64,
     pub feature_count: usize,
+    pub calibration: Option<CalibrationParams>, // ⭐ NEW
 }
 
 impl DeadCodeClassifier {
@@ -228,6 +230,7 @@ impl DeadCodeClassifier {
             model: None,
             accuracy: 0.0,
             feature_count: feature_count(),
+            calibration: None, // ⭐ NEW
         }
     }
 
@@ -329,6 +332,7 @@ impl DeadCodeClassifier {
             model: Some(model),
             accuracy: 0.0,
             feature_count,
+            calibration: None,
         })
     }
 }

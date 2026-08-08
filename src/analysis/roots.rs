@@ -174,15 +174,28 @@ impl RootDetector {
         roots
     }
 
-    /// Detect public API exports
     fn detect_export_roots(call_graph: &CallGraph) -> HashSet<FunctionId> {
         let mut roots = HashSet::new();
 
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
+
             // Public functions with no callers are likely API exports
             if func.is_public && func.fan_in == 0 {
                 roots.insert(func.full_path.clone());
+            }
+
+            // ⭐ NEW: Go exported functions (capitalized) are EXPORTS, not FFI
+            if func.file.ends_with(".go") {
+                let is_exported = func
+                    .name
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false);
+                if is_exported {
+                    roots.insert(func.full_path.clone());
+                }
             }
         }
 
@@ -196,7 +209,7 @@ impl RootDetector {
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
 
-            // React components (TSX/JSX)
+            // React components (TSX/JSX) - function-level detection
             if func.file.ends_with(".tsx") || func.file.ends_with(".jsx") {
                 let is_component = func
                     .name
@@ -217,23 +230,74 @@ impl RootDetector {
                 roots.insert(func.full_path.clone());
             }
 
-            // Java/Spring patterns (detected by file patterns)
+            // Java/Spring - check function annotations, not just file path
             if func.file.contains("/controllers/")
                 || func.file.contains("/handlers/")
                 || func.file.contains("/services/")
             {
-                if func.is_public {
+                let is_spring_handler = func.name.contains("handle")
+                    || func.name.contains("get")
+                    || func.name.contains("post")
+                    || func.name.contains("put")
+                    || func.name.contains("delete");
+
+                let has_spring_annotation = func
+                    .doc_comment
+                    .as_ref()
+                    .map(|d| {
+                        d.contains("@GetMapping")
+                            || d.contains("@PostMapping")
+                            || d.contains("@RequestMapping")
+                            || d.contains("@RestController")
+                    })
+                    .unwrap_or(false);
+
+                if func.is_public && (is_spring_handler || has_spring_annotation) {
                     roots.insert(func.full_path.clone());
                 }
             }
 
-            // Python decorators (detected by patterns in source)
-            if let Some(source) = files.iter().find(|f| f.path == func.file) {
-                if source.source.contains("@app.route")
-                    || source.source.contains("@click.command")
-                    || source.source.contains("@pytest")
-                {
-                    roots.insert(func.full_path.clone());
+            // Python decorators - use the stored decorators from parser
+            if let Some(file) = files.iter().find(|f| f.path == func.file) {
+                if let Some(func_info) = file.functions.iter().find(|fi| fi.name == func.name) {
+                    for decorator in &func_info.decorators {
+                        if decorator.contains("app.route")
+                            || decorator.contains("router.")
+                            || decorator.contains("blueprint.")
+                            || decorator.contains("click.command")
+                            || decorator.contains("pytest")
+                            || decorator.contains("app.get")
+                            || decorator.contains("app.post")
+                            || decorator.contains("app.put")
+                            || decorator.contains("app.delete")
+                        {
+                            roots.insert(func.full_path.clone());
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // ⭐ Java Spring annotations - use decorators from parser
+            if func.file.ends_with(".java") {
+                if let Some(file) = files.iter().find(|f| f.path == func.file) {
+                    if let Some(func_info) = file.functions.iter().find(|fi| fi.name == func.name) {
+                        for decorator in &func_info.decorators {
+                            if decorator.contains("GetMapping")
+                                || decorator.contains("PostMapping")
+                                || decorator.contains("PutMapping")
+                                || decorator.contains("DeleteMapping")
+                                || decorator.contains("RequestMapping")
+                                || decorator.contains("RestController")
+                                || decorator.contains("Service")
+                                || decorator.contains("Repository")
+                                || decorator.contains("Component")
+                            {
+                                roots.insert(func.full_path.clone());
+                                break;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -241,30 +305,31 @@ impl RootDetector {
         roots
     }
 
-    /// Detect FFI exports
     fn detect_ffi_roots(call_graph: &CallGraph) -> HashSet<FunctionId> {
         let mut roots = HashSet::new();
 
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
 
-            // Rust no_mangle / extern
-            if let Some(doc) = &func.doc_comment {
-                if doc.contains("#[no_mangle]") || doc.contains("#[export_name]") {
-                    roots.insert(func.full_path.clone());
-                }
+            // 1. Function name suggests FFI
+            if func.name.contains("extern") || func.name.contains("ffi") {
+                roots.insert(func.full_path.clone());
             }
 
-            // Go exported functions (capitalized) in main package
-            if func.file.ends_with(".go") {
-                let is_exported = func
-                    .name
-                    .chars()
-                    .next()
-                    .map(|c| c.is_uppercase())
-                    .unwrap_or(false);
-                if is_exported {
-                    roots.insert(func.full_path.clone());
+            // 2. File path suggests FFI
+            if func.file.contains("/ffi/") || func.file.contains("/extern/") {
+                roots.insert(func.full_path.clone());
+            }
+
+            // 3. Check for extern "C" in the doc comment (not reliable but better than nothing)
+            if let Some(doc) = &func.doc_comment {
+                if doc.contains("extern \"C\"")
+                    || doc.contains("#[no_mangle]")
+                    || doc.contains("#[export_name]")
+                {
+                    if func.name.contains("extern") || func.file.contains("/ffi/") {
+                        roots.insert(func.full_path.clone());
+                    }
                 }
             }
         }

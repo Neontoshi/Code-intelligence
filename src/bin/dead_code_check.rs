@@ -68,13 +68,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("✅ Loaded versioned model from: {:?}", model_path);
                     println!("   Version: {}", versioned.version);
                     println!("   Created: {}", versioned.created_at);
+
+                    // Display performance info
                     if let Some(perf) = versioned.get_performance() {
                         println!(
                             "   Performance: F1={:.1}%, Precision={:.1}%",
                             perf.f1 * 100.0,
                             perf.precision * 100.0
                         );
+                        println!("   Stored Threshold: {:.2}", perf.threshold);
                     }
+
+                    // Display calibration info
+                    if let Some(cal) = versioned.get_calibration() {
+                        println!("   Calibration: {:?}", cal.method);
+                        println!("   Calibration samples: {}", cal.num_samples);
+                    }
+
                     // Extract classifier from versioned model
                     let classifier = DeadCodeClassifier {
                         model: Some(versioned.classifier.clone()),
@@ -84,15 +94,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .map(|p| p.accuracy)
                             .unwrap_or(0.0),
                         feature_count: versioned.feature_schema.feature_count(),
+                        calibration: versioned.calibration.clone(),
                     };
-                    Some(classifier)
+
+                    // Store the threshold from the model for later use
+                    let model_threshold = versioned.get_threshold();
+                    println!("   Using model threshold: {:.2}", model_threshold);
+
+                    Some((classifier, model_threshold))
                 }
                 Err(_) => {
                     // Fallback: try loading legacy model
                     match DeadCodeClassifier::load(&model_path.to_string_lossy()) {
                         Ok(model) => {
                             println!("✅ Loaded legacy model from: {:?}", model_path);
-                            Some(model)
+                            Some((model, args.threshold))
                         }
                         Err(e) => {
                             eprintln!("⚠️ Failed to load model: {}", e);
@@ -106,11 +122,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    let threshold = if args.conservative {
-        0.95 // Even more conservative
-    } else {
-        args.threshold // Default: 0.92 (99% precision target)
+    // Determine the threshold to use
+    let (_model, model_threshold) = match &ml_model {
+        Some((m, t)) => (Some(m), Some(*t)),
+        None => (None, None),
     };
+
+    // Use model threshold if available, otherwise use CLI threshold
+    let cli_threshold = if args.conservative {
+        0.95
+    } else {
+        args.threshold
+    };
+    let effective_threshold = model_threshold.unwrap_or(cli_threshold);
+    let threshold = effective_threshold;
 
     println!(
         "📊 Using threshold: {:.2} (calibrated for {:.1}% precision)",
@@ -129,13 +154,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. Create verdict engine
     let mut verdict_config = VerdictConfig::default();
-    verdict_config.dead_threshold = threshold;
     verdict_config.enable_ml = ml_model.is_some();
 
     let mut verdict_engine = VerdictEngine::new(verdict_config);
 
+    // If we have a model, use its threshold if available
+    if let Some((model, _)) = &ml_model {
+        // Check if model has calibration
+        if let Some(_cal) = &model.calibration {
+            // Use the effective threshold
+            verdict_engine = verdict_engine.with_dead_threshold(effective_threshold);
+        } else {
+            verdict_engine = verdict_engine.with_dead_threshold(effective_threshold);
+        }
+    } else {
+        verdict_engine = verdict_engine.with_dead_threshold(effective_threshold);
+    }
+
     // 4. Add ML model if available
-    if let Some(model) = ml_model {
+    if let Some((model, _)) = ml_model {
         verdict_engine = verdict_engine.with_ml(model);
     }
 

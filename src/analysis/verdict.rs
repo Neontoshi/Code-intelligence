@@ -123,7 +123,7 @@ impl Default for VerdictConfig {
     fn default() -> Self {
         Self {
             dead_threshold: 0.92,
-            alive_threshold: 0.85,
+            alive_threshold: 0.15,
             enable_ml: true,
             enable_static: true,
         }
@@ -143,6 +143,24 @@ impl VerdictEngine {
             ml_model: None,
             dynamic_refs: None,
         }
+    }
+
+    pub fn with_model_thresholds(self, _model: &DeadCodeClassifier) -> Self {
+        // Currently no-op - thresholds are set directly via with_dead_threshold
+        // This method exists for future use when calibration data includes thresholds
+        self
+    }
+
+    /// Set the dead threshold directly
+    pub fn with_dead_threshold(mut self, threshold: f64) -> Self {
+        self.config.dead_threshold = threshold;
+        self
+    }
+
+    /// Set the alive threshold directly
+    pub fn with_alive_threshold(mut self, threshold: f64) -> Self {
+        self.config.alive_threshold = threshold;
+        self
     }
 
     pub fn with_ml(mut self, model: DeadCodeClassifier) -> Self {
