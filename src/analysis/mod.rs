@@ -6,8 +6,9 @@ pub mod dead_code;
 pub mod features;
 pub mod git_analysis;
 pub mod importance;
-pub mod roots; // ⭐ NEW
+pub mod roots;
 pub mod training_data;
+pub mod verdict;
 
 pub use context::AnalysisIndexes;
 pub use context::ProjectAnalysis;
@@ -22,3 +23,4 @@ pub use roots::{
 pub use training_data::TrainingDataCollector;
 pub use training_data::TrainingExample;
 pub use training_data::TrainingLabel;
+pub use verdict::{Signal, SignalDirection, Verdict, VerdictConfig, VerdictEngine, VerdictStats};

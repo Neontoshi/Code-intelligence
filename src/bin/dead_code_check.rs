@@ -1,8 +1,12 @@
-// src/bin/dead_code_check.rs — add this debug version
+// src/bin/dead_code_check.rs
 
 use clap::Parser;
-use code_intelligence::analysis::dead_code::{DeadCodeAnalysis, DeadCodeAnalyzer, DeadFunction};
+use code_intelligence::analysis::dead_code::{
+    ConfidenceLevel, DeadCodeAnalysis, DeadCodeAnalyzer, DeadFunction, FunctionImpact, RemovalCost,
+};
 use code_intelligence::analysis::git_analysis::GitAnalyzer;
+use code_intelligence::analysis::roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector};
+use code_intelligence::analysis::verdict::{Verdict, VerdictConfig, VerdictEngine};
 use code_intelligence::graph::GraphMetrics;
 use code_intelligence::ml::classifier::DeadCodeClassifier;
 use code_intelligence::Pipeline;
@@ -85,28 +89,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if args.conservative { 99.5 } else { 99.0 }
     );
 
-    // Run comprehensive dead code analysis
-    let mut analyzer = DeadCodeAnalyzer::new();
+    // ================================================================
+    // NEW: Unified Verdict Engine Approach
+    // ================================================================
 
-    // Inject the ML model into the analyzer
+    // 1. Detect roots using unified RootDetector
+    let root_config = RootDetectionConfig::default();
+    let root_set = RootDetector::detect_roots(&analysis.call_graph, &analysis.files, &root_config);
+
+    // 2. Compute reachability using unified analyzer
+    let reachability = ReachabilityAnalyzer::compute_reachability(&analysis.call_graph, &root_set);
+
+    // 3. Create verdict engine
+    let mut verdict_config = VerdictConfig::default();
+    verdict_config.dead_threshold = threshold;
+    verdict_config.enable_ml = ml_model.is_some();
+
+    let mut verdict_engine = VerdictEngine::new(verdict_config);
+
+    // 4. Add ML model if available
     if let Some(model) = ml_model {
-        analyzer = analyzer.with_classifier(model);
+        verdict_engine = verdict_engine.with_ml(model);
     }
 
-    let dead_analysis = analyzer.analyze(
-        &analysis.call_graph,
-        &analysis.type_graph,
-        &analysis.import_graph,
-        &analysis.dependency_graph,
-        &analysis.files,
-        git_analysis.as_ref(),
+    // 5. Generate verdicts for all functions
+    let verdicts = verdict_engine.evaluate_all(&analysis.call_graph, &reachability);
+
+    // 6. Filter verdicts
+    let dead_verdicts: Vec<&Verdict> = verdict_engine.filter_dead(&verdicts);
+    let alive_verdicts: Vec<&Verdict> = verdict_engine.filter_alive(&verdicts);
+    let unknown_verdicts: Vec<&Verdict> = verdict_engine.filter_unknown(&verdicts);
+
+    println!("\n📊 Verdict Engine Results:");
+    println!("   Total functions: {}", verdicts.len());
+    println!("   Dead: {}", dead_verdicts.len());
+    println!("   Alive: {}", alive_verdicts.len());
+    println!("   Unknown: {}", unknown_verdicts.len());
+    println!(
+        "   Avg Confidence: {:.1}%",
+        verdicts.iter().map(|v| v.confidence).sum::<f64>() / verdicts.len() as f64 * 100.0
     );
 
     // ================================================================
-    // DEBUG: Show why functions are being excluded
+    // DEBUG: Show why functions are excluded
     // ================================================================
     if args.debug {
-        println!("\n🔍 DEBUG: Analyzing why no dead functions found");
+        println!("\n🔍 DEBUG: Function Analysis");
         println!("   Total functions: {}", analysis.call_graph.node_count());
 
         let mut no_callers = 0;
@@ -115,7 +143,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut in_test = 0;
         let mut trait_impl = 0;
         let mut whitelisted = 0;
-        let _low_confidence = 0;
         let mut has_callers = 0;
 
         for idx in analysis.call_graph.node_indices() {
@@ -158,118 +185,191 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("   Whitelisted functions: {}", whitelisted);
         println!("   Functions with callers: {}", has_callers);
 
-        // Show some examples of functions with no callers
-        println!("\n   Sample functions with no callers:");
-        let mut count = 0;
-        for idx in analysis.call_graph.node_indices() {
-            let func = &analysis.call_graph[idx];
-            if func.fan_in == 0 && count < 20 {
-                println!(
-                    "      - {} (public: {}, file: {})",
-                    func.name,
-                    func.is_public,
-                    func.file.split('/').last().unwrap_or(&func.file)
-                );
-                count += 1;
+        // Show some examples of dead verdicts
+        println!("\n   Sample Dead Verdicts:");
+        for verdict in dead_verdicts.iter().take(20) {
+            println!(
+                "      - {} (confidence: {:.1}%)",
+                verdict.function_name,
+                verdict.confidence * 100.0
+            );
+        }
+
+        // Show verbose explanations for dead functions
+        if args.verbose {
+            println!("\n   🔍 Detailed Dead Function Explanations:");
+            for verdict in dead_verdicts.iter().take(10) {
+                println!("\n{}", verdict.format_explanation());
+            }
+            if dead_verdicts.len() > 10 {
+                println!("   ... and {} more", dead_verdicts.len() - 10);
             }
         }
     }
 
-    // Filter using the actual FunctionNode from the call graph
-    let filtered_functions: Vec<DeadFunction> = if analyzer.use_ml() {
-        dead_analysis
-            .functions
-            .iter()
-            .filter(|f| {
-                if f.score.score < args.threshold {
-                    return false;
-                }
+    // ================================================================
+    // Convert verdicts to DeadFunction for backward compatibility
+    // ================================================================
 
-                let actual_node = analysis
-                    .call_graph
-                    .node_indices()
-                    .find(|idx| analysis.call_graph[*idx].full_path == f.full_path)
-                    .map(|idx| &analysis.call_graph[idx]);
+    let filtered_functions: Vec<DeadFunction> = dead_verdicts
+        .iter()
+        .filter_map(|verdict| {
+            // Find the actual function node
+            let idx = analysis.call_graph.node_indices()
+                .find(|idx| analysis.call_graph[*idx].full_path == verdict.full_path)?;
 
-                let actual_node = match actual_node {
-                    Some(node) => node,
-                    None => {
-                        if args.verbose {
-                            println!("   ⚠️ Could not find actual node for {}, keeping", f.name);
+            let func = &analysis.call_graph[idx];
+
+            // Determine confidence level
+            let level = if verdict.confidence > 0.95 {
+                ConfidenceLevel::Guaranteed
+            } else if verdict.confidence > 0.85 {
+                ConfidenceLevel::VeryLikely
+            } else {
+                ConfidenceLevel::Probably
+            };
+
+            // Build DeadFunction from verdict
+            Some(DeadFunction {
+                full_path: verdict.full_path.clone(),
+                name: verdict.function_name.clone(),
+                file: func.file.clone(),
+                line: func.line,
+                score: code_intelligence::analysis::dead_code::DeadScore {
+                    score: verdict.confidence,
+                    level,
+                    factors: verdict.signals.iter().map(|s| {
+                        code_intelligence::analysis::dead_code::ScoreFactor {
+                            name: s.name.clone(),
+                            weight: s.weight,
+                            contribution: if s.direction == code_intelligence::analysis::verdict::SignalDirection::SupportsDead {
+                                s.weight
+                            } else {
+                                -s.weight
+                            },
+                            explanation: s.explanation.clone(),
                         }
-                        return true;
-                    }
-                };
-
-                use code_intelligence::analysis::training_data::{
-                    FunctionFeatures, TrainingExample, TrainingLabel,
-                };
-                let example = TrainingExample {
-                    function_name: actual_node.name.clone(),
-                    full_path: actual_node.full_path.clone(),
-                    file: actual_node.file.clone(),
-                    language: TrainingExample::detect_language(&actual_node.file),
-                    features: FunctionFeatures::from_function(actual_node, &analysis.call_graph),
-                    label: TrainingLabel::Unknown,
-                    confidence: 0.0,
-                    source: "ml".to_string(),
-                };
-
-                let prob = analyzer
-                    .get_ml_model()
-                    .map(|model| model.predict_probability(&example))
-                    .unwrap_or(0.5);
-
-                if prob > 0.85 {
-                    if args.verbose {
-                        println!("   ML filtered: {} (prob: {:.2})", f.name, prob);
-                    }
-                    return false;
-                }
-
-                true
+                    }).collect(),
+                },
+                impact: FunctionImpact {
+                    lines_of_code: 20 + (func.complexity * 5.0) as usize,
+                    dependencies: Vec::new(),
+                    complexity: func.complexity,
+                    estimated_removal_impact: if func.complexity > 20.0 {
+                        "High impact - complex function".to_string()
+                    } else if func.complexity > 10.0 {
+                        "Medium impact".to_string()
+                    } else {
+                        "Low impact - simple function".to_string()
+                    },
+                    removal_cost: if func.complexity > 20.0 {
+                        RemovalCost::High
+                    } else if func.complexity > 10.0 {
+                        RemovalCost::Medium
+                    } else {
+                        RemovalCost::Low
+                    },
+                },
+                removal_order: 0,
+                is_binary_only: false,
+                is_internal_call: false,
             })
-            .cloned()
-            .collect()
-    } else {
-        dead_analysis
-            .functions
-            .iter()
-            .filter(|f| f.score.score > args.threshold)
-            .cloned()
-            .collect()
-    };
+        })
+        .collect();
+
+    // Sort by confidence
+    let mut filtered_functions = filtered_functions;
+    filtered_functions.sort_by(|a, b| b.score.score.partial_cmp(&a.score.score).unwrap());
+
+    // Assign removal order
+    for (i, func) in filtered_functions.iter_mut().enumerate() {
+        func.removal_order = i + 1;
+    }
+
+    // ================================================================
+    // Build DeadCodeAnalysis for report generation
+    // ================================================================
+
+    // Run legacy analyzer for comparison (skip if we want to use verdicts only)
+    // For now, we'll use the legacy analyzer only for modules/types
+    let mut legacy_analyzer = DeadCodeAnalyzer::new();
+    let legacy_analysis = legacy_analyzer.analyze(
+        &analysis.call_graph,
+        &analysis.type_graph,
+        &analysis.import_graph,
+        &analysis.dependency_graph,
+        &analysis.files,
+        git_analysis.as_ref(),
+    );
 
     let filtered_analysis = DeadCodeAnalysis {
         functions: filtered_functions.clone(),
-        types: dead_analysis.types,
-        modules: dead_analysis.modules,
-        reachability: dead_analysis.reachability,
-        summary: dead_analysis.summary,
+        types: legacy_analysis.types,
+        modules: legacy_analysis.modules,
+        reachability: reachability.clone(),
+        summary: code_intelligence::analysis::dead_code::AnalysisSummary {
+            total_functions: analysis.call_graph.node_count(),
+            dead_functions: filtered_functions.len(),
+            dead_types: legacy_analysis.summary.dead_types,
+            dead_modules: legacy_analysis.summary.dead_modules,
+            dead_files: legacy_analysis.summary.dead_files,
+            avg_confidence: if filtered_functions.is_empty() {
+                0.0
+            } else {
+                filtered_functions
+                    .iter()
+                    .map(|f| f.score.score)
+                    .sum::<f64>()
+                    / filtered_functions.len() as f64
+            },
+            estimated_loc_removable: filtered_functions
+                .iter()
+                .map(|f| f.impact.lines_of_code)
+                .sum(),
+        },
     };
 
-    let report = analyzer.generate_report(&filtered_analysis);
+    // Generate report
+    let report = legacy_analyzer.generate_report(&filtered_analysis);
     println!("{}", report);
 
-    println!("\n📊 Filtered Results:");
+    // ================================================================
+    // Final Summary
+    // ================================================================
+
+    println!("\n📊 Final Results:");
+    println!("   Dead functions: {}", filtered_analysis.functions.len());
+    println!("   Dead types: {}", filtered_analysis.summary.dead_types);
     println!(
-        "   Original dead functions: {}",
-        dead_analysis.functions.len()
+        "   Dead modules: {}",
+        filtered_analysis.summary.dead_modules
+    );
+    println!("   Dead files: {}", filtered_analysis.summary.dead_files);
+    println!(
+        "   Avg confidence: {:.1}%",
+        filtered_analysis.summary.avg_confidence * 100.0
     );
     println!(
-        "   Remaining dead functions: {}",
-        filtered_analysis.functions.len()
+        "   Estimated LOC removable: {}",
+        filtered_analysis.summary.estimated_loc_removable
     );
-    println!(
-        "   Filtered false positives: {}",
-        dead_analysis.functions.len() - filtered_analysis.functions.len()
-    );
-    println!("   Confidence threshold: > {:.0}%", args.threshold * 100.0);
 
     if args.model.is_some() && !args.no_ml {
         println!("   ML Model: enabled ✅");
     } else {
         println!("   ML Model: disabled");
+    }
+
+    // Show top dead functions with explanations if verbose
+    if args.verbose && !filtered_functions.is_empty() {
+        println!("\n🔍 Top Dead Functions:");
+        for func in filtered_functions.iter().take(5) {
+            println!("\n   #{}: {}", func.removal_order, func.name);
+            println!("      Confidence: {:.1}%", func.score.score * 100.0);
+            println!("      File: {}", func.file);
+            println!("      Complexity: {:.1}", func.impact.complexity);
+            println!("      Impact: {}", func.impact.estimated_removal_impact);
+        }
     }
 
     Ok(())

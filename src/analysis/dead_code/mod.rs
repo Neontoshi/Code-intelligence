@@ -9,8 +9,9 @@ mod types;
 mod whitelist; // ⭐ NEW - Add this line
 
 // Re-export from analyzer only (it has the most complete definitions)
+
 pub use analyzer::{
-    AnalysisSummary, DeadCodeAnalysis, DeadCodeAnalyzer, DeadFunction, FunctionImpact,
+    AnalysisSummary, DeadCodeAnalysis, DeadCodeAnalyzer, DeadFunction, FunctionImpact, RemovalCost,
 };
 pub use modules::{DeadFile, DeadImport, DeadModule, DeadModuleReport};
 pub use reachability::ReachabilityReport;
