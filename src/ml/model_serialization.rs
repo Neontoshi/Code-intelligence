@@ -2,23 +2,24 @@
 
 //! Versioned model serialization with schema tracking
 
+use crate::ml::calibration::CalibrationParams;
 use crate::ml::classifier::LinearClassifier;
 use crate::ml::feature_schema::{FeatureSchema, FEATURE_SCHEMA};
+use crate::ml::features::FeatureScaler;
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
 // Versioned Model
-// ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionedModel {
     pub version: u32,
     pub model_id: String,
     pub created_at: String,
-
     pub feature_schema: FeatureSchema,
     pub classifier: LinearClassifier,
-
+    pub scaler: Option<FeatureScaler>,          // ⭐ NEW
+    pub calibration: Option<CalibrationParams>, // ⭐ NEW
+    pub threshold: f64,                         // ⭐ NEW
     pub training_metadata: TrainingMetadata,
     pub performance: Option<ModelPerformance>,
 }
@@ -57,6 +58,32 @@ impl VersionedModel {
             created_at: chrono::Utc::now().to_rfc3339(),
             feature_schema: FEATURE_SCHEMA.clone(),
             classifier,
+            scaler: None,
+            calibration: None,
+            threshold: 0.92,
+            training_metadata: metadata,
+            performance,
+        }
+    }
+
+    /// Create a model with all components
+    pub fn new_with_components(
+        classifier: LinearClassifier,
+        scaler: Option<FeatureScaler>,
+        calibration: Option<CalibrationParams>,
+        threshold: f64,
+        metadata: TrainingMetadata,
+        performance: Option<ModelPerformance>,
+    ) -> Self {
+        Self {
+            version: 2,
+            model_id: format!("model_{}", chrono::Utc::now().timestamp()),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            feature_schema: FEATURE_SCHEMA.clone(),
+            classifier,
+            scaler,
+            calibration,
+            threshold,
             training_metadata: metadata,
             performance,
         }
@@ -126,11 +153,33 @@ impl VersionedModel {
     pub fn get_performance(&self) -> Option<&ModelPerformance> {
         self.performance.as_ref()
     }
+
+    pub fn get_scaler(&self) -> Option<&FeatureScaler> {
+        self.scaler.as_ref()
+    }
+
+    pub fn get_calibration(&self) -> Option<&CalibrationParams> {
+        self.calibration.as_ref()
+    }
+
+    pub fn get_threshold(&self) -> f64 {
+        self.threshold
+    }
+
+    pub fn set_scaler(&mut self, scaler: FeatureScaler) {
+        self.scaler = Some(scaler);
+    }
+
+    pub fn set_calibration(&mut self, calibration: CalibrationParams) {
+        self.calibration = Some(calibration);
+    }
+
+    pub fn set_threshold(&mut self, threshold: f64) {
+        self.threshold = threshold;
+    }
 }
 
-// ============================================================================
 // Legacy Model Compatibility
-// ============================================================================
 
 impl VersionedModel {
     /// Migrate from legacy model format (just LinearClassifier)

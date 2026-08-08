@@ -1,5 +1,3 @@
-// src/ml/mod.rs
-
 pub mod calibration;
 pub mod classifier;
 pub mod duplicate_classifier;
@@ -8,6 +6,9 @@ pub mod features;
 pub mod model_serialization;
 pub mod serialization;
 
+pub use calibration::{
+    CalibratedModel, CalibrationBin, CalibrationMethod, CalibrationParams, CalibrationStats,
+};
 pub use classifier::DeadCodeClassifier;
 pub use duplicate_classifier::{DuplicateClassifier, DuplicateExample, DuplicateLabel};
 pub use feature_schema::{

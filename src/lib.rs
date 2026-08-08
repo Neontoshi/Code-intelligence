@@ -32,6 +32,7 @@ pub use graph::call_graph::FunctionNode;
 pub use graph::dependency_graph::DependencyGraph;
 pub use graph::import_graph::ImportGraph;
 pub use graph::type_graph::TypeGraph;
+pub use ml::calibration::{CalibratedModel, CalibrationMethod, CalibrationStats};
 pub use ml::classifier::DeadCodeClassifier;
 pub use ml::model_serialization::{ModelPerformance, TrainingMetadata, VersionedModel};
 pub use optimize::chunk::ChunkStrategy;

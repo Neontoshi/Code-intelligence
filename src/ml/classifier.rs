@@ -298,6 +298,14 @@ impl DeadCodeClassifier {
         self.model.as_mut()
     }
 
+    pub fn predict_alive_probability(&self, example: &TrainingExample) -> f64 {
+        self.predict_probability(example)
+    }
+
+    pub fn predict_dead_probability(&self, example: &TrainingExample) -> f64 {
+        1.0 - self.predict_probability(example)
+    }
+
     pub fn print_feature_importance(&self) {
         if let Some(model) = &self.model {
             model.print_feature_importance();

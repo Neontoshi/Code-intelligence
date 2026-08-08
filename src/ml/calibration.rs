@@ -21,9 +21,10 @@ pub struct CalibratedModel {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CalibrationParams {
-    pub temperature: f64,          // Temperature scaling parameter
-    pub bins: Vec<CalibrationBin>, // For histogram-based calibration
+    pub temperature: f64,
+    pub bins: Vec<CalibrationBin>,
     pub method: CalibrationMethod,
+    pub num_samples: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +67,7 @@ impl CalibratedModel {
                     temperature: 1.0,
                     bins: Vec::new(),
                     method: CalibrationMethod::None,
+                    num_samples: 0,
                 },
             },
         }
@@ -88,6 +90,7 @@ impl CalibratedModel {
                     temperature: 1.0,
                     bins: Vec::new(),
                     method: CalibrationMethod::TemperatureScaling,
+                    num_samples: labeled.len(),
                 },
             };
         }
@@ -122,6 +125,7 @@ impl CalibratedModel {
                 temperature: best_temp,
                 bins: Vec::new(),
                 method: CalibrationMethod::TemperatureScaling,
+                num_samples: labeled.len(),
             },
         }
     }
@@ -146,6 +150,7 @@ impl CalibratedModel {
                     temperature: 1.0,
                     bins: Vec::new(),
                     method: CalibrationMethod::HistogramBinning,
+                    num_samples: 0,
                 },
             };
         }
@@ -198,6 +203,7 @@ impl CalibratedModel {
                 temperature: 1.0,
                 bins,
                 method: CalibrationMethod::HistogramBinning,
+                num_samples: labeled.len(),
             },
         }
     }

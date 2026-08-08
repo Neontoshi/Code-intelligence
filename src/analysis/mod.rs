@@ -1,9 +1,7 @@
-// src/analysis/mod.rs
-
 pub mod complexity;
 pub mod context;
 pub mod dead_code;
-pub mod dynamic_refs; // ⭐ NEW
+pub mod dynamic_refs;
 pub mod features;
 pub mod git_analysis;
 pub mod importance;
@@ -16,6 +14,7 @@ pub use context::ProjectAnalysis;
 pub use context::ProjectAnalysisBuilder;
 pub use context::ProjectMetrics;
 pub use dead_code::DeadCodeDetector;
+pub use dynamic_refs::{DynamicRefDetector, DynamicRefType, DynamicReference};
 pub use features::FeatureExtractor;
 pub use features::FunctionFeatures;
 pub use roots::{

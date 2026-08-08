@@ -120,9 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if args.conservative { 99.5 } else { 99.0 }
     );
 
-    // ================================================================
     // NEW: Unified Verdict Engine Approach
-    // ================================================================
 
     // 1. Detect roots using unified RootDetector
     let root_config = RootDetectionConfig::default();
@@ -173,9 +171,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         verdicts.iter().map(|v| v.confidence).sum::<f64>() / verdicts.len() as f64 * 100.0
     );
 
-    // ================================================================
     // DEBUG: Show why functions are excluded
-    // ================================================================
     if args.debug {
         println!("\n🔍 DEBUG: Function Analysis");
         println!("   Total functions: {}", analysis.call_graph.node_count());
@@ -250,9 +246,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // ================================================================
     // Convert verdicts to DeadFunction for backward compatibility
-    // ================================================================
 
     let filtered_functions: Vec<DeadFunction> = dead_verdicts
         .iter()
@@ -329,12 +323,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         func.removal_order = i + 1;
     }
 
-    // ================================================================
-    // Build DeadCodeAnalysis for report generation
-    // ================================================================
+    // Run analyzer in impact-only mode
+    let mut impact_analyzer = DeadCodeAnalyzer::new_for_impact_only();
 
-    // Run legacy analyzer for comparison (skip if we want to use verdicts only)
-    // For now, we'll use the legacy analyzer only for modules/types
+    // Import verdicts to get DeadFunction list with impact metadata
+    let dead_functions_with_impact =
+        impact_analyzer.import_verdicts(&dead_verdicts, &analysis.call_graph);
+
+    // Still need legacy analyzer for types and modules
     let mut legacy_analyzer = DeadCodeAnalyzer::new();
     let legacy_analysis = legacy_analyzer.analyze(
         &analysis.call_graph,
@@ -345,27 +341,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         git_analysis.as_ref(),
     );
 
+    // Build final analysis using imported verdicts + legacy types/modules
+    // Clone types and modules since we need them for the report
     let filtered_analysis = DeadCodeAnalysis {
-        functions: filtered_functions.clone(),
-        types: legacy_analysis.types,
-        modules: legacy_analysis.modules,
+        functions: dead_functions_with_impact.clone(), // ⭐ Clone for later use
+        types: legacy_analysis.types.clone(),          // ⭐ Clone
+        modules: legacy_analysis.modules.clone(),      // ⭐ Clone
         reachability: reachability.clone(),
         summary: code_intelligence::analysis::dead_code::AnalysisSummary {
             total_functions: analysis.call_graph.node_count(),
-            dead_functions: filtered_functions.len(),
+            dead_functions: dead_functions_with_impact.len(), // Use original, not moved
             dead_types: legacy_analysis.summary.dead_types,
             dead_modules: legacy_analysis.summary.dead_modules,
             dead_files: legacy_analysis.summary.dead_files,
-            avg_confidence: if filtered_functions.is_empty() {
+            avg_confidence: if dead_functions_with_impact.is_empty() {
                 0.0
             } else {
-                filtered_functions
+                dead_functions_with_impact
                     .iter()
                     .map(|f| f.score.score)
                     .sum::<f64>()
-                    / filtered_functions.len() as f64
+                    / dead_functions_with_impact.len() as f64
             },
-            estimated_loc_removable: filtered_functions
+            estimated_loc_removable: dead_functions_with_impact
                 .iter()
                 .map(|f| f.impact.lines_of_code)
                 .sum(),
@@ -375,10 +373,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Generate report
     let report = legacy_analyzer.generate_report(&filtered_analysis);
     println!("{}", report);
+    // Generate report
+    let report = legacy_analyzer.generate_report(&filtered_analysis);
+    println!("{}", report);
 
-    // ================================================================
     // Final Summary
-    // ================================================================
 
     println!("\n📊 Final Results:");
     println!("   Dead functions: {}", filtered_analysis.functions.len());

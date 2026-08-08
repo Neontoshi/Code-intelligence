@@ -165,7 +165,6 @@ impl VerdictEngine {
     ) -> Verdict {
         let mut signals = Vec::new();
         let mut static_score = 0.0;
-        let mut signal_count = 0;
 
         // 1. Static Analysis Signals
         let static_signals = self.collect_static_signals(func, reachability);
@@ -175,13 +174,15 @@ impl VerdictEngine {
             } else if signal.direction == SignalDirection::SupportsAlive {
                 static_score -= signal.weight;
             }
-            signal_count += 1;
         }
         signals.extend(static_signals);
 
-        // Normalize static score to 0-1 range
-        let normalized_static = if signal_count > 0 {
-            (static_score / signal_count as f64 + 1.0) / 2.0
+        // Normalize static score by total weight, not signal count
+        let total_weight: f64 = signals.iter().map(|s| s.weight).sum();
+        let normalized_static = if total_weight > 0.0 {
+            // static_score ranges from -total_weight to +total_weight
+            // Map to 0-1 where 0 = all supports Alive, 1 = all supports Dead
+            (static_score / total_weight + 1.0) / 2.0
         } else {
             0.5
         };
@@ -203,11 +204,13 @@ impl VerdictEngine {
                     confidence: 0.0,
                     source: "ml".to_string(),
                 };
-                let prob = model.predict_probability(&example);
+                let alive_prob = model.predict_probability(&example);
+                let dead_prob = 1.0 - alive_prob;
+
                 signals.push(Signal {
                     name: "ml_prediction".to_string(),
-                    value: prob,
-                    direction: if prob > 0.5 {
+                    value: dead_prob,
+                    direction: if dead_prob > 0.5 {
                         SignalDirection::SupportsDead
                     } else {
                         SignalDirection::SupportsAlive
@@ -215,10 +218,10 @@ impl VerdictEngine {
                     weight: 0.4,
                     explanation: format!(
                         "ML model predicts {:.1}% chance of being dead",
-                        prob * 100.0
+                        dead_prob * 100.0
                     ),
                 });
-                Some(prob)
+                Some(dead_prob)
             } else {
                 None
             }
@@ -229,6 +232,7 @@ impl VerdictEngine {
         // 3. Combine evidence
         let combined_score = if let Some(ml) = ml_probability {
             // Weighted average: 60% static, 40% ML
+            // ml_probability is now P(DEAD)
             normalized_static * 0.6 + ml * 0.4
         } else {
             normalized_static
@@ -438,7 +442,10 @@ impl VerdictEngine {
                 }
 
                 if let Some(ml) = ml_probability {
-                    parts.push(format!("ML model agrees: {:.1}% probability.", ml * 100.0));
+                    parts.push(format!(
+                        "ML model predicts {:.1}% probability of being dead.",
+                        ml * 100.0
+                    ));
                 }
             }
             TrainingLabel::Alive => {

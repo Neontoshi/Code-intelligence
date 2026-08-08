@@ -98,29 +98,61 @@ default = ["ml"]
 ml = []
 
 [[bin]]
-name = "evaluate_per_language"
-path = "src/bin/evaluate_per_language.rs"
-
-[[bin]]
 name = "analyze_features_per_language"
 path = "src/bin/analyze_features_per_language.rs"
 
 [[bin]]
-name = "merge_all_training_data"
-path = "src/bin/merge_all_training_data.rs"
+name = "calibrate_model"
+path = "src/bin/calibrate_model.rs"
 
 [[bin]]
-name = "tune_threshold"
-path = "src/bin/tune_threshold.rs"
+name = "collect_training_data"
+path = "src/bin/collect_training_data.rs"
+
+[[bin]]
+name = "dead_code_check"
+path = "src/bin/dead_code_check.rs"
+
+[[bin]]
+name = "dead_code_dashboard"
+path = "src/bin/dead_code_dashboard.rs"
+
+[[bin]]
+name = "dedup_check"
+path = "src/bin/dedup_check.rs"
+
+[[bin]]
+name = "evaluate_per_language"
+path = "src/bin/evaluate_per_language.rs"
 
 [[bin]]
 name = "feature_ablation"
 path = "src/bin/feature_ablation.rs"
 
 [[bin]]
+name = "merge_all_training_data"
+path = "src/bin/merge_all_training_data.rs"
+
+[[bin]]
+name = "merge_training_data"
+path = "src/bin/merge_training_data.rs"
+
+[[bin]]
 name = "model_comparison"
 path = "src/bin/model_comparison.rs"
 
 [[bin]]
-name = "calibrate_model"
-path = "src/bin/calibrate_model.rs"
+name = "train_duplicate_model"
+path = "src/bin/train_duplicate_model.rs"
+
+[[bin]]
+name = "train_model"
+path = "src/bin/train_model.rs"
+
+[[bin]]
+name = "training_data_exporter"
+path = "src/bin/training_data_exporter.rs"
+
+[[bin]]
+name = "tune_threshold"
+path = "src/bin/tune_threshold.rs"

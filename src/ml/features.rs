@@ -2,6 +2,7 @@
 
 use crate::analysis::training_data::{TrainingExample, TrainingLabel};
 use ndarray::{Array1, Array2};
+use serde::{Deserialize, Serialize};
 
 pub struct FeatureExtractor {
     scaler: Option<FeatureScaler>,
@@ -98,17 +99,17 @@ impl Default for FeatureExtractor {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeatureScaler {
-    mean: Array1<f64>,
-    std: Array1<f64>,
+    pub mean: Vec<f64>,
+    pub std: Vec<f64>,
 }
 
 impl FeatureScaler {
     pub fn new() -> Self {
         Self {
-            mean: Array1::zeros(0),
-            std: Array1::zeros(0),
+            mean: Vec::new(),
+            std: Vec::new(),
         }
     }
 
@@ -126,7 +127,7 @@ impl FeatureScaler {
             std[j] = if col_std > 1e-10 { col_std } else { 1.0 };
         }
 
-        self.mean = mean;
-        self.std = std;
+        self.mean = mean.into_iter().collect();
+        self.std = std.into_iter().collect();
     }
 }

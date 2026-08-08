@@ -37,8 +37,8 @@ pub struct DeadFunction {
     pub score: DeadScore,
     pub impact: FunctionImpact,
     pub removal_order: usize,
-    pub is_binary_only: bool,   // ⭐ NEW: functions only used in binaries
-    pub is_internal_call: bool, // ⭐ NEW: functions called internally in same file
+    pub is_binary_only: bool,   // functions only used in binaries
+    pub is_internal_call: bool, // functions called internally in same file
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +73,7 @@ pub struct DeadCodeAnalyzer {
     cache: HashMap<String, DeadCodeAnalysis>,
     ml_model: Option<DeadCodeClassifier>,
     use_ml: bool,
+    use_verdict_engine: bool, // ⭐ NEW: Flag to use verdict engine mode
 }
 
 impl DeadCodeAnalyzer {
@@ -82,6 +83,18 @@ impl DeadCodeAnalyzer {
             cache: HashMap::new(),
             ml_model: None,
             use_ml: false,
+            use_verdict_engine: false, // ⭐ NEW
+        }
+    }
+
+    /// Create analyzer that only computes impact, not verdicts
+    pub fn new_for_impact_only() -> Self {
+        Self {
+            scorer: ConfidenceScorer::new(),
+            cache: HashMap::new(),
+            ml_model: None,
+            use_ml: false,
+            use_verdict_engine: true, // ⭐ NEW
         }
     }
 
@@ -112,6 +125,72 @@ impl DeadCodeAnalyzer {
 
     pub fn get_ml_model(&self) -> Option<&DeadCodeClassifier> {
         self.ml_model.as_ref()
+    }
+
+    pub fn import_verdicts(
+        &mut self,
+        verdicts: &[&crate::analysis::verdict::Verdict],
+        call_graph: &CallGraph,
+    ) -> Vec<DeadFunction> {
+        let mut dead_functions = Vec::new();
+
+        for verdict in verdicts.iter().filter(|v| v.is_dead()) {
+            // Find the actual function node
+            let idx = call_graph
+                .node_indices()
+                .find(|idx| call_graph[*idx].full_path == verdict.full_path);
+
+            if let Some(idx) = idx {
+                let func = &call_graph[idx];
+                let impact = self.calculate_impact(func, call_graph);
+
+                // Convert verdict to DeadFunction
+                dead_functions.push(DeadFunction {
+                    full_path: verdict.full_path.clone(),
+                    name: verdict.function_name.clone(),
+                    file: func.file.clone(),
+                    line: func.line,
+                    score: crate::analysis::dead_code::DeadScore {
+                        score: verdict.confidence,
+                        level: if verdict.confidence > 0.95 {
+                            ConfidenceLevel::Guaranteed
+                        } else if verdict.confidence > 0.85 {
+                            ConfidenceLevel::VeryLikely
+                        } else {
+                            ConfidenceLevel::Probably
+                        },
+                        factors: verdict
+                            .signals
+                            .iter()
+                            .map(|s| crate::analysis::dead_code::ScoreFactor {
+                                name: s.name.clone(),
+                                weight: s.weight,
+                                contribution: if s.direction
+                                    == crate::analysis::verdict::SignalDirection::SupportsDead
+                                {
+                                    s.weight
+                                } else {
+                                    -s.weight
+                                },
+                                explanation: s.explanation.clone(),
+                            })
+                            .collect(),
+                    },
+                    impact,
+                    removal_order: 0,
+                    is_binary_only: false,
+                    is_internal_call: false,
+                });
+            }
+        }
+
+        // Sort by confidence and assign removal order
+        dead_functions.sort_by(|a, b| b.score.score.partial_cmp(&a.score.score).unwrap());
+        for (i, func) in dead_functions.iter_mut().enumerate() {
+            func.removal_order = i + 1;
+        }
+
+        dead_functions
     }
 
     // ================================================================
@@ -248,6 +327,12 @@ impl DeadCodeAnalyzer {
 
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
+
+            // ⭐ NEW: Skip scoring if using verdict engine
+            // The caller will provide pre-computed verdicts
+            if self.use_verdict_engine {
+                continue;
+            }
 
             // Track why functions are skipped
             let entry_points = ["main", "async_main", "run", "start", "init", "setup"];
