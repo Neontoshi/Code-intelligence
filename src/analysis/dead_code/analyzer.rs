@@ -8,10 +8,10 @@ use crate::graph::type_graph::TypeGraph;
 use crate::parser::tree_sitter::ParsedFile;
 
 use super::modules::{DeadModuleReport, ModuleDeadCodeDetector};
-use super::reachability::{ReachabilityAnalyzer, ReachabilityReport};
 use super::scorer::{ConfidenceLevel, ConfidenceScorer, DeadScore};
 use super::types::{DeadTypeReport, TypeDeadCodeDetector};
 use super::whitelist::WHITELIST;
+use crate::analysis::roots::ReachabilityMap;
 use crate::graph::traits::GraphMetrics;
 
 #[cfg(feature = "ml")]
@@ -19,12 +19,12 @@ use crate::ml::classifier::DeadCodeClassifier;
 
 use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DeadCodeAnalysis {
     pub functions: Vec<DeadFunction>,
     pub types: DeadTypeReport,
     pub modules: DeadModuleReport,
-    pub reachability: ReachabilityReport,
+    pub reachability: ReachabilityMap,
     pub summary: AnalysisSummary,
 }
 
@@ -219,7 +219,15 @@ impl DeadCodeAnalyzer {
         }
 
         // 1. Reachability Analysis
-        let reachability = ReachabilityAnalyzer::analyze_reachability(call_graph);
+        use crate::analysis::roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector};
+
+        let config = RootDetectionConfig::default();
+        let root_set = RootDetector::detect_roots(
+            call_graph,
+            &[], // files not needed for basic root detection
+            &config,
+        );
+        let reachability = ReachabilityAnalyzer::compute_reachability(call_graph, &root_set);
 
         // 2. Function dead code analysis
         let mut dead_functions = Vec::new();

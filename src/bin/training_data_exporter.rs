@@ -1,16 +1,9 @@
 // src/bin/training_data_exporter.rs
 
-//! Export high-confidence training data for ML-based dead code detection
-//!
-//! This uses evidence-based labeling instead of heuristics:
-//! - ALIVE: Functions with callers, exports, entry points, or test functions
-//! - DEAD: Functions with NO callers, NO exports, NOT reachable from roots
-//! - UNKNOWN: Everything else (we don't label what we're not sure about)
-
+use code_intelligence::analysis::roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector};
 use code_intelligence::analysis::training_data::{TrainingDataCollector, TrainingLabel};
 use code_intelligence::graph::GraphMetrics;
 use code_intelligence::Pipeline;
-use std::collections::HashSet;
 use std::path::PathBuf;
 
 #[tokio::main]
@@ -36,100 +29,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut collector = TrainingDataCollector::new();
 
-    // ================================================================
-    // Step 1: Identify ENTRY POINTS (definitely alive)
-    // ================================================================
+    // Step 1: Detect ROOTS using unified RootDetector
 
-    let mut entry_points = HashSet::new();
+    let config = RootDetectionConfig::default();
+    let root_set = RootDetector::detect_roots(&analysis.call_graph, &analysis.files, &config);
 
-    // Application entry points
-    let app_entry_names = vec!["main", "async_main", "run", "start", "init", "setup"];
-
-    for idx in analysis.call_graph.node_indices() {
-        let func = &analysis.call_graph[idx];
-        if app_entry_names.contains(&func.name.as_str()) {
-            entry_points.insert(func.full_path.clone());
-        }
+    let roots = root_set.all();
+    println!("   Found {} roots:", roots.len());
+    for (category, count) in root_set.counts() {
+        println!("      {}: {}", category, count);
     }
 
-    // Public functions with no callers are also entry points (library API)
-    for idx in analysis.call_graph.node_indices() {
-        let func = &analysis.call_graph[idx];
-        if func.is_public && func.fan_in == 0 {
-            entry_points.insert(func.full_path.clone());
-        }
-    }
+    // Step 2: Compute REACHABILITY using unified analyzer
 
-    println!("   Found {} entry points", entry_points.len());
-
-    // ================================================================
-    // Step 2: Identify ROOTS (entry points + test entry points)
-    // ================================================================
-
-    let mut roots = HashSet::new();
-
-    // Add entry points
-    for entry in &entry_points {
-        roots.insert(entry.clone());
-    }
-
-    // Test entry points (test functions)
-    for idx in analysis.call_graph.node_indices() {
-        let func = &analysis.call_graph[idx];
-        let is_test = func.name.starts_with("test_")
-            || func.name.starts_with("Test")
-            || func.name.starts_with("bench_")
-            || func.name.starts_with("Benchmark")
-            || func.file.contains("/tests/")
-            || func.file.ends_with("_test.rs")
-            || func.file.ends_with("_test.go");
-        if is_test {
-            roots.insert(func.full_path.clone());
-        }
-    }
+    let reachability = ReachabilityAnalyzer::compute_reachability(&analysis.call_graph, &root_set);
 
     println!(
-        "   Found {} roots (entry points + test functions)",
-        roots.len()
+        "   {} functions reachable from roots",
+        reachability.reachable_count()
     );
-
-    // ================================================================
-    // Step 3: Compute REACHABILITY from roots
-    // ================================================================
-
-    let mut reachable = HashSet::new();
-    let mut to_visit: Vec<String> = roots.iter().cloned().collect();
-
-    while let Some(current) = to_visit.pop() {
-        if reachable.contains(&current) {
-            continue;
-        }
-        reachable.insert(current.clone());
-
-        // Find the node index for this function
-        for idx in analysis.call_graph.node_indices() {
-            let func = &analysis.call_graph[idx];
-            if func.full_path == current {
-                // Add all callees
-                for callee in analysis.call_graph.get_callees(idx) {
-                    if !reachable.contains(&callee.full_path) {
-                        to_visit.push(callee.full_path.clone());
-                    }
-                }
-                break;
-            }
-        }
-    }
-
-    println!("   {} functions reachable from roots", reachable.len());
     println!(
         "   {} functions unreachable from roots",
-        analysis.call_graph.node_count() - reachable.len()
+        reachability.unreachable_count()
     );
 
-    // ================================================================
-    // Step 4: Label functions with HIGH CONFIDENCE
-    // ================================================================
+    // Step 3: Label functions with HIGH CONFIDENCE
 
     let mut alive_count = 0;
     let mut dead_count = 0;
@@ -148,18 +72,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             || func.file.ends_with("_test.rs")
             || func.file.ends_with("_test.go");
 
-        // ============================================================
         // HIGH CONFIDENCE: ALIVE
-        // ============================================================
 
-        // Entry points are definitely alive
-        if entry_points.contains(full_path) {
+        // Roots are definitely alive (entry points, exports, tests, etc.)
+        if roots.contains(full_path) {
             collector.add_high_confidence_example(
                 func,
                 &analysis.call_graph,
                 TrainingLabel::Alive,
                 0.99,
-                "entry_point",
+                "root",
             );
             alive_count += 1;
             continue;
@@ -178,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        // Test functions are alive
+        // Test functions are alive (even if not in root_set due to config)
         if is_test {
             collector.add_high_confidence_example(
                 func,
@@ -204,9 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        // ============================================================
         // HIGH CONFIDENCE: DEAD
-        // ============================================================
 
         // A function is dead if:
         // 1. No callers
@@ -219,7 +139,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let is_truly_dead = func.fan_in == 0
             && !func.is_public
-            && !reachable.contains(full_path)
+            && !reachability.is_reachable(full_path)
             && func.trait_impl.is_none()
             && !func.file.contains("/.meta/")
             && !func.file.contains(".gen.go")
@@ -254,16 +174,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // ============================================================
         // UNKNOWN: Everything else
-        // ============================================================
 
         unknown_count += 1;
     }
 
-    // ================================================================
     // Print Statistics
-    // ================================================================
 
     println!("\n📊 Training Data Stats:");
     println!("   Total functions: {}", analysis.call_graph.node_count());
@@ -288,9 +204,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("      {}: {}", lang, count);
     }
 
-    // ================================================================
     // Save to File
-    // ================================================================
 
     let json = collector.to_json()?;
     std::fs::write(&output_file, json)?;

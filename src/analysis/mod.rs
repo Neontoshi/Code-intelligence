@@ -6,6 +6,7 @@ pub mod dead_code;
 pub mod features;
 pub mod git_analysis;
 pub mod importance;
+pub mod roots; // ⭐ NEW
 pub mod training_data;
 
 pub use context::AnalysisIndexes;
@@ -15,6 +16,9 @@ pub use context::ProjectMetrics;
 pub use dead_code::DeadCodeDetector;
 pub use features::FeatureExtractor;
 pub use features::FunctionFeatures;
+pub use roots::{
+    ReachabilityAnalyzer, ReachabilityMap, RootDetectionConfig, RootDetector, RootSet,
+};
 pub use training_data::TrainingDataCollector;
 pub use training_data::TrainingExample;
 pub use training_data::TrainingLabel;

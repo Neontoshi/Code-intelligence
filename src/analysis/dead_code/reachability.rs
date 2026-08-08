@@ -1,5 +1,6 @@
 // src/analysis/dead_code/reachability.rs
 
+#![allow(deprecated)]
 use crate::graph::call_graph::CallGraph;
 use std::collections::{HashSet, VecDeque};
 
@@ -11,10 +12,18 @@ pub struct ReachabilityReport {
     pub reachability_graph: Vec<(String, String)>,
 }
 
+#[deprecated(
+    since = "0.2.0",
+    note = "Use crate::analysis::roots::ReachabilityAnalyzer instead"
+)]
+#[allow(dead_code)]
 pub struct ReachabilityAnalyzer;
 
+#[allow(dead_code)]
 impl ReachabilityAnalyzer {
     /// Find all functions reachable from entry points
+    #[deprecated]
+    #[allow(dead_code)]
     pub fn find_reachable_functions(call_graph: &CallGraph) -> HashSet<String> {
         let mut reachable = HashSet::new();
         let mut queue = VecDeque::new();
@@ -50,6 +59,8 @@ impl ReachabilityAnalyzer {
     }
 
     /// Generate reachability report with entry points
+    #[deprecated]
+    #[allow(dead_code)]
     pub fn analyze_reachability(call_graph: &CallGraph) -> ReachabilityReport {
         let reachable = Self::find_reachable_functions(call_graph);
         let mut entry_points = Vec::new();

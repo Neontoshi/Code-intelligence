@@ -14,6 +14,9 @@ pub use analysis::context::ProjectAnalysis;
 pub use analysis::dead_code::DeadCodeDetector;
 pub use analysis::git_analysis::GitAnalyzer;
 pub use analysis::importance::ImportanceScorer;
+pub use analysis::roots::{
+    ReachabilityAnalyzer, ReachabilityMap, RootDetectionConfig, RootDetector, RootSet,
+};
 pub use engine::cache::FileCache;
 pub use engine::indexer::IndexBuilder;
 pub use engine::{
