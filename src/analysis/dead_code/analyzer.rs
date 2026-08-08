@@ -83,7 +83,7 @@ impl DeadCodeAnalyzer {
             cache: HashMap::new(),
             ml_model: None,
             use_ml: false,
-            use_verdict_engine: false, // ⭐ NEW
+            use_verdict_engine: true,
         }
     }
 
@@ -94,7 +94,18 @@ impl DeadCodeAnalyzer {
             cache: HashMap::new(),
             ml_model: None,
             use_ml: false,
-            use_verdict_engine: true, // ⭐ NEW
+            use_verdict_engine: true,
+        }
+    }
+
+    #[deprecated(note = "Use new_for_impact_only() instead")]
+    pub fn new_legacy() -> Self {
+        Self {
+            scorer: ConfidenceScorer::new(),
+            cache: HashMap::new(),
+            ml_model: None,
+            use_ml: false,
+            use_verdict_engine: false,
         }
     }
 
@@ -282,6 +293,10 @@ impl DeadCodeAnalyzer {
     // MAIN ANALYSIS METHOD
     // ================================================================
 
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use VerdictEngine for dead/alive decisions. This method is for backward compatibility only."
+    )]
     pub fn analyze(
         &mut self,
         call_graph: &CallGraph,
@@ -368,6 +383,11 @@ impl DeadCodeAnalyzer {
                         label: TrainingLabel::Unknown,
                         confidence: 0.0,
                         source: "ml".to_string(),
+                        repository_id: None,
+                        commit_hash: None,
+                        dataset_split: None,
+                        label_reason: Some("ml".to_string()),
+                        label_version: Some(1),
                     };
                     let prob = model.predict_probability(&example);
                     if prob > 0.85 {

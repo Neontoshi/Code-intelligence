@@ -108,11 +108,12 @@ fn evaluate_at_threshold(
         };
         let actual = &example.label;
 
+        // DEAD is the positive class
         match (prediction, actual) {
             (TrainingLabel::Dead, TrainingLabel::Dead) => tp += 1,
             (TrainingLabel::Alive, TrainingLabel::Alive) => tn += 1,
-            (TrainingLabel::Dead, TrainingLabel::Alive) => fp += 1,
             (TrainingLabel::Alive, TrainingLabel::Dead) => fn_ += 1,
+            (TrainingLabel::Dead, TrainingLabel::Alive) => fp += 1,
             _ => {}
         }
     }

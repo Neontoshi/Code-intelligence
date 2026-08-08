@@ -1,9 +1,7 @@
 // src/bin/dead_code_check.rs
 
 use clap::Parser;
-use code_intelligence::analysis::dead_code::{
-    ConfidenceLevel, DeadCodeAnalysis, DeadCodeAnalyzer, DeadFunction, FunctionImpact, RemovalCost,
-};
+use code_intelligence::analysis::dead_code::{DeadCodeAnalysis, DeadCodeAnalyzer};
 use code_intelligence::analysis::dynamic_refs::DynamicRefDetector;
 use code_intelligence::analysis::git_analysis::GitAnalyzer;
 use code_intelligence::analysis::roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector};
@@ -246,83 +244,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Convert verdicts to DeadFunction for backward compatibility
-
-    let filtered_functions: Vec<DeadFunction> = dead_verdicts
-        .iter()
-        .filter_map(|verdict| {
-            // Find the actual function node
-            let idx = analysis.call_graph.node_indices()
-                .find(|idx| analysis.call_graph[*idx].full_path == verdict.full_path)?;
-
-            let func = &analysis.call_graph[idx];
-
-            // Determine confidence level
-            let level = if verdict.confidence > 0.95 {
-                ConfidenceLevel::Guaranteed
-            } else if verdict.confidence > 0.85 {
-                ConfidenceLevel::VeryLikely
-            } else {
-                ConfidenceLevel::Probably
-            };
-
-            // Build DeadFunction from verdict
-            Some(DeadFunction {
-                full_path: verdict.full_path.clone(),
-                name: verdict.function_name.clone(),
-                file: func.file.clone(),
-                line: func.line,
-                score: code_intelligence::analysis::dead_code::DeadScore {
-                    score: verdict.confidence,
-                    level,
-                    factors: verdict.signals.iter().map(|s| {
-                        code_intelligence::analysis::dead_code::ScoreFactor {
-                            name: s.name.clone(),
-                            weight: s.weight,
-                            contribution: if s.direction == code_intelligence::analysis::verdict::SignalDirection::SupportsDead {
-                                s.weight
-                            } else {
-                                -s.weight
-                            },
-                            explanation: s.explanation.clone(),
-                        }
-                    }).collect(),
-                },
-                impact: FunctionImpact {
-                    lines_of_code: 20 + (func.complexity * 5.0) as usize,
-                    dependencies: Vec::new(),
-                    complexity: func.complexity,
-                    estimated_removal_impact: if func.complexity > 20.0 {
-                        "High impact - complex function".to_string()
-                    } else if func.complexity > 10.0 {
-                        "Medium impact".to_string()
-                    } else {
-                        "Low impact - simple function".to_string()
-                    },
-                    removal_cost: if func.complexity > 20.0 {
-                        RemovalCost::High
-                    } else if func.complexity > 10.0 {
-                        RemovalCost::Medium
-                    } else {
-                        RemovalCost::Low
-                    },
-                },
-                removal_order: 0,
-                is_binary_only: false,
-                is_internal_call: false,
-            })
-        })
-        .collect();
-
-    // Sort by confidence
-    let mut filtered_functions = filtered_functions;
-    filtered_functions.sort_by(|a, b| b.score.score.partial_cmp(&a.score.score).unwrap());
-
-    // Assign removal order
-    for (i, func) in filtered_functions.iter_mut().enumerate() {
-        func.removal_order = i + 1;
-    }
-
     // Run analyzer in impact-only mode
     let mut impact_analyzer = DeadCodeAnalyzer::new_for_impact_only();
 
@@ -330,9 +251,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dead_functions_with_impact =
         impact_analyzer.import_verdicts(&dead_verdicts, &analysis.call_graph);
 
-    // Still need legacy analyzer for types and modules
-    let mut legacy_analyzer = DeadCodeAnalyzer::new();
-    let legacy_analysis = legacy_analyzer.analyze(
+    // Use impact-only analyzer for modules/types (no dead/alive decisions)
+    #[allow(deprecated)]
+    let legacy_analysis = impact_analyzer.analyze(
         &analysis.call_graph,
         &analysis.type_graph,
         &analysis.import_graph,
@@ -371,10 +292,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Generate report
-    let report = legacy_analyzer.generate_report(&filtered_analysis);
-    println!("{}", report);
-    // Generate report
-    let report = legacy_analyzer.generate_report(&filtered_analysis);
+    let report = impact_analyzer.generate_report(&filtered_analysis);
     println!("{}", report);
 
     // Final Summary
@@ -403,9 +321,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Show top dead functions with explanations if verbose
-    if args.verbose && !filtered_functions.is_empty() {
+    if args.verbose && !dead_functions_with_impact.is_empty() {
         println!("\n🔍 Top Dead Functions:");
-        for func in filtered_functions.iter().take(5) {
+        for func in dead_functions_with_impact.iter().take(5) {
             println!("\n   #{}: {}", func.removal_order, func.name);
             println!("      Confidence: {:.1}%", func.score.score * 100.0);
             println!("      File: {}", func.file);

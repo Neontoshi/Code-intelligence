@@ -1,14 +1,5 @@
 // src/analysis/dynamic_refs.rs
 
-//! Dynamic reference detection for code that static analysis misses
-//!
-//! This module detects:
-//! - Reflection usage
-//! - Callbacks and event handlers
-//! - Framework registration patterns
-//! - Dynamic imports
-//! - Dependency injection
-
 use crate::graph::call_graph::{CallGraph, FunctionNode};
 use crate::parser::tree_sitter::ParsedFile;
 use std::collections::HashMap;
@@ -21,9 +12,10 @@ use std::collections::HashMap;
 pub struct DynamicReference {
     pub source_file: String,
     pub source_function: Option<String>,
-    pub target_pattern: String, // Pattern that matches the target
+    pub target_function: Option<String>, // ⭐ The function being referenced
+    pub target_pattern: String,
     pub reference_type: DynamicRefType,
-    pub confidence: f64, // 0.0 - 1.0
+    pub confidence: f64,
     pub context: String,
 }
 
@@ -37,6 +29,7 @@ pub enum DynamicRefType {
     StringDispatch,
     Unknown,
 }
+
 // ============================================================================
 // Detection Engine
 // ============================================================================
@@ -209,10 +202,44 @@ impl DynamicRefDetector {
         });
     }
 
+    /// Try to extract the target function name from source body
+    fn extract_target_function(&self, source: &str) -> Option<String> {
+        // Look for function-like identifiers in the source
+        // This is a heuristic: find words that look like function calls
+
+        // Patterns that suggest a function is being called/referenced
+        let pattern_strs = [
+            r"\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\(",    // method calls: .getUsers(
+            r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\(",      // function calls: getUsers(
+            r#"['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]"#, // string literals: "getUsers"
+        ];
+
+        use regex::Regex;
+
+        for pattern_str in pattern_strs {
+            if let Ok(re) = Regex::new(pattern_str) {
+                if let Some(cap) = re.captures(source) {
+                    if let Some(matched) = cap.get(1) {
+                        let name = matched.as_str().to_string();
+                        // Filter out common keywords
+                        let keywords = [
+                            "if", "for", "while", "switch", "return", "new", "try", "catch",
+                        ];
+                        if !keywords.contains(&name.as_str()) && name.len() > 1 {
+                            return Some(name);
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     /// Detect dynamic references in a project
     pub fn detect_all(
         &self,
-        call_graph: &CallGraph,
+        _call_graph: &CallGraph,
         files: &[ParsedFile],
     ) -> Vec<DynamicReference> {
         let mut refs = Vec::new();
@@ -223,23 +250,27 @@ impl DynamicRefDetector {
 
             // Check function bodies for patterns
             for func_info in &file.functions {
-                // Find the function in the call graph
-                let _func = call_graph
-                    .node_indices()
-                    .find(|idx| call_graph[*idx].name == func_info.name)
-                    .map(|idx| &call_graph[idx]);
+                // Only scan the actual function body, not the whole file
+                let body_start = func_info.body_range.0;
+                let body_end = func_info.body_range.1;
+                let body = &file.source[body_start..body_end];
 
-                // Check source code for patterns
-                let source = &file.source;
                 for pattern in patterns {
-                    if source.contains(&pattern.pattern) {
+                    if body.contains(&pattern.pattern) {
+                        // Try to extract the target function name from the body
+                        let target = self.extract_target_function(body);
+
                         refs.push(DynamicReference {
                             source_file: file.path.clone(),
                             source_function: Some(func_info.name.clone()),
+                            target_function: target,
                             target_pattern: pattern.pattern.clone(),
                             reference_type: pattern.ref_type.clone(),
                             confidence: pattern.confidence,
-                            context: format!("Found '{}' in file", pattern.pattern),
+                            context: format!(
+                                "Found '{}' in function '{}' body",
+                                pattern.pattern, func_info.name
+                            ),
                         });
                     }
                 }
@@ -254,6 +285,7 @@ impl DynamicRefDetector {
                     refs.push(DynamicReference {
                         source_file: file.path.clone(),
                         source_function: None,
+                        target_function: None,
                         target_pattern: import.module.clone(),
                         reference_type: DynamicRefType::DynamicImport,
                         confidence: 0.7,
@@ -299,6 +331,7 @@ impl DynamicRefDetector {
                 refs.push(DynamicReference {
                     source_file: file.path.clone(),
                     source_function: Some(func_info.name.clone()),
+                    target_function: None,
                     target_pattern: "ReactComponent".to_string(),
                     reference_type: DynamicRefType::Framework,
                     confidence: 0.9,
@@ -312,6 +345,7 @@ impl DynamicRefDetector {
             refs.push(DynamicReference {
                 source_file: file.path.clone(),
                 source_function: Some(func_info.name.clone()),
+                target_function: None,
                 target_pattern: "SpringHandler".to_string(),
                 reference_type: DynamicRefType::Framework,
                 confidence: 0.8,
@@ -327,6 +361,7 @@ impl DynamicRefDetector {
                     refs.push(DynamicReference {
                         source_file: file.path.clone(),
                         source_function: Some(func_info.name.clone()),
+                        target_function: None,
                         target_pattern: "RouteHandler".to_string(),
                         reference_type: DynamicRefType::Framework,
                         confidence: 0.9,
@@ -374,7 +409,10 @@ impl DynamicRefDetector {
                     r.confidence * 100.0
                 ));
                 if let Some(func) = &r.source_function {
-                    output.push_str(&format!("  - Function: `{}`\n", func));
+                    output.push_str(&format!("  - Source Function: `{}`\n", func));
+                }
+                if let Some(target) = &r.target_function {
+                    output.push_str(&format!("  - Target Function: `{}`\n", target));
                 }
                 output.push_str(&format!("  - File: `{}`\n", r.source_file));
                 output.push_str(&format!("  - Context: {}\n", r.context));
@@ -407,10 +445,12 @@ struct RefPattern {
 /// Check if a function is referenced dynamically
 pub fn is_dynamically_referenced(func: &FunctionNode, dynamic_refs: &[DynamicReference]) -> bool {
     dynamic_refs.iter().any(|r| {
-        r.source_function
+        // Function is the target of the dynamic reference
+        r.target_function
             .as_ref()
             .map(|f| f == &func.name)
             .unwrap_or(false)
+            // Or the pattern matches the function name
             || r.target_pattern.contains(&func.name)
     })
 }
@@ -423,10 +463,12 @@ pub fn get_references_for_function<'a>(
     dynamic_refs
         .iter()
         .filter(|r| {
-            r.source_function
+            // Function is the target of the dynamic reference
+            r.target_function
                 .as_ref()
                 .map(|f| f == &func.name)
                 .unwrap_or(false)
+                // Or the pattern matches the function name
                 || r.target_pattern.contains(&func.name)
         })
         .collect()

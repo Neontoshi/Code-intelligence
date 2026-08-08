@@ -43,6 +43,7 @@ impl DeadCodeDetector {
     }
 
     /// New comprehensive analysis
+    #[allow(deprecated)]
     pub fn analyze(
         call_graph: &CallGraph,
         type_graph: &crate::graph::type_graph::TypeGraph,

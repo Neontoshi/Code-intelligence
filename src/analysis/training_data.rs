@@ -17,6 +17,12 @@ pub struct TrainingExample {
     pub label: TrainingLabel,
     pub confidence: f64,
     pub source: String,
+    // ⭐ NEW METADATA FIELDS
+    pub repository_id: Option<String>,
+    pub commit_hash: Option<String>,
+    pub dataset_split: Option<String>, // "train", "val", "test"
+    pub label_reason: Option<String>, // "root", "has_callers", "test_function", "library_export", "truly_dead"
+    pub label_version: Option<u32>,   // Version of labeling logic
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -39,6 +45,10 @@ pub struct FunctionFeatures {
     pub starts_with_bench: bool,
     pub ends_with_test: bool,
     pub contains_trait_impl: bool,
+
+    // HASH FIELDS (for deduplication)
+    pub signature_hash: String,
+    pub body_hash: String,
 
     // Dynamic features
     pub fan_in: usize,
@@ -109,6 +119,12 @@ impl FunctionFeatures {
 
         let type_info = Self::extract_type_info(func);
 
+        use crate::optimize::dedup::core::compute_signature_hash;
+
+        // For body_hash, we'd need source, but we can use a placeholder
+        // The deduplication function will need to compute it properly
+        let sig_hash = compute_signature_hash(func);
+
         Self {
             param_count: func.params.len(),
             return_count: func.returns.len(),
@@ -121,6 +137,8 @@ impl FunctionFeatures {
                 || func.name.starts_with("Benchmark"),
             ends_with_test: func.name.ends_with("_test"),
             contains_trait_impl,
+            signature_hash: sig_hash.clone(),
+            body_hash: sig_hash.clone(),
             fan_in: func.fan_in,
             fan_out: func.fan_out,
             complexity: func.complexity,
@@ -307,6 +325,11 @@ impl TrainingExample {
             label: TrainingLabel::Alive,
             confidence: 0.95,
             source: "whitelist".to_string(),
+            repository_id: None,
+            commit_hash: None,
+            dataset_split: None,
+            label_reason: Some("whitelist".to_string()),
+            label_version: Some(1),
         }
     }
 
@@ -320,6 +343,11 @@ impl TrainingExample {
             label: TrainingLabel::Dead,
             confidence: 0.95,
             source: "analysis".to_string(),
+            repository_id: None,
+            commit_hash: None,
+            dataset_split: None,
+            label_reason: Some("analysis".to_string()),
+            label_version: Some(1),
         }
     }
 
@@ -389,6 +417,17 @@ impl TrainingDataCollector {
                 (TrainingLabel::Unknown, 0.0)
             };
 
+            // Determine the label reason based on how we classified it
+            let label_reason = if is_test_function {
+                "test_function".to_string()
+            } else if is_whitelisted_fn(func) {
+                "whitelist".to_string()
+            } else if is_dead_fn(func) {
+                "truly_dead".to_string()
+            } else {
+                "unknown".to_string()
+            };
+
             let example = TrainingExample {
                 function_name: func.name.clone(),
                 full_path: func.full_path.clone(),
@@ -397,7 +436,12 @@ impl TrainingDataCollector {
                 features: FunctionFeatures::from_function(func, call_graph),
                 label: label.clone(),
                 confidence,
-                source: "auto".to_string(),
+                source: label_reason.clone(),
+                repository_id: None,
+                commit_hash: None,
+                dataset_split: None,
+                label_reason: Some(label_reason),
+                label_version: Some(1),
             };
 
             self.examples.push(example.clone());
@@ -412,7 +456,7 @@ impl TrainingDataCollector {
         call_graph: &CallGraph,
         label: TrainingLabel,
         confidence: f64,
-        source: &str,
+        source_label: &str, // Renamed from `source` to avoid conflict
     ) {
         let example = TrainingExample {
             function_name: func.name.clone(),
@@ -422,7 +466,12 @@ impl TrainingDataCollector {
             features: FunctionFeatures::from_function(func, call_graph),
             label: label.clone(),
             confidence,
-            source: source.to_string(),
+            source: source_label.to_string(),
+            repository_id: None,
+            commit_hash: None,
+            dataset_split: None,
+            label_reason: Some(source_label.to_string()),
+            label_version: Some(1),
         };
 
         self.examples.push(example.clone());

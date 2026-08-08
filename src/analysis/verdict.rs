@@ -203,6 +203,11 @@ impl VerdictEngine {
                     label: TrainingLabel::Unknown,
                     confidence: 0.0,
                     source: "ml".to_string(),
+                    repository_id: None,
+                    commit_hash: None,
+                    dataset_split: None,
+                    label_reason: Some("ml".to_string()),
+                    label_version: Some(1),
                 };
                 let alive_prob = model.predict_probability(&example);
                 let dead_prob = 1.0 - alive_prob;
@@ -392,11 +397,14 @@ impl VerdictEngine {
         }
 
         if let Some(dynamic_refs) = &self.dynamic_refs {
+            // Check if THIS function is the target of a dynamic reference
             let is_dynamically_referenced = dynamic_refs.iter().any(|r| {
-                r.source_function
+                r.target_function
                     .as_ref()
                     .map(|f| f == &func.name)
                     .unwrap_or(false)
+                // Also check if the target pattern matches the function name
+                || r.target_pattern.contains(&func.name)
             });
 
             if is_dynamically_referenced {
@@ -404,7 +412,7 @@ impl VerdictEngine {
                     name: "dynamic_reference".to_string(),
                     value: 1.0,
                     direction: SignalDirection::SupportsAlive,
-                    weight: 0.3,
+                    weight: 0.4, // Higher weight for dynamic references
                     explanation: "Referenced dynamically (reflection/callback)".to_string(),
                 });
             }
@@ -494,6 +502,18 @@ impl VerdictEngine {
         verdicts.iter().filter(|v| v.needs_review()).collect()
     }
 
+    pub fn default_with_threshold(threshold: f64) -> Self {
+        let mut config = VerdictConfig::default();
+        config.dead_threshold = threshold;
+        Self::new(config)
+    }
+
+    /// Create a verdict engine with ML support
+    pub fn with_ml_model(threshold: f64, model: DeadCodeClassifier) -> Self {
+        let mut engine = Self::default_with_threshold(threshold);
+        engine = engine.with_ml(model);
+        engine
+    }
     /// Get verdict statistics
     pub fn stats(&self, verdicts: &[Verdict]) -> VerdictStats {
         let dead = verdicts.iter().filter(|v| v.is_dead()).count();

@@ -26,16 +26,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .to_string();
             println!("   Loading: {}", repo_name);
             let data = std::fs::read_to_string(&path)?;
-            let examples: Vec<TrainingExample> = serde_json::from_str(&data)?;
+            let mut examples: Vec<TrainingExample> = serde_json::from_str(&data)?;
+
+            // ⭐ Add repository_id to each example
+            for example in &mut examples {
+                example.repository_id = Some(repo_name.clone());
+                example.commit_hash = Some("unknown".to_string()); // Could extract from repo
+            }
+
             by_repo.insert(repo_name, examples);
         }
     }
 
     println!("\n📊 Found {} repositories", by_repo.len());
-
-    // Count total examples
     let total_examples: usize = by_repo.values().map(|v| v.len()).sum();
     println!("   Total examples: {}", total_examples);
+
+    // ⭐ Deduplicate examples
+    println!("\n🔍 Deduplicating examples...");
+    let deduped = deduplicate_examples(&by_repo);
+    println!("   After dedup: {} examples", deduped.len());
+
+    // Rebuild by_repo from deduped
+    let mut by_repo_deduped: HashMap<String, Vec<TrainingExample>> = HashMap::new();
+    for example in deduped {
+        if let Some(repo) = &example.repository_id {
+            by_repo_deduped
+                .entry(repo.clone())
+                .or_default()
+                .push(example);
+        }
+    }
+    by_repo = by_repo_deduped;
 
     // Split repos into train/validation/test sets
     let repo_names: Vec<String> = by_repo.keys().cloned().collect();
@@ -55,27 +77,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let val_repos = &shuffled[train_count..train_count + val_count];
     let test_repos = &shuffled[train_count + val_count..];
 
-    // Build datasets
+    // Build datasets with split labels
     let mut train_examples = Vec::new();
     let mut val_examples = Vec::new();
     let mut test_examples = Vec::new();
 
     for repo in train_repos {
         if let Some(examples) = by_repo.get(repo) {
-            train_examples.extend(examples.clone());
+            let mut cloned = examples.clone();
+            for example in &mut cloned {
+                example.dataset_split = Some("train".to_string());
+                example.label_reason = Some("auto".to_string());
+                example.label_version = Some(1);
+            }
+            train_examples.extend(cloned);
         }
     }
     for repo in val_repos {
         if let Some(examples) = by_repo.get(repo) {
-            val_examples.extend(examples.clone());
+            let mut cloned = examples.clone();
+            for example in &mut cloned {
+                example.dataset_split = Some("val".to_string());
+                example.label_reason = Some("auto".to_string());
+                example.label_version = Some(1);
+            }
+            val_examples.extend(cloned);
         }
     }
     for repo in test_repos {
         if let Some(examples) = by_repo.get(repo) {
-            test_examples.extend(examples.clone());
+            let mut cloned = examples.clone();
+            for example in &mut cloned {
+                example.dataset_split = Some("test".to_string());
+                example.label_reason = Some("auto".to_string());
+                example.label_version = Some(1);
+            }
+            test_examples.extend(cloned);
         }
     }
-
     // Save datasets
     println!("\n📊 Saving datasets to ./data/");
     std::fs::create_dir_all("data")?;
@@ -157,4 +196,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("      Test:  Alive={}, Dead={}", test_alive, test_dead);
 
     Ok(())
+}
+
+fn deduplicate_examples(by_repo: &HashMap<String, Vec<TrainingExample>>) -> Vec<TrainingExample> {
+    use std::collections::HashSet;
+
+    let mut seen = HashSet::new();
+    let mut deduped = Vec::new();
+
+    for examples in by_repo.values() {
+        for example in examples {
+            // Create a key based on signature and body hashes
+            let key = format!(
+                "{}|{}",
+                example.features.signature_hash, example.features.body_hash
+            );
+
+            if !seen.contains(&key) {
+                seen.insert(key);
+                deduped.push(example.clone());
+            }
+        }
+    }
+
+    deduped
 }

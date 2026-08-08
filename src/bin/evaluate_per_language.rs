@@ -55,7 +55,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Per-language breakdown
-    // Per-language breakdown
     println!("\n🌐 Per-Language Breakdown:");
     let by_language = group_by_language(&test_examples);
     for (lang, examples) in by_language {
@@ -70,6 +69,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("     FPR: {:.1}%", metrics.fpr * 100.0);
     }
 
+    // ⭐ Per-repository breakdown
+    println!("\n📁 Per-Repository Breakdown:");
+    let by_repo = group_by_repository(&test_examples);
+    for (repo, examples) in by_repo {
+        let owned_examples: Vec<TrainingExample> = examples.into_iter().cloned().collect();
+        let metrics = evaluate(&classifier, &owned_examples);
+        println!("\n   {}:", repo);
+        println!("     Precision: {:.1}%", metrics.precision * 100.0);
+        println!("     Recall: {:.1}%", metrics.recall * 100.0);
+        println!("     F1: {:.1}%", metrics.f1 * 100.0);
+        println!("     Examples: {}", owned_examples.len());
+    }
+
     Ok(())
 }
 
@@ -80,6 +92,16 @@ fn group_by_language(examples: &[TrainingExample]) -> HashMap<String, Vec<&Train
             .entry(example.language.clone())
             .or_default()
             .push(example);
+    }
+    groups
+}
+
+fn group_by_repository(examples: &[TrainingExample]) -> HashMap<String, Vec<&TrainingExample>> {
+    let mut groups: HashMap<String, Vec<&TrainingExample>> = HashMap::new();
+    for example in examples {
+        if let Some(ref repo) = example.repository_id {
+            groups.entry(repo.clone()).or_default().push(example);
+        }
     }
     groups
 }

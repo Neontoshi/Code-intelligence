@@ -28,18 +28,19 @@ impl EvaluationMetrics {
     pub fn print(&self) {
         println!("   Total: {}", self.total);
         println!("   Correct: {}", self.correct);
-        println!("   Confusion Matrix:");
+        println!("   Confusion Matrix (DEAD = Positive Class):");
         println!("                   ACTUAL");
         println!("              Alive    Dead");
         println!(
             "   Pred Alive   {:>4}    {:>4}  ← False Negatives",
-            self.true_positives, self.false_negatives
+            self.true_negatives, self.false_negatives
         );
         println!(
-            "   Pred Dead    {:>4}    {:>4}  ← True Negatives",
-            self.false_positives, self.true_negatives
+            "   Pred Dead    {:>4}    {:>4}  ← True Positives",
+            self.false_positives, self.true_positives
         );
-        println!("\n   Accuracy: {:.1}%", self.accuracy * 100.0);
+        println!("\n   Metrics (Positive = DEAD):");
+        println!("   Accuracy: {:.1}%", self.accuracy * 100.0);
         println!("   Precision: {:.1}%", self.precision * 100.0);
         println!("   Recall: {:.1}%", self.recall * 100.0);
         println!("   F1: {:.1}%", self.f1 * 100.0);
@@ -63,12 +64,17 @@ pub fn evaluate(
         let prediction = classifier.predict(example);
         let actual = &example.label;
 
+        // DEAD is the positive class
         match (prediction, actual) {
-            (TrainingLabel::Alive, TrainingLabel::Alive) => tp += 1,
-            (TrainingLabel::Dead, TrainingLabel::Dead) => tn += 1,
+            // True Positive: predicted Dead, actually Dead
+            (TrainingLabel::Dead, TrainingLabel::Dead) => tp += 1,
+            // True Negative: predicted Alive, actually Alive
+            (TrainingLabel::Alive, TrainingLabel::Alive) => tn += 1,
+            // False Negative: predicted Alive, actually Dead
             (TrainingLabel::Alive, TrainingLabel::Dead) => fn_ += 1,
+            // False Positive: predicted Dead, actually Alive
             (TrainingLabel::Dead, TrainingLabel::Alive) => fp += 1,
-            _ => {} // Unknown labels are skipped
+            _ => {}
         }
     }
 
@@ -80,6 +86,9 @@ pub fn evaluate(
     } else {
         0.0
     };
+    // DEAD is positive class, so:
+    // Precision = TP / (TP + FP) - of all DEAD predictions, how many were actually DEAD?
+    // Recall = TP / (TP + FN) - of all actual DEAD, how many did we find?
     let precision = if tp + fp > 0 {
         tp as f64 / (tp + fp) as f64
     } else {

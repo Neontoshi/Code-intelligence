@@ -131,6 +131,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let val_accuracy = evaluate_classifier(&classifier, &val_examples);
     println!("   Accuracy: {:.1}%", val_accuracy * 100.0);
 
+    // ⭐ NEW: Tune threshold on validation set
+    println!("\n🎯 Tuning threshold on validation set...");
+    let best_threshold =
+        tune_threshold_on_validation(&classifier, &val_examples, args.target_precision);
     // Evaluate on test set
     println!("\n📊 Test Set Performance:");
     let test_metrics = evaluate_classifier_full(&classifier, &test_examples);
@@ -166,7 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         f1: test_metrics.f1,
         fpr: test_metrics.fpr,
         fnr: 1.0 - test_metrics.recall,
-        threshold: args.target_precision,
+        threshold: best_threshold, // ⭐ Use tuned threshold
     };
 
     if let Some(inner_model) = classifier.model.clone() {
@@ -174,7 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut versioned = VersionedModel::new(inner_model, metadata, Some(performance));
 
         // Add threshold from args
-        versioned.set_threshold(args.target_precision);
+        versioned.set_threshold(best_threshold);
 
         // TODO: Add scaler if we start using feature scaling
         // versioned.set_scaler(scaler);
@@ -238,6 +242,144 @@ struct FullMetrics {
     fpr: f64,
 }
 
+fn tune_threshold_on_validation(
+    classifier: &DeadCodeClassifier,
+    val_examples: &[code_intelligence::analysis::training_data::TrainingExample],
+    target_precision: f64,
+) -> f64 {
+    // Skip if no validation examples
+    if val_examples.is_empty() {
+        return 0.92;
+    }
+
+    let thresholds: Vec<f64> = (50..=99).map(|i| i as f64 / 100.0).collect();
+
+    let mut best_threshold = 0.92;
+    let mut best_recall = 0.0;
+    let mut best_metrics: Option<FullMetrics> = None;
+
+    for threshold in &thresholds {
+        let metrics = evaluate_at_threshold(classifier, val_examples, *threshold);
+
+        // Find threshold that meets precision target with highest recall
+        if metrics.precision >= target_precision && metrics.recall > best_recall {
+            best_recall = metrics.recall;
+            best_threshold = *threshold;
+            best_metrics = Some(metrics);
+        }
+    }
+
+    // If no threshold meets target precision, use the one with best precision
+    if best_metrics.is_none() {
+        let mut best_precision = 0.0;
+        for threshold in &thresholds {
+            let metrics = evaluate_at_threshold(classifier, val_examples, *threshold);
+            if metrics.precision > best_precision {
+                best_precision = metrics.precision;
+                best_threshold = *threshold;
+                best_metrics = Some(metrics);
+            }
+        }
+        eprintln!(
+            "⚠️ No threshold meets {:.1}% precision target. Best: {:.1}% at threshold {:.2}",
+            target_precision * 100.0,
+            best_precision * 100.0,
+            best_threshold
+        );
+    }
+
+    if let Some(metrics) = best_metrics {
+        println!("   Selected threshold: {:.2}", best_threshold);
+        println!("      Precision: {:.1}%", metrics.precision * 100.0);
+        println!("      Recall: {:.1}%", metrics.recall * 100.0);
+        println!("      F1: {:.1}%", metrics.f1 * 100.0);
+        println!("      FPR: {:.1}%", metrics.fpr * 100.0);
+    }
+
+    best_threshold
+}
+
+fn evaluate_at_threshold(
+    classifier: &DeadCodeClassifier,
+    examples: &[code_intelligence::analysis::training_data::TrainingExample],
+    threshold: f64,
+) -> FullMetrics {
+    let labeled: Vec<_> = examples
+        .iter()
+        .filter(|e| e.label != TrainingLabel::Unknown)
+        .collect();
+
+    if labeled.is_empty() {
+        return FullMetrics {
+            accuracy: 0.0,
+            precision: 0.0,
+            recall: 0.0,
+            f1: 0.0,
+            fpr: 0.0,
+        };
+    }
+
+    let mut tp = 0;
+    let mut tn = 0;
+    let mut fp = 0;
+    let mut fn_ = 0;
+
+    for example in &labeled {
+        let prob = classifier.predict_probability(example);
+        // DEAD is positive class - predict DEAD if prob >= threshold
+        let prediction = if prob >= threshold {
+            TrainingLabel::Dead
+        } else {
+            TrainingLabel::Alive
+        };
+        let actual = &example.label;
+
+        // DEAD is positive class
+        match (prediction, actual) {
+            (TrainingLabel::Dead, TrainingLabel::Dead) => tp += 1,
+            (TrainingLabel::Alive, TrainingLabel::Alive) => tn += 1,
+            (TrainingLabel::Alive, TrainingLabel::Dead) => fn_ += 1,
+            (TrainingLabel::Dead, TrainingLabel::Alive) => fp += 1,
+            _ => {}
+        }
+    }
+
+    let total = tp + tn + fp + fn_;
+    let accuracy = if total > 0 {
+        (tp + tn) as f64 / total as f64
+    } else {
+        0.0
+    };
+    let precision = if tp + fp > 0 {
+        tp as f64 / (tp + fp) as f64
+    } else {
+        0.0
+    };
+    let recall = if tp + fn_ > 0 {
+        tp as f64 / (tp + fn_) as f64
+    } else {
+        0.0
+    };
+    let f1 = if precision + recall > 0.0 {
+        2.0 * precision * recall / (precision + recall)
+    } else {
+        0.0
+    };
+    let fpr = if fp + tn > 0 {
+        fp as f64 / (fp + tn) as f64
+    } else {
+        0.0
+    };
+
+    FullMetrics {
+        accuracy,
+        precision,
+        recall,
+        f1,
+        fpr,
+    }
+}
+
 fn evaluate_classifier(
     classifier: &DeadCodeClassifier,
     examples: &[code_intelligence::analysis::training_data::TrainingExample],
@@ -290,9 +432,10 @@ fn evaluate_classifier_full(
         let prediction = classifier.predict(example);
         let actual = &example.label;
 
+        // DEAD is the positive class
         match (prediction, actual) {
-            (TrainingLabel::Alive, TrainingLabel::Alive) => tp += 1,
-            (TrainingLabel::Dead, TrainingLabel::Dead) => tn += 1,
+            (TrainingLabel::Dead, TrainingLabel::Dead) => tp += 1,
+            (TrainingLabel::Alive, TrainingLabel::Alive) => tn += 1,
             (TrainingLabel::Alive, TrainingLabel::Dead) => fn_ += 1,
             (TrainingLabel::Dead, TrainingLabel::Alive) => fp += 1,
             _ => {}

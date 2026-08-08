@@ -405,6 +405,11 @@ mod tests {
                 label: TrainingLabel::Alive,
                 confidence: 0.9,
                 source: "test".to_string(),
+                repository_id: None,
+                commit_hash: None,
+                dataset_split: None,
+                label_reason: None,
+                label_version: Some(1),
             });
         }
 
@@ -424,6 +429,11 @@ mod tests {
                 label: TrainingLabel::Dead,
                 confidence: 0.9,
                 source: "test".to_string(),
+                repository_id: None,
+                commit_hash: None,
+                dataset_split: None,
+                label_reason: None,
+                label_version: Some(1),
             });
         }
 
