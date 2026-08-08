@@ -13,42 +13,11 @@ impl FeatureExtractor {
         Self { scaler: None }
     }
 
+    /// Delegates to the canonical schema (`crate::ml::feature_schema`) so
+    /// this can never drift out of sync with the actual 46-wide feature
+    /// vector again.
     pub fn get_feature_names() -> Vec<String> {
-        vec![
-            "param_count".to_string(),
-            "return_count".to_string(),
-            "is_public".to_string(),
-            "is_async".to_string(),
-            "name_length".to_string(),
-            "starts_with_use".to_string(),
-            "starts_with_test".to_string(),
-            "starts_with_bench".to_string(),
-            "ends_with_test".to_string(),
-            "contains_trait_impl".to_string(),
-            "fan_in".to_string(),
-            "fan_out".to_string(),
-            "complexity".to_string(),
-            "call_depth".to_string(),
-            "is_cycle".to_string(),
-            "is_in_test_file".to_string(),
-            "is_in_benches".to_string(),
-            "is_in_meta".to_string(),
-            "is_in_examples".to_string(),
-            "is_generated".to_string(),
-            "name_contains_use".to_string(),
-            "name_contains_test".to_string(),
-            "name_contains_init".to_string(),
-            "name_contains_get".to_string(),
-            "name_contains_set".to_string(),
-            "name_contains_new".to_string(),
-            "name_contains_create".to_string(),
-            "name_contains_build".to_string(),
-            "name_contains_parse".to_string(),
-            "name_contains_validate".to_string(),
-            "name_contains_handle".to_string(),
-            "name_contains_process".to_string(),
-            "name_contains_convert".to_string(),
-        ]
+        crate::ml::feature_schema::feature_names()
     }
 
     pub fn extract_features(&self, example: &TrainingExample) -> Array1<f64> {
@@ -129,5 +98,34 @@ impl FeatureScaler {
 
         self.mean = mean.into_iter().collect();
         self.std = std.into_iter().collect();
+    }
+
+    /// Convenience fit for callers that have a flat list of raw feature
+    /// vectors rather than an ndarray Array2 already built (e.g. LinearClassifier).
+    pub fn fit_from_vectors(&mut self, features: &[Vec<f64>]) {
+        if features.is_empty() {
+            return;
+        }
+        let n_samples = features.len();
+        let n_features = features[0].len();
+        let flat: Vec<f64> = features.iter().flatten().copied().collect();
+        if let Ok(arr) = Array2::from_shape_vec((n_samples, n_features), flat) {
+            self.fit(&arr);
+        }
+    }
+
+    /// Standardize a raw feature vector using the fitted mean/std.
+    /// Returns the input unchanged if the scaler hasn't been fit yet, or
+    /// if the vector length doesn't match what was fit (defensive —
+    /// should not happen in normal use).
+    pub fn transform(&self, features: &[f64]) -> Vec<f64> {
+        if self.mean.is_empty() || self.mean.len() != features.len() {
+            return features.to_vec();
+        }
+        features
+            .iter()
+            .zip(self.mean.iter().zip(self.std.iter()))
+            .map(|(&x, (&m, &s))| (x - m) / s)
+            .collect()
     }
 }

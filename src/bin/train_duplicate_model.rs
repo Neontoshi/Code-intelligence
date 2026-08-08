@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("📁 Model output: {:?}", model_file);
 
     // Check if input is a JSON file or a project path
-    let examples = if input_path.extension().map(|e| e == "json").unwrap_or(false) {
+    let mut examples = if input_path.extension().map(|e| e == "json").unwrap_or(false) {
         // Load training data from JSON file
         println!("📊 Loading training data from JSON...");
         let data = std::fs::read_to_string(&input_path)?;
@@ -183,20 +183,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Duplicates: {}", duplicates_count);
     println!("   Not duplicates: {}", not_duplicates_count);
 
-    // Train the model
+    // Held-out split: train on 80%, evaluate on the remaining 20%.
+    // Previously this trained and reported accuracy on the exact same
+    // data, which is a training-set score, not a generalization estimate.
+    let mut rng = rand::thread_rng();
+    examples.shuffle(&mut rng);
+    let split_at = (examples.len() as f64 * 0.8).round() as usize;
+    let (train_examples, held_out_examples) = examples.split_at(split_at);
+
+    println!(
+        "\n📊 Split: {} train / {} held-out",
+        train_examples.len(),
+        held_out_examples.len()
+    );
+
+    // Train the model on the training split only
     println!("\n🧠 Training duplicate classifier...");
     let mut classifier = DuplicateClassifier::new(101);
-    let accuracy = classifier.train(&examples);
+    let train_accuracy = classifier.train(train_examples);
+    println!("   Training accuracy: {:.1}%", train_accuracy * 100.0);
 
-    println!("   Accuracy: {:.1}%", accuracy * 100.0);
+    // This is the number that actually reflects generalization
+    if held_out_examples.is_empty() {
+        println!("   ⚠️ Dataset too small to hold out a split — skipping held-out evaluation.");
+    } else {
+        let held_out_accuracy = classifier.evaluate(held_out_examples);
+        println!("   Held-out accuracy: {:.1}%", held_out_accuracy * 100.0);
+    }
 
-    // Save the model
+    // Note: this saves a model trained on 80% of the data, not the full
+    // set. Once the held-out number looks good, rerun without the split
+    // (or retrain on `examples` directly) for the model you actually ship.
     classifier.save(&model_file.to_string_lossy())?;
     println!("✅ Model saved to: {:?}", model_file);
-
-    // Show predictions
-    println!("\n🔮 Sample Predictions:");
-    for example in examples.iter().take(10) {
+    // Show predictions — from the held-out split, so these are examples
+    // the model didn't train on, not just training-set recall.
+    println!("\n🔮 Sample Predictions (held-out):");
+    for example in held_out_examples.iter().take(10) {
         let prediction = classifier.predict(&example.func_a, &example.func_b);
         let label = if prediction > 0.7 {
             "DUPLICATE"
@@ -216,7 +239,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // Show type context stats
+    // Show type context stats (full dataset — this is just a data
+    // composition stat, not a model evaluation, so no need to restrict it)
     println!("\n📊 Type Context Stats:");
     let with_types = examples
         .iter()

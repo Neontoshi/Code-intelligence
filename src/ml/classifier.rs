@@ -1,7 +1,7 @@
 // src/ml/classifier.rs
-
 use crate::analysis::training_data::{TrainingExample, TrainingLabel};
 use crate::ml::feature_schema::{feature_count, feature_names, FeatureCategory, FEATURE_SCHEMA};
+use crate::ml::features::FeatureScaler;
 use crate::ml::CalibrationParams;
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +16,10 @@ pub struct LinearClassifier {
     learning_rate: f64,
     epochs: usize,
     feature_count: usize,
+    // `#[serde(default)]` so model files saved before this field existed
+    // still deserialize (they'll just load with scaler: None).
+    #[serde(default)]
+    scaler: Option<FeatureScaler>,
 }
 
 impl LinearClassifier {
@@ -26,9 +30,9 @@ impl LinearClassifier {
             learning_rate: 0.01,
             epochs: 100,
             feature_count,
+            scaler: None,
         }
     }
-
     pub fn new_with_schema() -> Self {
         Self::new(feature_count())
     }
@@ -58,6 +62,17 @@ impl LinearClassifier {
             self.weights = vec![0.0; self.feature_count];
         }
 
+        // Fit the scaler on the raw training features before touching any
+        // weights, then use it for every example below (and keep it, so
+        // predict() applies the same transform later).
+        let raw_vectors: Vec<Vec<f64>> = labeled
+            .iter()
+            .map(|e| e.features.to_feature_vector())
+            .collect();
+        let mut scaler = FeatureScaler::new();
+        scaler.fit_from_vectors(&raw_vectors);
+        self.scaler = Some(scaler);
+
         // Train using gradient descent
         for epoch in 0..self.epochs {
             let mut total_loss = 0.0;
@@ -69,7 +84,8 @@ impl LinearClassifier {
             shuffled.shuffle(&mut rng);
 
             for example in &shuffled {
-                let features = example.features.to_feature_vector();
+                let raw = example.features.to_feature_vector();
+                let features = self.scaler.as_ref().unwrap().transform(&raw);
                 let target = match example.label {
                     TrainingLabel::Alive => 1.0,
                     TrainingLabel::Dead => 0.0,
@@ -106,6 +122,13 @@ impl LinearClassifier {
     }
 
     pub fn predict(&self, features: &[f64]) -> f64 {
+        let scaled;
+        let features = if let Some(scaler) = &self.scaler {
+            scaled = scaler.transform(features);
+            &scaled
+        } else {
+            features
+        };
         let dot: f64 = features.iter().zip(&self.weights).map(|(f, w)| f * w).sum();
         1.0 / (1.0 + (-(dot + self.bias)).exp())
     }

@@ -1,11 +1,7 @@
 // src/ml/model_serialization.rs
-
-//! Versioned model serialization with schema tracking
-
 use crate::ml::calibration::CalibrationParams;
 use crate::ml::classifier::LinearClassifier;
 use crate::ml::feature_schema::{FeatureSchema, FEATURE_SCHEMA};
-use crate::ml::features::FeatureScaler;
 use serde::{Deserialize, Serialize};
 
 // Versioned Model
@@ -16,10 +12,9 @@ pub struct VersionedModel {
     pub model_id: String,
     pub created_at: String,
     pub feature_schema: FeatureSchema,
-    pub classifier: LinearClassifier,
-    pub scaler: Option<FeatureScaler>,          // ⭐ NEW
-    pub calibration: Option<CalibrationParams>, // ⭐ NEW
-    pub threshold: f64,                         // ⭐ NEW
+    pub classifier: LinearClassifier, // scaling now lives on the classifier itself
+    pub calibration: Option<CalibrationParams>,
+    pub threshold: f64,
     pub training_metadata: TrainingMetadata,
     pub performance: Option<ModelPerformance>,
 }
@@ -58,7 +53,6 @@ impl VersionedModel {
             created_at: chrono::Utc::now().to_rfc3339(),
             feature_schema: FEATURE_SCHEMA.clone(),
             classifier,
-            scaler: None,
             calibration: None,
             threshold: 0.92,
             training_metadata: metadata,
@@ -68,7 +62,6 @@ impl VersionedModel {
 
     pub fn new_with_components(
         classifier: LinearClassifier,
-        scaler: Option<FeatureScaler>,
         calibration: Option<CalibrationParams>,
         threshold: f64,
         metadata: TrainingMetadata,
@@ -80,7 +73,6 @@ impl VersionedModel {
             created_at: chrono::Utc::now().to_rfc3339(),
             feature_schema: FEATURE_SCHEMA.clone(),
             classifier,
-            scaler,
             calibration,
             threshold,
             training_metadata: metadata,
@@ -149,20 +141,12 @@ impl VersionedModel {
         self.performance.as_ref()
     }
 
-    pub fn get_scaler(&self) -> Option<&FeatureScaler> {
-        self.scaler.as_ref()
-    }
-
     pub fn get_calibration(&self) -> Option<&CalibrationParams> {
         self.calibration.as_ref()
     }
 
     pub fn get_threshold(&self) -> f64 {
         self.threshold
-    }
-
-    pub fn set_scaler(&mut self, scaler: FeatureScaler) {
-        self.scaler = Some(scaler);
     }
 
     pub fn set_calibration(&mut self, calibration: CalibrationParams) {

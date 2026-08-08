@@ -103,8 +103,12 @@ impl CalibratedModel {
             let mut loss = 0.0;
             for example in &labeled {
                 let features = example.features.to_feature_vector();
-                let raw_prob = classifier.predict(&features);
-                let calibrated = 1.0 / (1.0 + (-(-((1.0 - raw_prob).ln() / temp))).exp());
+                let raw_prob = classifier.predict(&features).clamp(1e-6, 1.0 - 1e-6);
+                // Recover the pre-sigmoid logit from the probability, then
+                // apply temperature scaling to the logit itself (standard
+                // Platt/temperature scaling), not to ln(1-p).
+                let logit = (raw_prob / (1.0 - raw_prob)).ln();
+                let calibrated = 1.0 / (1.0 + (-logit / temp).exp());
                 let target = match example.label {
                     TrainingLabel::Alive => 1.0,
                     TrainingLabel::Dead => 0.0,
@@ -220,8 +224,9 @@ impl CalibratedModel {
 
         match self.calibration.method {
             CalibrationMethod::TemperatureScaling => {
-                // Apply temperature scaling
-                1.0 / (1.0 + (-(-((1.0 - raw).ln()) / self.calibration.temperature)).exp())
+                let raw = raw.clamp(1e-6, 1.0 - 1e-6);
+                let logit = (raw / (1.0 - raw)).ln();
+                1.0 / (1.0 + (-logit / self.calibration.temperature).exp())
             }
             CalibrationMethod::HistogramBinning => {
                 // Find which bin the prediction falls into
@@ -329,8 +334,9 @@ impl DeadCodeClassifier {
         if let Some(calibration) = &self.calibration {
             match calibration.method {
                 CalibrationMethod::TemperatureScaling => {
-                    // Apply temperature scaling
-                    1.0 / (1.0 + (-(-((1.0 - raw).ln()) / calibration.temperature)).exp())
+                    let raw = raw.clamp(1e-6, 1.0 - 1e-6);
+                    let logit = (raw / (1.0 - raw)).ln();
+                    1.0 / (1.0 + (-logit / calibration.temperature).exp())
                 }
                 CalibrationMethod::HistogramBinning => {
                     // Find which bin the prediction falls into

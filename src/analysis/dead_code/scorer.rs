@@ -37,7 +37,6 @@ pub struct ScoreWeights {
     pub no_callers: f64,        // 40
     pub is_private: f64,        // 20
     pub no_docs: f64,           // 10
-    pub no_tests: f64,          // 15
     pub no_exports: f64,        // 20
     pub no_instantiations: f64, // 20
     pub trait_impl: f64,        // -30 (penalty)
@@ -53,7 +52,6 @@ impl Default for ScoreWeights {
             no_callers: 40.0,
             is_private: 20.0,
             no_docs: 10.0,
-            no_tests: 15.0,
             no_exports: 20.0,
             no_instantiations: 20.0,
             trait_impl: -30.0,
@@ -105,24 +103,6 @@ impl ConfidenceScorer {
         func.file.contains("mod.rs") || func.file.contains("lib.rs")
     }
 
-    /// ⭐ NEW: Check if a function is an API client method
-    fn is_api_client_method(func: &FunctionNode) -> bool {
-        func.file.contains("useSolanaWallet.ts")
-            && (func.name == "request"
-                || func.name == "constructor"
-                || func.name.contains("build")
-                || func.name.contains("submit")
-                || func.name == "getStatus"
-                || func.name == "getWinners"
-                || func.name == "getAudit")
-    }
-
-    /// ⭐ NEW: Check if a function is a Router component
-    fn is_router_component(func: &FunctionNode) -> bool {
-        let router_components = ["CreatePage", "SearchPage", "App"];
-        router_components.contains(&func.name.as_str())
-    }
-
     pub fn score_function(&self, func: &FunctionNode, git_info: Option<&GitInfo>) -> DeadScore {
         let mut score = 0.0;
         let mut factors = Vec::new();
@@ -157,17 +137,6 @@ impl ConfidenceScorer {
                 weight: self.weights.no_docs,
                 contribution: self.weights.no_docs,
                 explanation: "No documentation comment".to_string(),
-            });
-        }
-
-        // 4. No tests (+15)
-        if !func.name.starts_with("test_") && !func.name.starts_with("bench_") {
-            score += self.weights.no_tests;
-            factors.push(ScoreFactor {
-                name: "no_tests".to_string(),
-                weight: self.weights.no_tests,
-                contribution: self.weights.no_tests,
-                explanation: "No test or benchmark found".to_string(),
             });
         }
 
@@ -284,31 +253,9 @@ impl ConfidenceScorer {
             });
         }
 
-        // 15. ⭐ NEW: API client methods are less likely dead (-15)
-        if Self::is_api_client_method(func) {
-            score -= 15.0;
-            factors.push(ScoreFactor {
-                name: "api_client_method".to_string(),
-                weight: 15.0,
-                contribution: -15.0,
-                explanation: "API client method - may be used indirectly".to_string(),
-            });
-        }
-
-        // 16. ⭐ NEW: Router components are less likely dead (-40)
-        if Self::is_router_component(func) {
-            score -= 40.0;
-            factors.push(ScoreFactor {
-                name: "router_component".to_string(),
-                weight: 40.0,
-                contribution: -40.0,
-                explanation: "Router component - used in React Router".to_string(),
-            });
-        }
-
         // Normalize to 0-100
-        let max_score = 140.0; // Sum of all positive weights
-        let min_score = -90.0; // Sum of all negative weights
+        let max_score = 125.0; // Sum of all positive weights
+        let min_score = -35.0; // Sum of all negative weights
         let normalized = (score - min_score) / (max_score - min_score);
         let final_score = normalized.min(1.0).max(0.0);
 

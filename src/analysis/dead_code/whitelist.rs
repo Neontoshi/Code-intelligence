@@ -1,4 +1,5 @@
 // src/analysis/dead_code/whitelist.rs
+use regex::Regex;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -6,7 +7,7 @@ pub static WHITELIST: LazyLock<Whitelist> = LazyLock::new(Whitelist::new);
 
 pub struct Whitelist {
     functions: HashSet<String>,
-    patterns: Vec<String>,
+    patterns: Vec<Regex>,
 }
 
 impl Whitelist {
@@ -26,9 +27,9 @@ impl Whitelist {
         functions.insert("clone".to_string());
         functions.insert("drop".to_string());
 
-        // PATTERNS (minimal)
-        patterns.push("^test_".to_string());
-        patterns.push("^bench_".to_string());
+        // PATTERNS (minimal) — compiled once at construction
+        patterns.push(Regex::new("^test_").expect("valid regex"));
+        patterns.push(Regex::new("^bench_").expect("valid regex"));
 
         Self {
             functions,
@@ -36,23 +37,14 @@ impl Whitelist {
         }
     }
 
-    /// Check if a function is whitelisted by exact name
     pub fn is_whitelisted(&self, name: &str) -> bool {
         // Exact matches
         if self.functions.contains(name) {
             return true;
         }
 
-        // Pattern matches
-        for pattern in &self.patterns {
-            if let Ok(re) = regex::Regex::new(pattern) {
-                if re.is_match(name) {
-                    return true;
-                }
-            }
-        }
-
-        false
+        // Pattern matches (precompiled)
+        self.patterns.iter().any(|re| re.is_match(name))
     }
 
     /// Check if a function is whitelisted by file path

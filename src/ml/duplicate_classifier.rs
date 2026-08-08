@@ -106,8 +106,19 @@ impl DuplicateClassifier {
         self.predict(a, b) > self.threshold
     }
 
-    /// Extract features from a pair of functions for prediction
+    /// Extract features from a pair of functions for prediction.
+    /// Duplicate-ness is a symmetric relation, so we canonicalize the
+    /// pair order (by full_path) before building the vector — otherwise
+    /// is_duplicate(a, b) and is_duplicate(b, a) can disagree.
     fn extract_features_pair(&self, a: &FunctionFeatures, b: &FunctionFeatures) -> Vec<f64> {
+        // FunctionFeatures (training_data) has no full_path/name field — use
+        // body_hash as the stable ordering key so extract_features_pair(a, b)
+        // and extract_features_pair(b, a) always canonicalize the same way.
+        let (a, b) = if a.body_hash <= b.body_hash {
+            (a, b)
+        } else {
+            (b, a)
+        };
         let mut features = a.to_feature_vector();
         features.extend(b.to_feature_vector());
 
@@ -142,16 +153,21 @@ impl DuplicateClassifier {
         features
     }
 
-    /// Extract features from a training example
+    /// Extract features from a training example (order-canonicalized —
     fn extract_features(&self, example: &DuplicateExample) -> Vec<f64> {
-        let mut features = example.func_a.to_feature_vector();
-        features.extend(example.func_b.to_feature_vector());
+        let (a, b) = if example.func_a.body_hash <= example.func_b.body_hash {
+            (&example.func_a, &example.func_b)
+        } else {
+            (&example.func_b, &example.func_a)
+        };
 
-        let diff: Vec<f64> = example
-            .func_a
+        let mut features = a.to_feature_vector();
+        features.extend(b.to_feature_vector());
+
+        let diff: Vec<f64> = a
             .to_feature_vector()
             .iter()
-            .zip(example.func_b.to_feature_vector().iter())
+            .zip(b.to_feature_vector().iter())
             .map(|(x, y)| (x - y).abs())
             .collect();
 
@@ -181,7 +197,14 @@ impl DuplicateClassifier {
         features
     }
 
-    /// Calculate accuracy on training data
+    /// Evaluate accuracy on any labeled examples — pass a held-out split
+    /// (not the training data) to get a meaningful generalization estimate.
+    pub fn evaluate(&self, examples: &[DuplicateExample]) -> f64 {
+        self.calculate_accuracy(examples)
+    }
+
+    /// Calculate accuracy on the given examples (used both for the
+    /// train-time self-report and for `evaluate`)
     fn calculate_accuracy(&self, examples: &[DuplicateExample]) -> f64 {
         let mut correct = 0;
         let mut total = 0;
