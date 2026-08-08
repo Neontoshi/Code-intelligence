@@ -75,9 +75,7 @@ impl GraphVizOutput {
     }
 
     fn resolve(call_graph: &CallGraph, full_path: &str) -> Option<NodeIndex> {
-        call_graph
-            .node_indices()
-            .find(|&i| call_graph[i].full_path == full_path)
+        call_graph.name_index.get(full_path).copied()
     }
 
     /// Default entry point: bounded, importance-colored graph. This is the

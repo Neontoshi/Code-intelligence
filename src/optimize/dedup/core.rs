@@ -13,13 +13,15 @@ pub struct SourceIndex {
 
 impl SourceIndex {
     pub fn build(functions: &[FunctionNode], files: &[ParsedFile]) -> Self {
+        let file_by_path: HashMap<&str, &ParsedFile> =
+            files.iter().map(|f| (f.path.as_str(), f)).collect();
+
         let mut by_path = HashMap::new();
         for func in functions {
-            if let Some(body) = Self::extract_body(func, files) {
+            if let Some(body) = Self::extract_body(func, &file_by_path) {
                 by_path.insert(func.full_path.clone(), body);
             }
         }
-
         #[cfg(debug_assertions)]
         {
             let total = functions.len();
@@ -47,10 +49,11 @@ impl SourceIndex {
     ///
     /// Matches by comparing the `full_path` (which includes container info)
     /// against the constructed path from the parsed file.
-    fn extract_body(func: &FunctionNode, files: &[ParsedFile]) -> Option<String> {
-        // 1. Find the file
-        let file = files.iter().find(|f| f.path == func.file)?;
-
+    fn extract_body(
+        func: &FunctionNode,
+        file_by_path: &HashMap<&str, &ParsedFile>,
+    ) -> Option<String> {
+        let file = *file_by_path.get(func.file.as_str())?;
         // 2. Find the function info in the parsed file.
         //    We construct the full path from the parsed info and compare it
         //    to the func's full_path.

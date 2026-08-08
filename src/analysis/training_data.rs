@@ -163,37 +163,30 @@ impl FunctionFeatures {
     }
 
     fn extract_type_info(func: &FunctionNode) -> TypeInfo {
-        let mut type_name = None;
-        let mut type_path = None;
-        let mut is_method = false;
-        let mut is_trait_impl = false;
-        let mut trait_name = None;
-        let mut is_associated = false;
+        let is_trait_impl = func.trait_impl.is_some();
+        let trait_name = func.trait_impl.clone();
 
-        if let Some(trait_impl_name) = &func.trait_impl {
-            is_trait_impl = true;
-            trait_name = Some(trait_impl_name.clone());
-        }
-
-        if func
+        let is_method = func
             .params
             .first()
             .map(|p| p == "self" || p == "&self" || p == "&mut self")
-            .unwrap_or(false)
-        {
-            is_method = true;
-        }
+            .unwrap_or(false);
 
-        if func.name == "new" || func.name == "default" || func.name == "from" {
-            is_associated = true;
-        }
+        let is_associated = matches!(func.name.as_str(), "new" | "default" | "from");
 
-        let file = &func.file;
-        let name = &func.name;
-
-        if let Some(type_name_from_file) = Self::parse_type_from_file(file, name) {
-            type_name = Some(type_name_from_file);
-            type_path = Some(format!("{}::{}", file, type_name.as_ref().unwrap()));
+        // full_path is built as "file::Container::function" when the function
+        // lives inside an impl/container block, or "file::function" otherwise
+        // (see CallGraphBuilder::build). File paths use '/' not '::', so this
+        // split is unambiguous and works for every function in the codebase —
+        // not just the handful of files a hardcoded list happened to cover.
+        let mut type_name = None;
+        let mut type_path = None;
+        let segments: Vec<&str> = func.full_path.rsplitn(3, "::").collect();
+        if segments.len() == 3 {
+            let container = segments[1];
+            let file = segments[2];
+            type_name = Some(container.to_string());
+            type_path = Some(format!("{}::{}", file, container));
         }
 
         if type_name.is_none() && is_trait_impl {
@@ -210,48 +203,6 @@ impl FunctionFeatures {
             is_associated,
         }
     }
-
-    fn parse_type_from_file(file: &str, func_name: &str) -> Option<String> {
-        if file.ends_with("alloc.rs") {
-            if func_name == "reset" {
-                if file.contains("Allocator") {
-                    return Some("Allocator".to_string());
-                } else if file.contains("MemoryPool") {
-                    return Some("MemoryPool".to_string());
-                }
-            }
-            return None;
-        }
-
-        if file.contains("graph/")
-            && (func_name == "index" || func_name == "node_count" || func_name == "edge_count")
-        {
-            if file.contains("call_graph") {
-                return Some("CallGraph".to_string());
-            } else if file.contains("dependency_graph") {
-                return Some("DependencyGraph".to_string());
-            } else if file.contains("project_graph") {
-                return Some("ProjectGraph".to_string());
-            } else if file.contains("type_graph") {
-                return Some("TypeGraph".to_string());
-            }
-        }
-
-        if file.contains("llm/providers/") {
-            if file.contains("ollama") {
-                return Some("OllamaProvider".to_string());
-            } else if file.contains("openai") {
-                return Some("OpenAIProvider".to_string());
-            } else if file.contains("anthropic") {
-                return Some("AnthropicProvider".to_string());
-            } else if file.contains("mock") {
-                return Some("MockProvider".to_string());
-            }
-        }
-
-        None
-    }
-
     /// Convert features to a numeric vector using the schema
     pub fn to_feature_vector(&self) -> Vec<f64> {
         let mut builder = FeatureVectorBuilder::new();

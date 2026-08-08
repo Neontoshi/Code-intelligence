@@ -74,18 +74,26 @@ impl ImportGraph {
         }
     }
 
+    fn get_edges_by_file(&self, file: &str, as_importer: bool) -> Vec<&ImportEdge> {
+        if as_importer {
+            self.edges
+                .iter()
+                .filter(|e| e.target_file == file)
+                .collect()
+        } else {
+            self.edges
+                .iter()
+                .filter(|e| e.source_file == file)
+                .collect()
+        }
+    }
+
     pub fn get_imports(&self, file: &str) -> Vec<&ImportEdge> {
-        self.edges
-            .iter()
-            .filter(|e| e.source_file == file)
-            .collect()
+        self.get_edges_by_file(file, false)
     }
 
     pub fn get_importers(&self, file: &str) -> Vec<&ImportEdge> {
-        self.edges
-            .iter()
-            .filter(|e| e.target_file == file)
-            .collect()
+        self.get_edges_by_file(file, true)
     }
 
     pub fn is_exported(&self, file: &str, func_name: &str) -> bool {

@@ -314,12 +314,10 @@ impl ProjectAnalysisBuilder {
 impl ProjectAnalysis {
     /// Get a function by full path
     pub fn get_function(&self, full_path: &str) -> Option<&crate::graph::call_graph::FunctionNode> {
-        for idx in self.call_graph.node_indices() {
-            if self.call_graph[idx].full_path == full_path {
-                return Some(&self.call_graph[idx]);
-            }
-        }
-        None
+        self.call_graph
+            .name_index
+            .get(full_path)
+            .map(|&idx| &self.call_graph[idx])
     }
 
     /// Get functions by name

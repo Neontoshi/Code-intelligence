@@ -90,13 +90,18 @@ impl TypeGraph {
         }
     }
 
-    pub fn get_subtypes(&self, type_name: &str) -> Vec<&TypeNode> {
+    fn get_related_types(&self, type_name: &str, direction: petgraph::Direction) -> Vec<&TypeNode> {
         if let Some(&idx) = self.node_index.get(type_name) {
             self.graph
-                .edges_directed(idx, petgraph::Direction::Incoming)
+                .edges_directed(idx, direction)
                 .filter_map(|e| {
                     if matches!(e.weight().relationship, TypeRelationship::Extends) {
-                        Some(&self.graph[e.source()])
+                        let node_idx = if direction == petgraph::Direction::Incoming {
+                            e.source()
+                        } else {
+                            e.target()
+                        };
+                        Some(&self.graph[node_idx])
                     } else {
                         None
                     }
@@ -107,21 +112,12 @@ impl TypeGraph {
         }
     }
 
+    pub fn get_subtypes(&self, type_name: &str) -> Vec<&TypeNode> {
+        self.get_related_types(type_name, petgraph::Direction::Incoming)
+    }
+
     pub fn get_supertypes(&self, type_name: &str) -> Vec<&TypeNode> {
-        if let Some(&idx) = self.node_index.get(type_name) {
-            self.graph
-                .edges_directed(idx, petgraph::Direction::Outgoing)
-                .filter_map(|e| {
-                    if matches!(e.weight().relationship, TypeRelationship::Extends) {
-                        Some(&self.graph[e.target()])
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        } else {
-            Vec::new()
-        }
+        self.get_related_types(type_name, petgraph::Direction::Outgoing)
     }
 
     pub fn inheritance_depth(&self, type_name: &str) -> usize {
@@ -234,11 +230,15 @@ impl TypeGraph {
     }
 
     pub fn has_subtypes(&self, type_name: &str) -> bool {
-        !self.get_subtypes(type_name).is_empty()
+        !self
+            .get_related_types(type_name, petgraph::Direction::Incoming)
+            .is_empty()
     }
 
     pub fn has_supertypes(&self, type_name: &str) -> bool {
-        !self.get_supertypes(type_name).is_empty()
+        !self
+            .get_related_types(type_name, petgraph::Direction::Outgoing)
+            .is_empty()
     }
 
     pub fn inheritance_chain(&self, type_name: &str) -> Vec<&TypeNode> {

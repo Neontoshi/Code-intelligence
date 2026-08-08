@@ -4,6 +4,7 @@ pub mod classifier;
 pub mod duplicate_classifier;
 pub mod feature_schema;
 pub mod features;
+pub mod serialization;
 
 pub use classifier::DeadCodeClassifier;
 pub use duplicate_classifier::{DuplicateClassifier, DuplicateExample, DuplicateLabel};
@@ -12,3 +13,4 @@ pub use feature_schema::{
     FeatureVectorBuilder, Normalization, FEATURE_SCHEMA,
 };
 pub use features::FeatureExtractor;
+pub use serialization::{load_model, save_model};

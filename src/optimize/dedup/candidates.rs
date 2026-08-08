@@ -25,8 +25,6 @@ pub enum CandidateStrategy {
     SignatureHash,
     ParamCount,
     LSH,
-    MinHash,
-    Fallback,
 }
 
 /// Result of candidate generation
@@ -54,13 +52,13 @@ impl CandidateGenerator {
     pub fn generate(
         &self,
         functions: &[FunctionNode],
-        _sources: &crate::optimize::dedup::core::SourceIndex,
+        sources: &crate::optimize::dedup::core::SourceIndex,
     ) -> CandidateResult {
         let mut all_pairs = Vec::new();
         let mut used = std::collections::HashSet::new();
         let mut strategies_used = Vec::new();
 
-        // Use signature hash as the primary strategy
+        // Signature hash: fast, coarse — catches identical param/return shape.
         let sig_pairs = self.generate_signature_candidates(functions);
         let count = self.add_pairs(
             &mut all_pairs,
@@ -72,7 +70,23 @@ impl CandidateGenerator {
             strategies_used.push(CandidateStrategy::SignatureHash);
         }
 
-        // Use param count as fallback
+        // LSH over body content: catches near-duplicates regardless of
+        // signature shape (different param counts, different return types).
+        // This is the strategy that actually finds "same logic, different
+        // wrapper" duplicates that signature/param bucketing structurally
+        // cannot see.
+        if self.config.enable_lsh_candidates
+            && all_pairs.len() < self.config.max_functions_to_compare
+        {
+            let lsh_pairs = self.generate_lsh_candidates(functions, sources);
+            let count =
+                self.add_pairs(&mut all_pairs, &mut used, lsh_pairs, CandidateStrategy::LSH);
+            if count > 0 {
+                strategies_used.push(CandidateStrategy::LSH);
+            }
+        }
+
+        // Param count: last-resort fallback for anything still uncovered.
         if all_pairs.len() < self.config.max_functions_to_compare {
             let param_pairs = self.generate_param_candidates(functions, &used);
             let count2 = self.add_pairs(
@@ -99,6 +113,30 @@ impl CandidateGenerator {
             total_candidates,
             strategies_used,
         }
+    }
+
+    /// Body-content candidates via MinHash/LSH. Assigns a moderate prior
+    /// score (0.6) — LSH only proves shingle-bucket collision, not actual
+    /// similarity, so downstream comparators (structural/semantic/ML) still
+    /// do the real scoring. This is strictly a recall mechanism.
+    fn generate_lsh_candidates(
+        &self,
+        functions: &[FunctionNode],
+        sources: &crate::optimize::dedup::core::SourceIndex,
+    ) -> Vec<(usize, usize, f64)> {
+        let mut index = crate::optimize::dedup::minhash::LshIndex::new();
+
+        for (i, func) in functions.iter().enumerate() {
+            if let Some(src) = sources.get(&func.full_path) {
+                index.insert(i, src);
+            }
+        }
+
+        index
+            .candidate_pairs(self.config.max_functions_to_compare)
+            .into_iter()
+            .map(|(a, b)| (a, b, 0.6))
+            .collect()
     }
 
     // ================================================================
@@ -158,15 +196,32 @@ impl CandidateGenerator {
     ) -> Vec<(usize, usize, f64)> {
         let mut pairs = Vec::new();
 
-        for (_, indices) in buckets {
+        // Sort keys so results are reproducible across runs on the same input.
+        let mut keys: Vec<&String> = buckets.keys().collect();
+        keys.sort();
+
+        for key in keys {
+            let indices = &buckets[key];
             if indices.len() < 2 {
                 continue;
             }
+
+            // Cap pairs generated from any single oversized bucket so one
+            // "shape" (e.g. common param/return signature) can't crowd out
+            // every other candidate before the global limit is hit.
+            let per_bucket_cap =
+                self.config.max_functions_to_compare / Self::buckets_len_hint(indices.len());
+            let mut emitted_this_bucket = 0;
+
             for a in 0..indices.len() {
                 for b in (a + 1)..indices.len() {
                     pairs.push((indices[a], indices[b], score));
+                    emitted_this_bucket += 1;
                     if pairs.len() >= self.config.max_functions_to_compare {
                         return pairs;
+                    }
+                    if emitted_this_bucket >= per_bucket_cap.max(50) {
+                        break;
                     }
                 }
             }
@@ -200,6 +255,12 @@ impl CandidateGenerator {
     }
 }
 
+impl CandidateGenerator {
+    // Simple heuristic: don't let any one bucket eat the whole global budget.
+    fn buckets_len_hint(_bucket_size: usize) -> usize {
+        20
+    }
+}
 // ============================================================================
 // Default Config
 // ============================================================================

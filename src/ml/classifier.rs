@@ -2,7 +2,6 @@
 
 use crate::analysis::training_data::{TrainingExample, TrainingLabel};
 use crate::ml::feature_schema::{feature_count, feature_names, FeatureCategory, FEATURE_SCHEMA};
-use crate::utils::serialization::{load_from_file, save_to_file};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -309,14 +308,14 @@ impl DeadCodeClassifier {
 
     pub fn save(&self, path: &str) -> Result<(), String> {
         if let Some(model) = &self.model {
-            save_to_file(model, path)
+            crate::ml::serialization::save_model(model, path)
         } else {
             Err("No model trained".to_string())
         }
     }
 
     pub fn load(path: &str) -> Result<Self, String> {
-        let model: LinearClassifier = load_from_file(path)?;
+        let model: LinearClassifier = crate::ml::serialization::load_model(path)?;
         let feature_count = model.feature_count();
         Ok(Self {
             model: Some(model),

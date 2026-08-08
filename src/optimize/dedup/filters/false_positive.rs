@@ -7,9 +7,7 @@ pub struct FalsePositiveFilter;
 impl FalsePositiveFilter {
     pub fn is_likely_false_positive(func: &FunctionNode, source: Option<&str>) -> bool {
         let name = func.name.as_str();
-
-        // Constructor patterns
-        if name == "new" && func.params.len() >= 1 {
+        if name == "new" && func.params.is_empty() {
             return true;
         }
 
@@ -24,7 +22,6 @@ impl FalsePositiveFilter {
         }
 
         // Trivial bodies: two near-empty wrappers "matching" on shape isn't
-        // a meaningful duplicate report even if every other signal agrees.
         if let Some(src) = source {
             let meaningful_lines = src
                 .lines()

@@ -23,10 +23,10 @@ pub struct FunctionInfo {
     pub doc_comment: Option<String>,
     pub calls: Vec<String>,
     pub body_range: (usize, usize),
-    pub container: Option<String>, // The impl block's type name, if any
-    pub role: FunctionRole,        // New: semantic role
-    pub purpose: String,           // New: inferred from name + context
-    pub trait_impl: Option<String>, // ADD THIS — the Trait name, if any
+    pub container: Option<String>,
+    pub role: FunctionRole,
+    pub purpose: String,
+    pub trait_impl: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -98,9 +98,7 @@ impl TreeSitterParser {
     fn configure_languages() -> HashMap<String, LanguageConfig> {
         let mut langs = HashMap::new();
 
-        // ============================================================
         // Rust
-        // ============================================================
         langs.insert(
             "rs".to_string(),
             LanguageConfig {
@@ -119,9 +117,7 @@ impl TreeSitterParser {
             },
         );
 
-        // ============================================================
         // Python
-        // ============================================================
         langs.insert(
             "py".to_string(),
             LanguageConfig {
@@ -141,9 +137,7 @@ impl TreeSitterParser {
             },
         );
 
-        // ============================================================
         // JavaScript (JS + JSX)
-        // ============================================================
         langs.insert(
             "js".to_string(),
             LanguageConfig {
@@ -165,9 +159,7 @@ impl TreeSitterParser {
             },
         );
 
-        // ============================================================
         // TypeScript (TS) - without JSX
-        // ============================================================
         langs.insert(
             "ts".to_string(),
             LanguageConfig {
@@ -199,9 +191,7 @@ impl TreeSitterParser {
             },
         );
 
-        // ============================================================
         // TypeScript with JSX (TSX) - ⭐ NEW
-        // ============================================================
         langs.insert(
             "tsx".to_string(),
             LanguageConfig {
@@ -243,9 +233,7 @@ impl TreeSitterParser {
             },
         );
 
-        // ============================================================
         // Go
-        // ============================================================
         langs.insert(
             "go".to_string(),
             LanguageConfig {
@@ -261,9 +249,7 @@ impl TreeSitterParser {
             },
         );
 
-        // ============================================================
         // Java
-        // ============================================================
         langs.insert(
             "java".to_string(),
             LanguageConfig {
@@ -338,7 +324,7 @@ impl TreeSitterParser {
         source: &str,
         config: &LanguageConfig,
         container: Option<&str>,
-        trait_impl: Option<&str>, // ADD
+        trait_impl: Option<&str>,
         out: &mut Vec<FunctionInfo>,
     ) {
         let mut cursor = node.walk();
@@ -353,7 +339,7 @@ impl TreeSitterParser {
                     .child_by_field_name("type")
                     .and_then(|t| t.utf8_text(source.as_bytes()).ok());
                 let tr = child
-                    .child_by_field_name("trait") // present when `impl Trait for Type`
+                    .child_by_field_name("trait")
                     .and_then(|t| t.utf8_text(source.as_bytes()).ok());
                 (ty, tr)
             } else {
@@ -444,8 +430,6 @@ impl TreeSitterParser {
     fn extract_calls(node: &Node, source: &str) -> Vec<String> {
         let mut calls = Vec::new();
         Self::walk_for_calls_with_context(node, source, &mut calls, None);
-
-        // ⭐ NEW: Detect JSX component usage
         Self::walk_for_jsx_components(node, source, &mut calls);
 
         calls
@@ -457,12 +441,9 @@ impl TreeSitterParser {
         for child in node.children(&mut cursor) {
             // Check for JSX element (self-closing or with children)
             if child.kind() == "jsx_element" || child.kind() == "jsx_self_closing_element" {
-                // Try to find the opening tag
                 if let Some(open_tag) = child.child_by_field_name("open_tag") {
-                    // Try to find the tag name
                     if let Some(tag_name) = open_tag.child_by_field_name("name") {
                         if let Ok(name) = tag_name.utf8_text(source.as_bytes()) {
-                            // If the tag name starts with uppercase, it's a component
                             if name
                                 .chars()
                                 .next()
@@ -475,11 +456,9 @@ impl TreeSitterParser {
                     }
                 }
             }
-            // Recurse into children
             Self::walk_for_jsx_components(&child, source, calls);
         }
     }
-    // src/parser/tree_sitter.rs
 
     fn walk_for_calls_with_context(
         node: &Node,
@@ -490,9 +469,7 @@ impl TreeSitterParser {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             match child.kind() {
-                // ============================================================
                 // CALL EXPRESSION: function_name() or self.method() or Type::method()
-                // ============================================================
                 "call_expression" => {
                     if let Some(func) = child.child_by_field_name("function") {
                         // Case 1: Field expression — x.method() or self.method()
@@ -512,7 +489,6 @@ impl TreeSitterParser {
                                     } else if receiver.contains("::") {
                                         calls.push(format!("{}::{}", receiver, method_name));
                                     } else {
-                                        // variable.method() — store as method call
                                         calls.push(format!("{}.{}", receiver, method_name));
                                     }
                                 }
@@ -532,9 +508,7 @@ impl TreeSitterParser {
                         }
                     }
                 }
-                // ============================================================
                 // METHOD CALL: Generic method call detection
-                // ============================================================
                 "method_call" | "method_invocation" => {
                     if let Some(receiver) = child.child_by_field_name("receiver") {
                         let receiver_text = receiver
@@ -557,21 +531,15 @@ impl TreeSitterParser {
                         }
                     }
                 }
-                // ============================================================
                 // CHAIN EXPRESSION: x.y().z()
-                // ============================================================
                 "chain_expression" | "chained_call" => {
                     Self::walk_for_calls_with_context(&child, source, calls, receiver_type);
                 }
-                // ============================================================
                 // INDEX EXPRESSION: a[b] → op::index
-                // ============================================================
                 "index_expression" => {
                     calls.push("op::index".to_string());
                 }
-                // ============================================================
                 // BINARY EXPRESSION: a + b → op::add
-                // ============================================================
                 "binary_expression" => {
                     if let Some(op_node) = child.child_by_field_name("operator") {
                         if let Ok(op) = op_node.utf8_text(source.as_bytes()) {
@@ -589,9 +557,7 @@ impl TreeSitterParser {
                         }
                     }
                 }
-                // ============================================================
                 // SCOPED IDENTIFIER: Type::method (standalone)
-                // ============================================================
                 "scoped_identifier" | "qualified_identifier" => {
                     if let Ok(text) = child.utf8_text(source.as_bytes()) {
                         if text.contains("::") {
@@ -603,9 +569,7 @@ impl TreeSitterParser {
                         }
                     }
                 }
-                // ============================================================
                 // FIELD EXPRESSION: self.method (standalone)
-                // ============================================================
                 "field_expression" => {
                     if let (Some(value), Some(field)) = (
                         child.child_by_field_name("value"),
@@ -679,8 +643,6 @@ impl TreeSitterParser {
         types
     }
 
-    /// Same fix as functions/calls: recurse the whole tree so struct/enum/
-    /// trait definitions nested inside `mod` blocks are still found.
     fn walk_for_types(node: Node, source: &str, config: &LanguageConfig, out: &mut Vec<TypeInfo>) {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
@@ -707,8 +669,6 @@ impl TreeSitterParser {
             Self::walk_for_types(child, source, config, out);
         }
     }
-
-    // --- Semantic helpers ---
 
     fn infer_role(name: &str, _params: &[ParamInfo]) -> FunctionRole {
         let lower = name.to_lowercase();

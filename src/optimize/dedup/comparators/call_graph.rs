@@ -5,14 +5,10 @@ pub struct CallGraphComparator;
 
 impl CallGraphComparator {
     pub fn compare(a: &FunctionNode, b: &FunctionNode, call_graph: &CallGraph) -> f64 {
-        // Get callees for each function
-        let idx_a = call_graph
-            .node_indices()
-            .find(|i| call_graph[*i].full_path == a.full_path);
-        let idx_b = call_graph
-            .node_indices()
-            .find(|i| call_graph[*i].full_path == b.full_path);
-
+        // name_index is already a HashMap<full_path, NodeIndex> — O(1) instead
+        // of scanning every node in the graph for every candidate pair.
+        let idx_a = call_graph.name_index.get(&a.full_path).copied();
+        let idx_b = call_graph.name_index.get(&b.full_path).copied();
         if let (Some(idx_a), Some(idx_b)) = (idx_a, idx_b) {
             let callees_a: HashSet<String> = call_graph
                 .get_callees(idx_a)

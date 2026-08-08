@@ -1,3 +1,5 @@
+// src/optimize/dedup/comparators/structural.rs
+
 use crate::graph::call_graph::FunctionNode;
 use crate::optimize::dedup::types::{FileContext, SimilarityScores};
 use crate::utils::string_utils::levenshtein_ratio;
@@ -17,36 +19,36 @@ impl StructuralComparator {
             context: 0.0,
         };
 
-        // 1. Parameter similarity (25%)
+        // Parameter similarity (20%)
         if a.params.len() == b.params.len() {
-            scores.structural += 0.25;
+            scores.structural += 0.20;
         } else {
             let diff = (a.params.len() as i32 - b.params.len() as i32).abs();
-            scores.structural += (1.0 - (diff as f64 / 10.0)).max(0.0) * 0.25;
+            scores.structural += (1.0 - (diff as f64 / 10.0)).max(0.0) * 0.20;
         }
 
-        // 2. Return type similarity (20%)
+        // Return type similarity (15%)
         if a.returns == b.returns {
-            scores.structural += 0.20;
+            scores.structural += 0.15;
         } else if a.returns.is_empty() && b.returns.is_empty() {
-            scores.structural += 0.20;
+            scores.structural += 0.15;
         } else if !a.returns.is_empty() && !b.returns.is_empty() {
             let common = a.returns.iter().filter(|r| b.returns.contains(r)).count();
             scores.structural +=
-                (common as f64 / a.returns.len().max(b.returns.len()) as f64) * 0.20;
+                (common as f64 / a.returns.len().max(b.returns.len()) as f64) * 0.15;
         }
 
-        // 3. Complexity similarity (15%)
+        // Complexity similarity (10%)
         let comp_diff = (a.complexity - b.complexity).abs();
         if comp_diff <= 1.0 {
-            scores.structural += 0.15;
-        } else if comp_diff <= 3.0 {
             scores.structural += 0.10;
+        } else if comp_diff <= 3.0 {
+            scores.structural += 0.07;
         } else if comp_diff <= 5.0 {
-            scores.structural += 0.05;
+            scores.structural += 0.03;
         }
 
-        // 4. Public/Async signature (10%)
+        // Public/Async signature (10%)
         if a.is_public == b.is_public {
             scores.structural += 0.05;
         }
@@ -54,11 +56,11 @@ impl StructuralComparator {
             scores.structural += 0.05;
         }
 
-        // 5. Name similarity (30%)
+        // Name similarity (45%) — heavily penalize different names
         let name_sim = levenshtein_ratio(&a.name, &b.name);
-        scores.structural += name_sim * 0.30;
+        scores.structural += name_sim * 0.45;
 
-        // 6. Context similarity (bonus)
+        // Context similarity (bonus)
         scores.context = Self::file_context_similarity(a, b);
 
         scores

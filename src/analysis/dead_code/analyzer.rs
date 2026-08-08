@@ -441,14 +441,7 @@ impl DeadCodeAnalyzer {
     }
 
     fn calculate_impact(&self, func: &FunctionNode, call_graph: &CallGraph) -> FunctionImpact {
-        let mut idx = None;
-        for i in call_graph.node_indices() {
-            if call_graph[i].full_path == func.full_path {
-                idx = Some(i);
-                break;
-            }
-        }
-
+        let idx = call_graph.name_index.get(&func.full_path).copied();
         let mut dependencies = Vec::new();
         let mut complexity = func.complexity;
 

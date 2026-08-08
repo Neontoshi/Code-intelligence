@@ -7,14 +7,13 @@ pub mod candidates;
 pub mod comparators;
 pub mod core;
 pub mod filters;
-pub mod llm_analyzer;
+pub mod minhash;
 pub mod reporters;
 pub mod types;
 
 // Re-export main types
 pub use candidates::{CandidateGenerator, CandidatePair, CandidateResult, CandidateStrategy};
 pub use core::{compute_ast_hash, compute_exact_hash, compute_signature_hash, SourceIndex};
-pub use llm_analyzer::LLMAnalyzer;
 pub use types::{
     AccuracyMetrics, DedupConfig, DeduplicationResult, DuplicateGroup, DuplicateType,
     SimilarityScores,
@@ -105,8 +104,14 @@ impl Deduplicator {
     }
 
     pub fn new_with_ml(model: Option<DuplicateClassifier>) -> Self {
+        let mut config = DedupConfig::default();
+        // A model was explicitly supplied — actually use it as a signal,
+        // otherwise verdict.ml starts as None and gets diluted with a
+        // meaningless 0.5 placeholder below.
+        config.enable_ml_features = model.is_some();
+
         Self {
-            config: DedupConfig::default(),
+            config,
             weights: ScoreWeights::default(),
             duplicate_model: model.map(Arc::new),
         }
@@ -178,6 +183,9 @@ impl Deduplicator {
         );
 
         // Phase 2: Consensus pass with ML
+        // Collect ALL consensus pairs first, then run ONE union-find pass so that
+        // A~B and B~C correctly merge into a single 3-element cluster instead of
+        // two disconnected 2-element groups.
         let consensus_groups = self.find_consensus_duplicates(
             &functions,
             call_graph,
@@ -185,10 +193,20 @@ impl Deduplicator {
             &processed,
             &sources,
         );
+
+        // Bucket pairs by their dominant type so metrics/labels stay meaningful,
+        // but each bucket still gets ONE process_groups call (one union-find).
+        let mut by_type: HashMap<DuplicateType, Vec<Vec<FunctionNode>>> = HashMap::new();
         for (group, verdict) in consensus_groups {
-            let duplicate_type = verdict.dominant_type();
+            by_type
+                .entry(verdict.dominant_type())
+                .or_default()
+                .push(group);
+        }
+
+        for (duplicate_type, groups) in by_type {
             self.process_groups(
-                vec![group],
+                groups,
                 &sources,
                 &mut processed,
                 &mut all_duplicates,
@@ -324,13 +342,16 @@ impl Deduplicator {
         sources: &SourceIndex,
     ) -> Vec<(Vec<FunctionNode>, SignalVerdict)> {
         let mut groups = Vec::new();
-        let mut used = processed.clone();
 
         for &(i, j) in candidate_pairs {
             let func_a = &functions[i];
             let func_b = &functions[j];
 
-            if used.contains(&func_a.full_path) || used.contains(&func_b.full_path) {
+            // Only skip pairs already resolved by an earlier phase (e.g.
+            // exact-hash matches). Don't self-exclude on pairs found in
+            // this same phase — union-find in process_groups is what
+            // merges transitive matches (A~B, B~C -> {A,B,C}).
+            if processed.contains(&func_a.full_path) || processed.contains(&func_b.full_path) {
                 continue;
             }
 
@@ -368,16 +389,20 @@ impl Deduplicator {
                 let features_a = FunctionFeatures::from_function(func_a, call_graph);
                 let features_b = FunctionFeatures::from_function(func_b, call_graph);
                 let ml_score = model.predict(&features_a, &features_b);
-                let current_ml = verdict.ml.unwrap_or(0.5);
-                verdict.ml = Some((current_ml + ml_score) / 2.0);
+
+                // If cosine-similarity ML features already produced a score, average
+                // the two real signals. Otherwise use the model score standalone —
+                // don't blend against an arbitrary 0.5 that has no basis in the data.
+                verdict.ml = Some(match verdict.ml {
+                    Some(existing) => (existing + ml_score) / 2.0,
+                    None => ml_score,
+                });
             }
 
             if verdict.is_duplicate(
                 self.config.per_signal_threshold,
                 self.config.min_signal_agreement,
             ) {
-                used.insert(func_a.full_path.clone());
-                used.insert(func_b.full_path.clone());
                 groups.push((vec![func_a.clone(), func_b.clone()], verdict));
             }
         }
@@ -420,10 +445,15 @@ impl Deduplicator {
                 continue;
             }
 
-            let similarity = self.calculate_group_similarity(group);
-            if similarity < threshold {
-                metrics.false_positives_filtered += group.len();
-                continue;
+            // Exact-hash groups already matched on normalized body text — that IS
+            // the confidence signal. Re-scoring with the fuzzy structural/name
+            // comparator can only ever discard true positives here, never add value.
+            if duplicate_type != DuplicateType::Exact {
+                let similarity = self.calculate_group_similarity(group);
+                if similarity < threshold {
+                    metrics.false_positives_filtered += group.len();
+                    continue;
+                }
             }
 
             let first_idx = func_to_idx[&group[0].full_path];
@@ -436,12 +466,14 @@ impl Deduplicator {
         let clusters = uf.get_clusters(all_funcs.len());
 
         for cluster in clusters {
-            let cluster_funcs: Vec<FunctionNode> =
+            let mut cluster_funcs: Vec<FunctionNode> =
                 cluster.iter().map(|&idx| all_funcs[idx].clone()).collect();
 
             if cluster_funcs.len() < 2 {
                 continue;
             }
+
+            cluster_funcs.sort_by(|a, b| a.full_path.cmp(&b.full_path));
 
             for func in &cluster_funcs {
                 processed.insert(func.full_path.clone());

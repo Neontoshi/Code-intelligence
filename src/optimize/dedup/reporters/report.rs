@@ -48,9 +48,25 @@ impl ReportGenerator {
         if result.duplicate_groups.is_empty() {
             output.push_str("✅ **No duplicate code found!** Great job!\n\n");
         } else {
-            // Sort groups by priority (highest first)
             let mut groups = result.duplicate_groups.clone();
-            groups.sort_by(|a, b| b.priority_score.partial_cmp(&a.priority_score).unwrap());
+            groups.sort_by(|a, b| {
+                b.priority_score
+                    .partial_cmp(&a.priority_score)
+                    .unwrap()
+                    .then_with(|| {
+                        let a_key = a
+                            .functions
+                            .first()
+                            .map(|f| f.full_path.as_str())
+                            .unwrap_or("");
+                        let b_key = b
+                            .functions
+                            .first()
+                            .map(|f| f.full_path.as_str())
+                            .unwrap_or("");
+                        a_key.cmp(b_key)
+                    })
+            });
 
             output.push_str("## 🎯 Duplicate Groups (by priority)\n\n");
             output.push_str(

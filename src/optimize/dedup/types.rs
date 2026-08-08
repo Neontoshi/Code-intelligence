@@ -25,7 +25,7 @@ pub struct DuplicateGroup {
     pub confidence_score: f64, // ⭐ NEW: ML confidence score
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DuplicateType {
     Exact,
     Structural,
@@ -89,20 +89,13 @@ pub struct FileContext {
 #[derive(Debug, Clone)]
 pub struct DedupConfig {
     pub min_similarity_threshold: f64,
-    pub enable_ast_analysis: bool,
     pub enable_call_graph_analysis: bool,
     pub enable_semantic_analysis: bool,
-    pub enable_data_flow: bool,
-    pub enable_git_history: bool,
     pub enable_ml_features: bool,
+    pub enable_lsh_candidates: bool,
     pub max_functions_to_compare: usize,
     pub adaptive_threshold: bool,
-    /// Per-signal bar used by the consensus rule (SignalVerdict::is_duplicate).
-    /// Deliberately lower than the old single-blend threshold, since a pair
-    /// now needs 2+ independent signals to individually clear this bar
-    /// instead of one blended average clearing a single global bar.
     pub per_signal_threshold: f64,
-    /// Minimum number of independent signals that must agree.
     pub min_signal_agreement: usize,
 }
 
@@ -110,12 +103,10 @@ impl Default for DedupConfig {
     fn default() -> Self {
         Self {
             min_similarity_threshold: 0.85,
-            enable_ast_analysis: true,
             enable_call_graph_analysis: true,
             enable_semantic_analysis: true,
-            enable_data_flow: true,
-            enable_git_history: false, // Off by default (expensive)
-            enable_ml_features: false, // Off by default
+            enable_ml_features: false,
+            enable_lsh_candidates: true,
             max_functions_to_compare: 10000,
             adaptive_threshold: true,
             per_signal_threshold: 0.75,

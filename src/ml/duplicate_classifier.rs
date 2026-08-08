@@ -3,7 +3,6 @@
 //! ML-based duplicate detection classifier
 
 use crate::analysis::training_data::FunctionFeatures;
-use crate::utils::serialization::{load_from_file, save_to_file};
 use serde::{Deserialize, Serialize};
 
 /// Simple linear classifier for duplicate detection
@@ -84,28 +83,22 @@ impl DuplicateClassifier {
     /// Predict if two functions are duplicates (returns probability 0-1)
     pub fn predict(&self, a: &FunctionFeatures, b: &FunctionFeatures) -> f64 {
         let features = self.extract_features_pair(a, b);
+        debug_assert_eq!(
+            features.len(),
+            self.weights.len(),
+            "DuplicateClassifier: feature vector length {} != weight count {}",
+            features.len(),
+            self.weights.len()
+        );
         let dot: f64 = features.iter().zip(&self.weights).map(|(f, w)| f * w).sum();
-        let mut probability = 1.0 / (1.0 + (-(dot + self.bias)).exp());
 
-        // ⭐ NEW: Adjust probability based on type context
-        // If they're on different types, reduce confidence
-        if a.type_name.is_some() && b.type_name.is_some() && a.type_name != b.type_name {
-            // Different types = likely not duplicates
-            probability = (probability * 0.4) + (0.2 * 0.6);
-        }
-
-        // If they're on the same type, boost confidence
-        if a.type_name.is_some() && b.type_name.is_some() && a.type_name == b.type_name {
-            // Same type = more likely duplicates
-            probability = (probability * 0.7) + (0.9 * 0.3);
-        }
-
-        // If one is a trait impl and the other isn't, reduce confidence
-        if a.is_trait_impl != b.is_trait_impl {
-            probability = (probability * 0.5) + (0.3 * 0.5);
-        }
-
-        probability
+        // type_same / trait_same are already part of the trained feature
+        // vector (see extract_features_pair). Don't re-apply hand-tuned
+        // adjustments on top of a trained model — that overrides whatever
+        // the weights actually learned with an untrained, hardcoded prior,
+        // and it's exactly what was suppressing genuine cross-type trait-impl
+        // duplicates (see: LLMProvider implementations across ollama/openai/mock).
+        1.0 / (1.0 + (-(dot + self.bias)).exp())
     }
 
     /// Check if two functions are duplicates (boolean)
@@ -218,11 +211,11 @@ impl DuplicateClassifier {
     }
 
     pub fn save(&self, path: &str) -> Result<(), String> {
-        save_to_file(self, path)
+        crate::ml::serialization::save_model(self, path)
     }
 
     pub fn load(path: &str) -> Result<Self, String> {
-        load_from_file(path)
+        crate::ml::serialization::load_model(path)
     }
 }
 
@@ -243,6 +236,8 @@ pub enum DuplicateLabel {
 
 impl Default for DuplicateClassifier {
     fn default() -> Self {
-        Self::new(101) // 33 * 3 + 2 type features = 101
+        // 3 vectors (a, b, |a-b| diff) using the live feature schema,
+        // plus 2 type-comparison features appended in extract_features_pair.
+        Self::new(crate::ml::feature_schema::feature_count() * 3 + 2)
     }
 }
