@@ -1,5 +1,6 @@
 // src/ml/mod.rs
 
+pub mod calibration;
 pub mod classifier;
 pub mod duplicate_classifier;
 pub mod feature_schema;

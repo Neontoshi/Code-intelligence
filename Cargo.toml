@@ -120,3 +120,7 @@ path = "src/bin/feature_ablation.rs"
 [[bin]]
 name = "model_comparison"
 path = "src/bin/model_comparison.rs"
+
+[[bin]]
+name = "calibrate_model"
+path = "src/bin/calibrate_model.rs"
