@@ -442,12 +442,13 @@ mod tests {
     #[test]
     fn test_feature_vector_builder() {
         let mut builder = FeatureVectorBuilder::new();
+        // Push all 46 features (or test with build_unchecked)
         builder
             .push(1.0)
             .push_bool(true)
             .push_normalized(25.0, 50.0)
             .push_opt(Some(0.5), 0.0);
-        let features = builder.build();
+        let features = builder.build_unchecked(); // Use unchecked for testing
         assert_eq!(features.len(), 4);
         assert_eq!(features[0], 1.0);
         assert_eq!(features[1], 1.0);

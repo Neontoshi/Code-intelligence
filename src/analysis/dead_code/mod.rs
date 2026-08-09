@@ -1,15 +1,20 @@
 // src/analysis/dead_code/mod.rs
 
+//! Dead code detection module.
+//!
+//! ⚠️ DEPRECATION WARNING: The legacy `find_unused_functions_naive_debug_only` is deprecated.
+//! Use `VerdictEngine` for accurate dead code detection.
+
 mod analyzer;
+pub mod filters;
 mod modules;
 mod reachability;
 mod report;
 mod scorer;
 mod types;
-mod whitelist; // ⭐ NEW - Add this line
+mod whitelist;
 
 // Re-export from analyzer only (it has the most complete definitions)
-
 pub use analyzer::{
     AnalysisSummary, DeadCodeAnalysis, DeadCodeAnalyzer, DeadFunction, FunctionImpact, RemovalCost,
 };
@@ -18,20 +23,37 @@ pub use reachability::ReachabilityReport;
 pub use report::DeadCodeReportGenerator;
 pub use scorer::{ConfidenceLevel, ConfidenceScorer, DeadScore, ScoreFactor, ScoreWeights};
 pub use types::{DeadType, DeadTypeReport};
-pub use whitelist::WHITELIST; // ⭐ NEW - Export the whitelist
+pub use whitelist::WHITELIST;
+
+pub use filters::{filter_reason, is_framework_file, is_never_dead};
 
 use crate::graph::call_graph::CallGraph;
 use crate::graph::traits::GraphMetrics;
 use crate::parser::tree_sitter::ParsedFile;
 
+/// Dead code statistics
+#[derive(Debug, Clone, Default)]
+pub struct DeadStats {
+    pub total: usize,
+    pub dead: usize,
+    pub alive: usize,
+}
+
 pub struct DeadCodeDetector;
 
 impl DeadCodeDetector {
-    /// Legacy function for backward compatibility
-    pub fn find_unused_functions(call_graph: &CallGraph) -> Vec<String> {
-        let _analyzer = DeadCodeAnalyzer::new();
-        // We need to pass type_graph, import_graph, dependency_graph
-        // For now, use the old logic
+    /// ⚠️ DEPRECATED: This is a naive implementation that only checks fan_in == 0 && !is_public.
+    /// It produces many false positives (trait impls, framework methods, etc.).
+    /// Use VerdictEngine instead for accurate dead code detection.
+    ///
+    /// This is kept only for debug/backward compatibility and should not be used
+    /// in production reports.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use VerdictEngine for accurate dead code detection. This naive check will be removed in a future version."
+    )]
+    #[allow(dead_code)]
+    pub fn find_unused_functions_naive_debug_only(call_graph: &CallGraph) -> Vec<String> {
         let mut unused = Vec::new();
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
@@ -42,16 +64,26 @@ impl DeadCodeDetector {
         unused
     }
 
-    /// New comprehensive analysis.
-    ///
-    /// Routes through VerdictEngine (roots -> reachability -> per-function
-    /// verdicts -> import_verdicts), same as `dead_code_check`'s bin. The old
-    /// path called the deprecated `DeadCodeAnalyzer::analyze()` directly,
-    /// which is a no-op whenever `use_verdict_engine` is true (the default),
-    /// so this wrapper was silently returning an empty analysis. No ML model
-    /// is threaded through here since this signature never received one —
-    /// static signals only. Callers who want ML-assisted verdicts should
-    /// build a VerdictEngine directly with `.with_ml(...)`.
+    /// Get dead code statistics using the verdict-based approach.
+    /// This is the recommended way to detect dead code.
+    pub fn get_dead_stats(call_graph: &CallGraph, files: &[ParsedFile]) -> DeadStats {
+        use crate::analysis::roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector};
+        use crate::analysis::verdict::{VerdictConfig, VerdictEngine};
+
+        let root_config = RootDetectionConfig::default();
+        let root_set = RootDetector::detect_roots(call_graph, files, &root_config);
+        let reachability = ReachabilityAnalyzer::compute_reachability(call_graph, &root_set);
+        let engine = VerdictEngine::new(VerdictConfig::default());
+        let verdicts = engine.evaluate_all(call_graph, &reachability);
+        let dead_count = engine.filter_dead(&verdicts).len();
+
+        DeadStats {
+            total: call_graph.node_count(),
+            dead: dead_count,
+            alive: call_graph.node_count() - dead_count,
+        }
+    }
+
     #[allow(deprecated)]
     pub fn analyze(
         call_graph: &CallGraph,
@@ -65,12 +97,10 @@ impl DeadCodeDetector {
         use crate::analysis::roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector};
         use crate::analysis::verdict::{VerdictConfig, VerdictEngine};
 
-        // 1. Roots + reachability
         let root_config = RootDetectionConfig::default();
         let root_set = RootDetector::detect_roots(call_graph, files, &root_config);
         let reachability = ReachabilityAnalyzer::compute_reachability(call_graph, &root_set);
 
-        // 2. Verdict engine (static signals only, no ML model here)
         let mut verdict_engine = VerdictEngine::new(VerdictConfig::default());
         let dynamic_detector = DynamicRefDetector::new();
         let dynamic_refs = dynamic_detector.detect_all(call_graph, files);
@@ -79,12 +109,9 @@ impl DeadCodeDetector {
         let verdicts = verdict_engine.evaluate_all(call_graph, &reachability);
         let dead_verdicts: Vec<_> = verdict_engine.filter_dead(&verdicts);
 
-        // 3. Import verdicts to get DeadFunction list with impact metadata
         let mut impact_analyzer = DeadCodeAnalyzer::new_for_impact_only();
         let dead_functions = impact_analyzer.import_verdicts(&dead_verdicts, call_graph);
 
-        // 4. Reuse the impact-only analyzer for types/modules (no dead/alive
-        // decisions made there — those come from verdicts above)
         let legacy = impact_analyzer.analyze(
             call_graph,
             type_graph,
@@ -118,6 +145,7 @@ impl DeadCodeDetector {
             },
         }
     }
+
     pub fn generate_report(analysis: &DeadCodeAnalysis) -> String {
         DeadCodeReportGenerator::generate_report(analysis)
     }
@@ -130,12 +158,12 @@ impl DeadCodeDetector {
             .collect()
     }
 
-    pub fn dead_code_ratio(call_graph: &CallGraph, _files: &[ParsedFile]) -> f64 {
-        let total = call_graph.node_count();
-        if total == 0 {
-            return 0.0;
+    pub fn dead_code_ratio(call_graph: &CallGraph, files: &[ParsedFile]) -> f64 {
+        let stats = Self::get_dead_stats(call_graph, files);
+        if stats.total == 0 {
+            0.0
+        } else {
+            stats.dead as f64 / stats.total as f64
         }
-        let unused = Self::find_unused_functions(call_graph);
-        unused.len() as f64 / total as f64
     }
 }

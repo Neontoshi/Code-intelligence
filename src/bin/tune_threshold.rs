@@ -100,8 +100,8 @@ fn evaluate_at_threshold(
     let mut fn_ = 0;
 
     for example in examples {
-        let prob = classifier.predict_probability(example);
-        let prediction = if prob >= threshold {
+        let dead_prob = classifier.predict_dead_probability(example);
+        let prediction = if dead_prob >= threshold {
             TrainingLabel::Dead
         } else {
             TrainingLabel::Alive

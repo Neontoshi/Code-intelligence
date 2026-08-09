@@ -156,3 +156,15 @@ path = "src/bin/training_data_exporter.rs"
 [[bin]]
 name = "tune_threshold"
 path = "src/bin/tune_threshold.rs"
+
+[[bin]]
+name = "verify_dead_candidates"
+path = "src/bin/verify_dead_candidates.rs"
+
+[[bin]]
+name = "update_outcome"
+path = "src/bin/update_outcome.rs"
+
+[[bin]]
+name = "ci"
+path = "src/bin/ci.rs"

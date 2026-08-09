@@ -59,9 +59,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut dead_count = 0;
     let mut unknown_count = 0;
 
+    use code_intelligence::analysis::dead_code::filters::is_never_dead;
+
     for idx in analysis.call_graph.node_indices() {
         let func = &analysis.call_graph[idx];
         let full_path = &func.full_path;
+
+        // Skip framework/trait functions
+        if is_never_dead(func) {
+            unknown_count += 1;
+            continue;
+        }
 
         // Skip test functions — they have special patterns
         let is_test = func.name.starts_with("test_")
@@ -150,28 +158,76 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             && !func.file.contains("/benches/")
             && !is_test;
 
-        if is_truly_dead {
-            // Check that it's not a React component
-            let is_react = func.file.ends_with(".tsx") || func.file.ends_with(".jsx");
-            let is_component = func
-                .name
-                .chars()
-                .next()
-                .map(|c| c.is_uppercase())
-                .unwrap_or(false);
-            let is_hook = func.name.starts_with("use");
+        // ⭐ NEW: Public functions with no callers that are likely dead
+        // These are public but never called internally and not documented.
+        // They might be dead API endpoints or exported functions that are never used.
+        let is_public_dead = func.fan_in == 0
+            && func.is_public
+            && !reachability.is_reachable(full_path)
+            && func.doc_comment.is_none()  // No documentation suggests it might be forgotten
+            && !func.file.contains("/lib/")  // Not in library root
+            && !func.file.contains("/mod.rs")  // Not module exports
+            && !func.trait_impl.is_some()
+            && !is_test
+            && !func.file.contains("/examples/")
+            && !func.file.contains("/tests/");
 
-            if !is_react || (!is_component && !is_hook) {
-                collector.add_high_confidence_example(
-                    func,
-                    &analysis.call_graph,
-                    TrainingLabel::Dead,
-                    0.85,
-                    "truly_dead",
-                );
-                dead_count += 1;
-                continue;
-            }
+        // ⭐ NEW: Functions with very low complexity and no callers
+        // These are likely helper functions that were never used
+        let is_simple_dead = func.fan_in == 0
+            && !func.is_public
+            && func.complexity < 2.0
+            && func.doc_comment.is_none()
+            && !is_test
+            && !func.file.contains("/examples/");
+
+        // ⭐ Check if it's a React component (for JS/TS projects)
+        let is_react_component = func.file.ends_with(".tsx") || func.file.ends_with(".jsx");
+        let is_component = func
+            .name
+            .chars()
+            .next()
+            .map(|c| c.is_uppercase())
+            .unwrap_or(false);
+        let is_hook = func.name.starts_with("use");
+        let is_react = is_react_component && (is_component || is_hook);
+
+        if is_truly_dead && !is_react {
+            collector.add_high_confidence_example(
+                func,
+                &analysis.call_graph,
+                TrainingLabel::Dead,
+                0.85,
+                "truly_dead",
+            );
+            dead_count += 1;
+            continue;
+        }
+
+        // ⭐ NEW: Add lower confidence dead examples for public functions
+        if is_public_dead && !is_react {
+            collector.add_high_confidence_example(
+                func,
+                &analysis.call_graph,
+                TrainingLabel::Dead,
+                0.70,
+                "public_dead",
+            );
+            dead_count += 1;
+            continue;
+        }
+
+        // ⭐ NEW: Add lower confidence dead examples for simple functions
+        if is_simple_dead && !is_react {
+            collector.add_high_confidence_example(
+                func,
+                &analysis.call_graph,
+                TrainingLabel::Dead,
+                0.60,
+                "simple_dead",
+            );
+            dead_count += 1;
+            continue;
         }
 
         // UNKNOWN: Everything else

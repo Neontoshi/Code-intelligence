@@ -374,6 +374,8 @@ pub struct ReachabilityAnalyzer;
 
 impl ReachabilityAnalyzer {
     /// Compute reachability from roots
+    // src/analysis/roots.rs - Replace compute_reachability
+
     pub fn compute_reachability(call_graph: &CallGraph, roots: &RootSet) -> ReachabilityMap {
         use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -394,35 +396,56 @@ impl ReachabilityAnalyzer {
             }
         }
 
-        // BFS traversal
+        // Build a fast lookup for function full_path -> NodeIndex
+        let path_to_idx: HashMap<String, petgraph::graph::NodeIndex> = call_graph
+            .node_indices()
+            .map(|idx| (call_graph[idx].full_path.clone(), idx))
+            .collect();
+
+        // BFS traversal - safe from stack overflow
+        let mut processed = HashSet::new();
+        let max_functions = 10000; // Safety limit
+
         while let Some((current, root)) = queue.pop_front() {
-            // Find the node index for this function
-            for idx in call_graph.node_indices() {
-                let func = &call_graph[idx];
-                if func.full_path == current {
-                    // Add all callees
-                    for callee in call_graph.get_callees(idx) {
-                        if !reachable.contains(&callee.full_path) {
-                            reachable.insert(callee.full_path.clone());
-                            reachable_from
-                                .entry(callee.full_path.clone())
-                                .or_default()
-                                .push(root.clone());
-                            queue.push_back((callee.full_path.clone(), root.clone()));
-                        } else {
-                            // Already reachable, but add this root as another source
-                            reachable_from
-                                .entry(callee.full_path.clone())
-                                .or_default()
-                                .push(root.clone());
-                        }
+            // Safety limit to prevent infinite loops
+            if reachable.len() > max_functions {
+                eprintln!(
+                    "⚠️ Reachability analysis reached safety limit ({} functions)",
+                    max_functions
+                );
+                break;
+            }
+
+            // Skip if already processed
+            if processed.contains(&current) {
+                continue;
+            }
+            processed.insert(current.clone());
+
+            // Get the node index for this function
+            if let Some(&idx) = path_to_idx.get(&current) {
+                // Get all callees
+                for callee in call_graph.get_callees(idx) {
+                    let callee_path = &callee.full_path;
+                    if !reachable.contains(callee_path) {
+                        reachable.insert(callee_path.clone());
+                        reachable_from
+                            .entry(callee_path.clone())
+                            .or_default()
+                            .push(root.clone());
+                        queue.push_back((callee_path.clone(), root.clone()));
+                    } else {
+                        // Already reachable, but add this root as another source
+                        reachable_from
+                            .entry(callee_path.clone())
+                            .or_default()
+                            .push(root.clone());
                     }
-                    break;
                 }
             }
         }
 
-        // Compute unreachable: all functions not in reachable
+        // Compute unreachable
         let mut unreachable = HashSet::new();
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
@@ -430,6 +453,12 @@ impl ReachabilityAnalyzer {
                 unreachable.insert(func.full_path.clone());
             }
         }
+
+        eprintln!(
+            "📊 Reachability: {} reachable, {} unreachable",
+            reachable.len(),
+            unreachable.len()
+        );
 
         ReachabilityMap {
             reachable,

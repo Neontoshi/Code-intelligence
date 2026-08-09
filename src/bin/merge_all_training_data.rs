@@ -18,7 +18,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for entry in std::fs::read_dir(&training_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().map(|e| e == "json").unwrap_or(false) {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if ext == "json" || ext == "jsonl" {
             let repo_name = path
                 .file_stem()
                 .unwrap_or_default()
@@ -26,7 +27,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .to_string();
             println!("   Loading: {}", repo_name);
             let data = std::fs::read_to_string(&path)?;
-            let mut examples: Vec<TrainingExample> = serde_json::from_str(&data)?;
+
+            let mut examples: Vec<TrainingExample> = if ext == "jsonl" {
+                // One TrainingExample per line — matches TrainingDataCollector::to_jsonl()
+                data.lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .filter_map(|l| match serde_json::from_str(l) {
+                        Ok(ex) => Some(ex),
+                        Err(e) => {
+                            eprintln!("   ⚠️ Skipping malformed line in {}: {}", repo_name, e);
+                            None
+                        }
+                    })
+                    .collect()
+            } else {
+                serde_json::from_str(&data)?
+            };
 
             // ⭐ Add repository_id to each example
             for example in &mut examples {
@@ -34,6 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 example.commit_hash = Some("unknown".to_string()); // Could extract from repo
             }
 
+            println!("      {} examples", examples.len());
             by_repo.insert(repo_name, examples);
         }
     }
@@ -70,12 +87,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     shuffled.shuffle(&mut rng);
 
     let total = shuffled.len();
-    let train_count = (total as f64 * 0.7).ceil() as usize;
-    let val_count = (total as f64 * 0.15).ceil() as usize;
 
-    let train_repos = &shuffled[0..train_count];
-    let val_repos = &shuffled[train_count..train_count + val_count];
-    let test_repos = &shuffled[train_count + val_count..];
+    let (train_repos, val_repos, test_repos) = if total == 0 {
+        println!("❌ No repositories found!");
+        return Ok(());
+    } else if total == 1 {
+        // Only one repo - use for training
+        (&shuffled[0..1], &[][..], &[][..])
+    } else if total == 2 {
+        // Two repos - one for train, one for val
+        (&shuffled[0..1], &shuffled[1..2], &[][..])
+    } else {
+        // 3+ repos: guarantee at least 1 for val and 1 for test,
+        // everything else goes to train. Scales cleanly as repo
+        // count grows (unlike the old ceil(0.7*n) formula, which
+        // could zero out val or test entirely for small n like 4).
+        let test_count = 1;
+        let val_count = 1;
+        let train_count = total - val_count - test_count;
+
+        (
+            &shuffled[0..train_count],
+            &shuffled[train_count..train_count + val_count],
+            &shuffled[train_count + val_count..],
+        )
+    };
+
+    println!("\n📊 Splitting {} repositories:", total);
+    println!("   Train: {} repos", train_repos.len());
+    println!("   Validation: {} repos", val_repos.len());
+    println!("   Test: {} repos", test_repos.len());
 
     // Build datasets with split labels
     let mut train_examples = Vec::new();
@@ -206,15 +247,26 @@ fn deduplicate_examples(by_repo: &HashMap<String, Vec<TrainingExample>>) -> Vec<
 
     for examples in by_repo.values() {
         for example in examples {
-            // Create a key based on signature and body hashes
-            let key = format!(
-                "{}|{}",
-                example.features.signature_hash, example.features.body_hash
-            );
+            // ⭐ Use a LESS aggressive key - only signature hash, not body hash
+            let key = format!("{}", example.features.signature_hash);
 
+            // ⭐ Allow some duplicates if they have different function names
+            // This preserves more training examples
             if !seen.contains(&key) {
                 seen.insert(key);
                 deduped.push(example.clone());
+            } else {
+                // If signature matches, still add if the function name is different
+                // This gives us more variety
+                let existing = deduped
+                    .iter()
+                    .find(|e| e.features.signature_hash == example.features.signature_hash);
+                if let Some(existing) = existing {
+                    if existing.function_name != example.function_name {
+                        // Different name, same signature - keep both for variety
+                        deduped.push(example.clone());
+                    }
+                }
             }
         }
     }

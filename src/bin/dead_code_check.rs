@@ -46,6 +46,18 @@ struct Args {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
+    let file_count = std::fs::read_dir(&args.project_dir)
+        .map(|d| d.filter_map(|e| e.ok()).count())
+        .unwrap_or(0);
+
+    if file_count > 1000 {
+        eprintln!(
+            "⚠️ Large project detected ({} files). This may take a while.",
+            file_count
+        );
+        eprintln!("   Consider using --max-files to limit analysis.");
+    }
+
     println!("🔍 Analyzing dead code in: {:?}\n", args.project_dir);
 
     let mut pipeline = Pipeline::new();
@@ -191,10 +203,56 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 5. Generate verdicts for all functions
     let verdicts = verdict_engine.evaluate_all(&analysis.call_graph, &reachability);
 
-    // 6. Filter verdicts
+    use code_intelligence::analysis::dead_code::{filter_reason, is_never_dead};
+
     let dead_verdicts: Vec<&Verdict> = verdict_engine.filter_dead(&verdicts);
     let alive_verdicts: Vec<&Verdict> = verdict_engine.filter_alive(&verdicts);
     let unknown_verdicts: Vec<&Verdict> = verdict_engine.filter_unknown(&verdicts);
+
+    // ⭐ NEW: Filter out false positives
+    let filtered_dead_verdicts: Vec<&Verdict> = dead_verdicts
+        .into_iter()
+        .filter(|v| {
+            // Get the function node from the analysis
+            if let Some(func) = analysis.get_function(&v.full_path) {
+                if is_never_dead(func) {
+                    if args.verbose {
+                        println!(
+                            "   ⏭️ Filtered out: {} ({})",
+                            v.function_name,
+                            filter_reason(func).unwrap_or("unknown")
+                        );
+                    }
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+
+    // Use filtered_dead_verdicts instead of dead_verdicts from here on
+    let dead_verdicts = filtered_dead_verdicts;
+
+    // ⭐ TRACK OUTCOMES
+    if args.model.is_some() && !args.no_ml {
+        let project_name = args
+            .project_dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        let mut tracker = code_intelligence::analysis::OutcomeTracker::new(&args.project_dir);
+        let tracked = tracker.import_verdicts(&dead_verdicts, &project_name);
+
+        if tracked > 0 {
+            println!("📝 Tracked {} dead functions in {}", tracked, project_name);
+            if args.verbose {
+                println!("   Use `cargo run --bin update_outcome` to mark them as removed/false positive");
+                println!("   Or check .code-intelligence-outcomes.json");
+            }
+        }
+    }
 
     println!("\n📊 Verdict Engine Results:");
     println!("   Total functions: {}", verdicts.len());
@@ -258,6 +316,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("   Trait implementations: {}", trait_impl);
         println!("   Whitelisted functions: {}", whitelisted);
         println!("   Functions with callers: {}", has_callers);
+
+        let filtered_count = dead_verdicts
+            .iter()
+            .filter(|v| {
+                analysis
+                    .get_function(&v.full_path)
+                    .map(|f| is_never_dead(f))
+                    .unwrap_or(false)
+            })
+            .count();
+        println!("   Filtered (framework/traits): {}", filtered_count);
 
         // Show some examples of dead verdicts
         println!("\n   Sample Dead Verdicts:");

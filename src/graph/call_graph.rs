@@ -204,77 +204,100 @@ impl CallGraph {
         dot.push_str("}\n");
         dot
     }
-    /// Detect cycles in the call graph using DFS
-    /// Detect cycles in the call graph using iterative DFS
+
     pub fn detect_cycles(&self) -> Vec<Vec<NodeIndex>> {
-        use std::collections::HashSet;
-
         let mut cycles = Vec::new();
-        let mut visited = HashSet::new();
+        let total_nodes = self.graph.node_count();
 
-        // Use iterative DFS with explicit stack to avoid recursion overflow
+        // ⭐ Safety limit
+        if total_nodes > 5000 {
+            eprintln!(
+                "⚠️ Graph too large for cycle detection ({} nodes). Skipping.",
+                total_nodes
+            );
+            return cycles;
+        }
+
+        // Use Tarjan's algorithm with iterative approach
+        let mut index = 0;
+        let mut stack = Vec::new();
+        let mut indices = std::collections::HashMap::new();
+        let mut lowlink = std::collections::HashMap::new();
+        let mut on_stack = std::collections::HashSet::new();
+
         for start_node in self.graph.node_indices() {
-            if visited.contains(&start_node) {
+            if indices.contains_key(&start_node) {
                 continue;
             }
 
-            // Stack: (node, parent, path_index, state)
-            // state: 0 = enter, 1 = exit
-            let mut stack: Vec<(NodeIndex, Option<NodeIndex>, Vec<NodeIndex>, u8)> = Vec::new();
-            stack.push((start_node, None, vec![start_node], 0));
+            // Iterative DFS
+            let mut dfs_stack = vec![(start_node, 0)];
+            indices.insert(start_node, index);
+            lowlink.insert(start_node, index);
+            index += 1;
+            stack.push(start_node);
+            on_stack.insert(start_node);
 
-            while let Some((node, _parent, path, state)) = stack.pop() {
-                if state == 1 {
-                    // Exit state - nothing to do
-                    continue;
-                }
-
-                visited.insert(node);
-
-                // Find unvisited neighbors
+            while let Some((node, next_idx)) = dfs_stack.last_mut() {
                 let neighbors: Vec<NodeIndex> = self
                     .graph
-                    .edges_directed(node, petgraph::Direction::Outgoing)
+                    .edges_directed(*node, petgraph::Direction::Outgoing)
                     .map(|e| e.target())
                     .collect();
 
-                // If no neighbors or all visited, backtrack
-                let mut has_unvisited = false;
-                for &neighbor in &neighbors {
-                    if !visited.contains(&neighbor) {
-                        has_unvisited = true;
-                        let mut new_path = path.clone();
-                        new_path.push(neighbor);
-                        stack.push((node, Some(node), path.clone(), 1)); // exit
-                        stack.push((neighbor, Some(node), new_path, 0)); // enter
-                        break;
-                    } else if path.contains(&neighbor) {
-                        // Found a cycle: neighbor is in current path
-                        if let Some(pos) = path.iter().position(|&n| n == neighbor) {
-                            let cycle: Vec<NodeIndex> = path[pos..].to_vec();
-                            if !cycles.contains(&cycle) && cycle.len() > 1 {
-                                cycles.push(cycle);
-                            }
+                if *next_idx < neighbors.len() {
+                    let neighbor = neighbors[*next_idx];
+                    *next_idx += 1;
+
+                    if !indices.contains_key(&neighbor) {
+                        indices.insert(neighbor, index);
+                        lowlink.insert(neighbor, index);
+                        index += 1;
+                        stack.push(neighbor);
+                        on_stack.insert(neighbor);
+                        dfs_stack.push((neighbor, 0));
+                    } else if on_stack.contains(&neighbor) {
+                        let neighbor_low = *lowlink.get(&neighbor).unwrap_or(&0);
+                        let node_low = lowlink.get_mut(node).unwrap();
+                        if neighbor_low < *node_low {
+                            *node_low = neighbor_low;
                         }
                     }
-                }
+                } else {
+                    // Finished processing this node — copy out of the mutable borrow first
+                    let node = *node;
+                    let node_low = *lowlink.get(&node).unwrap_or(&0);
 
-                // If no unvisited neighbors, mark as fully processed
-                if !has_unvisited {
-                    // Already visited, continue
+                    let len = dfs_stack.len();
+                    if len >= 2 {
+                        let parent = dfs_stack[len - 2].0;
+                        let parent_low = lowlink.get_mut(&parent).unwrap();
+                        if node_low < *parent_low {
+                            *parent_low = node_low;
+                        }
+                    }
+
+                    // Check if this is a root of an SCC
+                    if node_low == *indices.get(&node).unwrap_or(&0) {
+                        let mut scc = Vec::new();
+                        while let Some(w) = stack.pop() {
+                            on_stack.remove(&w);
+                            scc.push(w);
+                            if w == node {
+                                break;
+                            }
+                        }
+                        if scc.len() > 1 {
+                            cycles.push(scc);
+                        }
+                    }
+
+                    dfs_stack.pop();
                 }
             }
         }
 
-        // Deduplicate cycles
-        let mut unique_cycles = Vec::new();
-        for cycle in cycles {
-            if !unique_cycles.contains(&cycle) {
-                unique_cycles.push(cycle);
-            }
-        }
-
-        unique_cycles
+        cycles
     }
 
     /// Mark functions that are part of cycles
@@ -292,7 +315,6 @@ impl CallGraph {
             self.graph[node].is_cycle = true;
         }
     }
-
     /// Calculate fan-in and fan-out for all functions
     pub fn calculate_fan_metrics(&mut self) {
         let mut updates = Vec::new();

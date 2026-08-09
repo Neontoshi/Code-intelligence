@@ -1,6 +1,8 @@
-use crate::graph::traits::GraphMetrics;
+// src/output/json.rs
+
 use crate::analysis::dead_code::DeadCodeDetector;
 use crate::graph::call_graph::CallGraph;
+use crate::graph::traits::GraphMetrics;
 use crate::parser::tree_sitter::ParsedFile;
 use serde_json::{json, Value};
 
@@ -37,9 +39,10 @@ impl JsonOutput {
                 "edges": Vec::<Value>::new(),
             },
             "dead_code": {
-                "unused_functions": Vec::<Value>::new(),
-                "dead_modules": Vec::<Value>::new(),
+                "unused_functions": Vec::<String>::new(),
+                "dead_modules": Vec::<String>::new(),
                 "ratio": 0.0,
+                "unused_count": 0,
             },
             "training_metadata": {
                 "generated_at": chrono::Utc::now().to_rfc3339(),
@@ -150,16 +153,20 @@ impl JsonOutput {
             .collect();
         report["call_graph"]["nodes"] = json!(nodes);
 
-        // Dead code analysis
-        let unused = DeadCodeDetector::find_unused_functions(call_graph);
+        // Dead code analysis - using verdict-based approach
+        let stats = DeadCodeDetector::get_dead_stats(call_graph, files);
         let dead_modules = DeadCodeDetector::find_dead_modules(files);
-        let dead_ratio = DeadCodeDetector::dead_code_ratio(call_graph, files);
+        let dead_ratio = if stats.total > 0 {
+            stats.dead as f64 / stats.total as f64
+        } else {
+            0.0
+        };
 
         report["dead_code"] = json!({
-            "unused_functions": unused,
+            "unused_functions": Vec::<String>::new(), // Use verdict-based detection instead
             "dead_modules": dead_modules,
             "ratio": dead_ratio,
-            "unused_count": unused.len(),
+            "unused_count": stats.dead,
         });
 
         // Training metadata
