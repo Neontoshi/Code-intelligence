@@ -1,57 +1,154 @@
-# Code Intelligence CLI (`ci`)
+# Code Intelligence
 
-A global CLI tool for detecting and managing dead code across any project. Built with ML-powered analysis for 10+ languages.
+**Semantic Code Intelligence Engine for AI - Dead Code Detection, Duplicate Detection, and Code Analysis**
 
-## Quick Start
+A comprehensive toolkit for analyzing, understanding, and optimizing codebases using ML-powered dead code detection, duplicate detection, call graph analysis, and LLM integration. Supports Rust, TypeScript, JavaScript, Python, Go, and Java.
+
+---
+
+## 🚀 Quick Start
 
 ```bash
-# Install globally
-cargo install --path . --bin ci
+# Install everything with one command
+git clone https://github.com/yourusername/code-intelligence
+cd code-intelligence
+cargo install --path .
 
 # First-time setup
 ci config set model ~/Documents/code-intelligence/model_verified_v2.bin
 ci config set threshold 0.55
 
-# Analyze current project
-cd ~/Documents/X_giveaway_system
+# Analyze your project
+cd ~/Documents/your-project
 ci analyze
 
-# List dead functions found
+# View results
 ci list
-
-# Mark a function as removed
-ci remove publishGiveaway
-
-# Check statistics
 ci stats
+
+# Remove dead code
+ci remove publishGiveaway
 ```
 
-## Installation
+---
 
-### From Source
+## 📦 Installation
+
+### From Source (Recommended)
 
 ```bash
+# Clone the repository
 git clone https://github.com/yourusername/code-intelligence
 cd code-intelligence
-cargo build --release
+
+# Install ALL binaries with one command
+cargo install --path .
+
+# This installs: ci, dead_code_check, train_model, update_outcome, dedup_check, and more
+```
+
+### Install Specific Binary
+
+```bash
+# Install only the main CLI
 cargo install --path . --bin ci
+
+# Install only the dead code checker
+cargo install --path . --bin dead_code_check
+
+# Install only the deduplication checker
+cargo install --path . --bin dedup_check
 ```
 
 ### Verify Installation
 
 ```bash
+# Check that the CLI is installed
+which ci
+# Should show: /home/username/.cargo/bin/ci
+
+# Test it
 ci --version
 ci --help
 ```
 
-## Configuration
+---
+
+## 🎯 What It Does
+
+| Feature | Description |
+|---------|-------------|
+| **Dead Code Detection** | ML-powered detection of unused functions, types, and modules |
+| **Duplicate Code Detection** | Find and refactor duplicate code across your codebase |
+| **Call Graph Analysis** | Visualize function relationships and dependencies |
+| **Import Graph** | Track module dependencies and imports |
+| **Type Graph** | Understand type relationships and usage |
+| **Dynamic Reference Detection** | Find reflection, callbacks, and framework-based references |
+| **Reachability Analysis** | Determine which functions are reachable from entry points |
+| **LLM Integration** | Summarize functions, find bugs, suggest improvements |
+| **Git Analysis** | Track code age and activity |
+| **Interactive Dashboard** | Terminal UI for reviewing dead code |
+| **Outcome Tracking** | Track which dead functions were actually removed |
+
+---
+
+## 📋 Commands
+
+### Core Analysis
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `ci analyze` | Detect dead code in a project | `ci analyze ~/Documents/Kyma` |
+| `ci dedup` | Find duplicate code | `ci dedup ~/Documents/X_giveaway_system` |
+| `ci graph` | Generate call graph | `ci graph ~/Kyma --format png` |
+| `ci llm` | LLM-powered analysis | `ci llm ~/Kyma --provider ollama` |
+| `ci dashboard` | Interactive terminal UI | `ci dashboard ~/Documents/Kyma` |
+
+### Outcome Management
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `ci list` | List dead functions found | `ci list` |
+| `ci remove` | Mark a function as removed | `ci remove publishGiveaway` |
+| `ci keep` | Mark a function as false positive | `ci keep uploadImage "Used in tests"` |
+| `ci stats` | Show outcome statistics | `ci stats --detailed` |
+| `ci report` | Generate a report | `ci report --format html` |
+
+### Training & Model Management
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `ci train` | Train the ML model | `ci train --precision 0.95` |
+| `ci calibrate` | Calibrate model confidence | `ci calibrate --method temperature` |
+| `ci tune` | Tune confidence threshold | `ci tune --precision 0.99` |
+| `ci compare` | Compare ML models | `ci compare` |
+| `ci features` | Analyze feature importance | `ci features` |
+| `ci evaluate` | Evaluate model per language | `ci evaluate --detailed` |
+
+### Data Management
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `ci export` | Export training data from a project | `ci export ~/Kyma --output training.json` |
+| `ci merge` | Merge training data files | `ci merge --dedup` |
+| `ci self-analyze` | Analyze code-intelligence itself | `ci self-analyze --format full` |
+
+### Configuration
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `ci config set` | Set a config value | `ci config set threshold 0.55` |
+| `ci config get` | Get a config value | `ci config get model` |
+| `ci config list` | List all config values | `ci config list` |
+
+---
+
+## 🔧 Configuration
 
 ### First-Time Setup
 
-Configure your global settings once:
-
 ```bash
-# Set the ML model path
+# Set the ML model path (required for analysis)
 ci config set model ~/Documents/code-intelligence/model_verified_v2.bin
 
 # Set default confidence threshold (0.0 - 1.0)
@@ -59,245 +156,27 @@ ci config set threshold 0.55
 
 # Enable verbose output
 ci config set verbose true
+
+# Configure LLM (optional)
+ci config set llm_provider ollama
+ci config set llm_model phi:2.7b
 ```
 
-### View Configuration
-
-```bash
-# List all config values
-ci config list
-
-# Get a specific value
-ci config get model
-ci config get threshold
-```
-
-## Commands
-
-### `ci analyze [path]`
-
-Analyze a project for dead code.
-
-```bash
-# Analyze current directory
-ci analyze
-
-# Analyze specific project
-ci analyze ~/Documents/Kyma
-
-# Analyze with custom threshold
-ci analyze --threshold 0.40
-
-# Verbose output
-ci analyze --verbose
-```
-
-**What it does:**
-- Detects project type (Rust, TypeScript, Python, Go, Java, etc.)
-- Runs ML-based dead code analysis
-- Tracks results in `.code-intelligence-outcomes.json`
-- Updates project configuration
-
----
-
-### `ci list [path]`
-
-List all pending dead functions found in a project.
-
-```bash
-# List in current directory
-ci list
-
-# List in specific project
-ci list ~/Documents/Kyma
-```
-
-**Output:**
-```
-📋 Pending Dead Functions (20 total):
-   (Use `ci remove <name>` or `ci keep <name> "reason"`)
-
-| # | Function | Confidence | File |
-|---|----------|------------|------|
-| 1 | publishGiveaway | 82.7% | api.ts |
-| 2 | updateGiveaway | 82.1% | api.ts |
-| 3 | enterGiveaway | 81.5% | api.ts |
-...
-```
-
----
-
-### `ci remove <function-name> [path]`
-
-Mark a dead function as **removed** (after you've deleted it).
-
-```bash
-# Remove by function name (partial match supported)
-ci remove publishGiveaway
-
-# Remove with commit hash
-ci remove publishGiveaway --commit abc123def
-
-# Remove in specific project
-ci remove publishGiveaway ~/Documents/Kyma
-```
-
-**What it does:**
-- Finds the matching pending function
-- Marks it as "Removed" in outcomes
-- Updates the outcome file
-
----
-
-### `ci keep <function-name> "reason" [path]`
-
-Mark a function as **false positive** (kept in codebase).
-
-```bash
-# Mark as false positive with reason
-ci keep uploadImage "Used in tests"
-
-# Keep in specific project
-ci keep execute ~/Documents/Kyma "Discord bot command"
-```
-
-**Common reasons:**
-- `"Used in tests"`
-- `"Called via reflection"`
-- `"External SDK integration"`
-- `"Framework requirement"`
-- `"Code is dead but planned for future"`
-
----
-
-### `ci stats [path]`
-
-View outcome statistics for a project.
-
-```bash
-# Stats for current project
-ci stats
-
-# Stats for specific project
-ci stats ~/Documents/Kyma
-```
-
-**Output:**
-```
-📊 Outcome Statistics for: /home/dicey/Documents/X_giveaway_system
-
-📊 Summary:
-   Total flagged: 20
-   Removed: 5 (25.0%)
-   Kept (false positives): 3
-   Pending: 12
-
-💡 12 functions waiting for review. Run `ci list` to see them.
-```
-
----
-
-### `ci report [path]`
-
-Generate a detailed report.
-
-```bash
-# Generate markdown report (default)
-ci report
-
-# Generate JSON report
-ci report --format json
-
-# Generate HTML report
-ci report --format html
-
-# Save to file
-ci report --output report.md
-```
-
----
-
-### `ci train`
-
-Train or retrain the ML model with new data.
-
-```bash
-# Train with default data
-ci train
-
-# Train with specific data
-ci train --data data/train.json --output model_v3.bin
-```
-
----
-
-### `ci config`
-
-Manage global configuration.
-
-```bash
-# Set config value
-ci config set model /path/to/model.bin
-ci config set threshold 0.55
-ci config set verbose true
-
-# Get config value
-ci config get model
-ci config get threshold
-
-# List all config
-ci config list
-```
-
-## Workflow Example
-
-### Complete Workflow for a New Project
-
-```bash
-# 1. Navigate to project
-cd ~/Documents/my-awesome-project
-
-# 2. First analysis
-ci analyze
-
-# 3. Review results
-ci list
-
-# 4. Remove dead code (in your IDE/editor)
-# Delete the functions flagged as dead
-
-# 5. Mark them as removed
-ci remove publishGiveaway
-ci remove updateGiveaway
-ci remove enterGiveaway
-
-# 6. For functions you decide to keep
-ci keep uploadImage "Used in tests"
-ci keep verifyTasks "Called via reflection"
-
-# 7. Check progress
-ci stats
-
-# 8. Re-analyze to find more
-ci analyze
-
-# 9. Generate final report
-ci report --output dead_code_report.md
-```
-
-## Config File Location
+### Configuration File
 
 Global config is stored at:
 ```
 ~/.config/code-intelligence/config.toml
 ```
 
-Example config:
+Example:
 ```toml
 [defaults]
 model = "/home/user/code-intelligence/model_verified_v2.bin"
 threshold = 0.55
 verbose = false
+llm_provider = "ollama"
+llm_model = "phi:2.7b"
 
 [projects."/home/user/Documents/X_giveaway_system"]
 type = "typescript"
@@ -312,51 +191,196 @@ last_analyzed = "2026-08-09"
 dead_count = 54
 ```
 
-## Project Detection
+---
 
-`ci` auto-detects project type based on files present:
+## 📊 Workflow Examples
 
-| File | Language |
-|------|----------|
-| `Cargo.toml` | Rust |
-| `package.json` + `tsconfig.json` | TypeScript |
-| `package.json` | JavaScript |
-| `go.mod` | Go |
-| `pom.xml` / `build.gradle` | Java |
-| `requirements.txt` / `pyproject.toml` | Python |
-
-## Supported Languages
-
-- Rust
-- TypeScript
-- JavaScript (with JSX/TSX)
-- Python
-- Go
-- Java
-- More coming...
-
-## Threshold Guide
-
-| Threshold | Use Case | Precision | Recall |
-|-----------|----------|-----------|--------|
-| `0.55-0.60` | **Auto-removal** (safe to delete automatically) | ~100% | Low |
-| `0.45-0.50` | **Manual review** (high confidence) | ~80% | Medium |
-| `0.35-0.40` | **Code audit** (find all potential dead code) | ~77% | High |
-
-### Recommended Settings
+### 1. Complete Project Analysis
 
 ```bash
-# For safety (no false positives)
-ci config set threshold 0.55
+# Navigate to your project
+cd ~/Documents/my-project
 
-# For finding more dead code (some false positives)
-ci config set threshold 0.40
+# First analysis
+ci analyze
 
-# For specific projects
-ci analyze --threshold 0.40  # Project-specific override
+# Review results
+ci list
+
+# Check statistics
+ci stats
+
+# Remove dead functions you've deleted
+ci remove unused_function_1
+ci remove unused_function_2
+
+# Mark false positives
+ci keep helper_function "Used in tests"
+
+# Generate a report
+ci report --format markdown --output report.md
+
+# Re-analyze to confirm clean
+ci analyze
+ci stats
 ```
 
-## Troubleshooting
+### 2. Find and Refactor Duplicate Code
+
+```bash
+cd ~/Documents/Kyma
+
+# Find duplicates with similarity threshold 0.85
+ci dedup --threshold 0.85
+
+# Use ML model for better detection
+ci dedup --ml
+```
+
+### 3. Generate Call Graph Visualization
+
+```bash
+cd ~/Documents/Kyma
+
+# Generate full call graph
+ci graph --format dot
+
+# Generate focused graph for a specific function
+ci graph --entry "main" --depth 3
+
+# Generate as PNG (requires graphviz)
+ci graph --format png
+```
+
+### 4. LLM-Powered Analysis
+
+```bash
+cd ~/Documents/Kyma
+
+# Run LLM analysis with Ollama
+ci llm --provider ollama
+
+# Use OpenAI GPT-4
+ci llm --provider openai --model gpt-4 --api-key $OPENAI_API_KEY
+
+# Custom temperature and max tokens
+ci llm --temperature 0.1 --max-tokens 2000
+```
+
+### 5. Train a Custom Model
+
+```bash
+# Export training data from your projects
+ci export ~/Documents/Kyma --output training_data/kyma.json
+ci export ~/Documents/X_giveaway_system --output training_data/x_giveaway.json
+
+# Merge all training data
+ci merge --dedup
+
+# Train the model
+ci train --precision 0.95
+
+# Calibrate the model
+ci calibrate --method temperature
+
+# Tune the threshold
+ci tune --precision 0.99
+
+# Test the new model
+ci analyze --threshold 0.55
+```
+
+### 6. Interactive Dashboard
+
+```bash
+cd ~/Documents/Kyma
+
+# Open the dashboard
+ci dashboard
+
+# Navigate with arrow keys
+# Press 'q' to quit
+```
+
+---
+
+## 🎨 Output Formats
+
+| Format | Description | Use Case |
+|--------|-------------|----------|
+| **Markdown** | Human-readable report | Documentation, PR descriptions |
+| **JSON** | Machine-readable data | CI/CD, API integration |
+| **Full** | Comprehensive analysis | Deep dives, code reviews |
+| **Graphviz (DOT)** | Call graph visualization | Visualizing dependencies |
+| **HTML** | Interactive report | Sharing with team |
+
+---
+
+## 🧠 Supported Languages
+
+| Language | Support Level |
+|----------|---------------|
+| **Rust** | ✅ Full (traits, impls, macros) |
+| **TypeScript** | ✅ Full (React, NestJS, decorators) |
+| **JavaScript** | ✅ Full (JSX, React, Node.js) |
+| **Python** | ✅ Full (decorators, Flask, FastAPI) |
+| **Go** | ✅ Full (interfaces, exports) |
+| **Java** | ✅ Full (annotations, Spring) |
+
+---
+
+## 🛠️ All Binaries
+
+Running `cargo install --path .` installs all these tools:
+
+| Binary | Purpose |
+|--------|---------|
+| `ci` | Main CLI - All-in-one command tool |
+| `dead_code_check` | Core dead code analyzer |
+| `dedup_check` | Find duplicate code |
+| `train_model` | Train ML model |
+| `calibrate_model` | Calibrate model confidence |
+| `tune_threshold` | Find optimal threshold |
+| `update_outcome` | Track removal outcomes |
+| `verify_dead_candidates` | Generate review checklist |
+| `training_data_exporter` | Export training data |
+| `merge_all_training_data` | Merge training datasets |
+| `train_duplicate_model` | Train duplicate detection model |
+| `analyze_features_per_language` | Feature importance analysis |
+| `evaluate_per_language` | Evaluate model per language |
+| `feature_ablation` | Determine which features matter |
+| `model_comparison` | Compare ML algorithms |
+| `dead_code_dashboard` | Terminal UI dashboard |
+
+---
+
+## 📁 File Locations
+
+| File | Purpose |
+|------|---------|
+| `~/.config/code-intelligence/config.toml` | Global configuration |
+| `./.code-intelligence-outcomes.json` | Per-project outcomes tracking |
+| `model.bin` | Trained ML model |
+| `model_calibrated.bin` | Calibrated ML model |
+| `data/train.json` | Training data |
+| `data/val.json` | Validation data |
+| `data/test.json` | Test data |
+| `training_data/*.json` | Raw training data per repository |
+| `call_graph.dot` | Call graph in DOT format |
+
+---
+
+## 🔍 Troubleshooting
+
+### "Command not found: ci"
+
+```bash
+# Reinstall
+cargo install --path .
+
+# Or add to PATH
+export PATH="$HOME/.cargo/bin:$PATH"
+```
 
 ### "No model configured"
 
@@ -366,35 +390,71 @@ ci config set model ~/Documents/code-intelligence/model_verified_v2.bin
 
 ### "No tracked outcomes found"
 
-Run analysis first:
 ```bash
+# Run analysis first
 ci analyze
 ```
 
 ### "No pending function found matching 'x'"
 
-Check the exact function name:
 ```bash
+# Check the exact function name
 ci list
 ```
 
-### "Command not found: ci"
+### "dead_code_check not found"
 
-Reinstall:
 ```bash
-cargo install --path . --bin ci
+# Install all binaries
+cargo install --path .
 ```
 
-Or run from the project directory:
+### Stack overflow on large projects
+
 ```bash
-cargo run --bin ci -- analyze
+# Use a lower threshold for large projects
+ci analyze --threshold 0.40
 ```
 
-## Advanced Tips
+---
 
-### 1. Automate with Git Hooks
+## 🔄 CI/CD Integration
+
+### GitHub Actions
+
+```yaml
+name: Dead Code Check
+on: [push, pull_request]
+
+jobs:
+  dead-code:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Install Code Intelligence
+        run: |
+          git clone https://github.com/yourusername/code-intelligence
+          cd code-intelligence
+          cargo install --path .
+      - name: Check Dead Code
+        run: |
+          ci analyze
+          ci stats
+          ci report --format json --output report.json
+      - name: Upload Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: dead-code-report
+          path: report.json
+```
+
+### Git Pre-Commit Hook
 
 Add to `.git/hooks/pre-commit`:
+
 ```bash
 #!/bin/bash
 if ci stats 2>/dev/null | grep -q "Pending: [1-9]"; then
@@ -406,46 +466,66 @@ if ci stats 2>/dev/null | grep -q "Pending: [1-9]"; then
 fi
 ```
 
-### 2. Run on Multiple Projects
+---
 
-```bash
-# Check all your projects
-for project in ~/Documents/*; do
-    if [ -d "$project" ]; then
-        echo "📊 Analyzing: $project"
-        ci analyze "$project" --threshold 0.55 2>/dev/null
-    fi
-done
-```
+## 📈 Performance
 
-### 3. Generate Team Report
-
-```bash
-ci report --format markdown --output ~/Desktop/dead_code_report.md
-```
-
-## Uninstall
-
-```bash
-cargo uninstall ci
-
-# Also remove config
-rm -rf ~/.config/code-intelligence
-```
-
-## License
-
-MIT
+| Metric | Value |
+|--------|-------|
+| **Precision** | Up to 100% (at threshold 0.55) |
+| **Recall** | 5-60% depending on threshold |
+| **Speed** | ~0.5-3s for 500 functions |
+| **Languages** | 6+ languages supported |
+| **Model Size** | ~3KB |
 
 ---
 
-## Contributing
+## 🧪 Testing
+
+```bash
+# Run all tests
+cargo test
+
+# Run specific tests
+cargo test --lib -- --nocapture
+
+# Test on code-intelligence itself
+ci self-analyze
+```
+
+---
+
+## 📝 Contributing
 
 1. Fork the repository
-2. Create a feature branch
-3. Submit a pull request
+2. Create a feature branch: `git checkout -b feature-name`
+3. Make your changes
+4. Run tests: `cargo test`
+5. Submit a pull request
 
-## Support
+---
 
-- Issues: [GitHub Issues](https://github.com/yourusername/code-intelligence/issues)
-- Documentation: [Wiki](https://github.com/yourusername/code-intelligence/wiki)
+## 📄 License
+
+MIT License
+
+---
+
+## 🙏 Acknowledgments
+
+- [tree-sitter](https://tree-sitter.github.io/tree-sitter/) - Language parsing
+- [petgraph](https://github.com/petgraph/petgraph) - Graph algorithms
+- [linfa](https://github.com/rust-ml/linfa) - ML framework
+- [Ollama](https://ollama.ai/) - Local LLM support
+
+---
+
+## 📞 Support
+
+- **Issues**: [GitHub Issues](https://github.com/yourusername/code-intelligence/issues)
+- **Documentation**: [Wiki](https://github.com/yourusername/code-intelligence/wiki)
+- **Discord**: [Join our Discord](https://discord.gg/your-invite)
+
+---
+
+**Built with ❤️ by the Code Intelligence Team**
