@@ -101,12 +101,6 @@ $RECYCLE.BIN/
 # Code-Intelligence Specific Outputs
 # ============================================================
 # Analysis outputs (generated files)
-*.md
-!README.md
-!CONTRIBUTING.md
-!CHANGELOG.md
-!CODE_OF_CONDUCT.md
-!SECURITY.md
 *.json
 *.jsonl
 *.dot
