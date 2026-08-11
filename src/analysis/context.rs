@@ -444,7 +444,7 @@ impl ProjectAnalysis {
             .node_indices()
             .map(|idx| (idx, self.call_graph[idx].importance_score))
             .collect();
-        functions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        functions.sort_by(|a, b| b.1.total_cmp(&a.1));
 
         for (idx, score) in functions.iter().take(10) {
             let func = &self.call_graph[*idx];

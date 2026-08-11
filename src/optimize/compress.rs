@@ -52,7 +52,7 @@ impl SemanticCompressor {
             .node_indices()
             .map(|idx| &call_graph[idx])
             .collect();
-        sorted.sort_by(|a, b| b.importance_score.partial_cmp(&a.importance_score).unwrap());
+        sorted.sort_by(|a, b| b.importance_score.total_cmp(&a.importance_score));
 
         for func in sorted.iter().take(self.max_functions) {
             if !entry_points.contains(func) {

@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let best = results
         .iter()
         .filter(|(_, m)| m.precision >= args.target_precision)
-        .max_by(|a, b| a.1.recall.partial_cmp(&b.1.recall).unwrap());
+        .max_by(|a, b| a.1.recall.total_cmp(&b.1.recall));
 
     if let Some((threshold, metrics)) = best {
         println!(

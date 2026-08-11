@@ -196,7 +196,7 @@ impl DeadCodeAnalyzer {
         }
 
         // Sort by confidence and assign removal order
-        dead_functions.sort_by(|a, b| b.score.score.partial_cmp(&a.score.score).unwrap());
+        dead_functions.sort_by(|a, b| b.score.score.total_cmp(&a.score.score));
         for (i, func) in dead_functions.iter_mut().enumerate() {
             func.removal_order = i + 1;
         }
@@ -544,8 +544,7 @@ impl DeadCodeAnalyzer {
         let module_report = ModuleDeadCodeDetector::detect_dead_modules(import_graph);
 
         // 5. Sort by priority and assign removal order
-        dead_functions.sort_by(|a, b| b.score.score.partial_cmp(&a.score.score).unwrap());
-
+        dead_functions.sort_by(|a, b| b.score.score.total_cmp(&a.score.score));
         for (i, func) in dead_functions.iter_mut().enumerate() {
             func.removal_order = i + 1;
         }

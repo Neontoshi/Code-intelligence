@@ -678,7 +678,7 @@ fn render_by_file(f: &mut Frame, area: Rect, analysis: &DeadCodeAnalysis) {
             ),
         ]));
         let mut sorted_funcs = funcs.clone();
-        sorted_funcs.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
+        sorted_funcs.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
         for func in sorted_funcs.iter().take(5) {
             let color = confidence_color(func.confidence);
             lines.push(Line::from(vec![

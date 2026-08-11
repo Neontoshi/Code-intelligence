@@ -85,9 +85,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     print_summary_table(&results);
 
     // Find best performing set
-    let best = results
-        .iter()
-        .max_by(|a, b| a.f1.partial_cmp(&b.f1).unwrap());
+    let best = results.iter().max_by(|a, b| a.f1.total_cmp(&b.f1));
+
     if let Some(best) = best {
         println!("\n🏆 Best performing feature set: {}", best.name);
         println!("   F1: {:.1}%", best.f1 * 100.0);
@@ -331,7 +330,7 @@ fn print_summary_table(results: &[AblationResult]) {
 
     // Sort by F1
     let mut sorted = results.to_vec();
-    sorted.sort_by(|a, b| b.f1.partial_cmp(&a.f1).unwrap());
+    sorted.sort_by(|a, b| b.f1.total_cmp(&a.f1));
 
     for r in &sorted {
         println!(

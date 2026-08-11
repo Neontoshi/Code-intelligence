@@ -171,7 +171,7 @@ impl LinearClassifier {
             .map(|(name, &weight)| (name.clone(), weight))
             .collect();
 
-        importance.sort_by(|a, b| b.1.abs().partial_cmp(&a.1.abs()).unwrap());
+        importance.sort_by(|a, b| b.1.abs().total_cmp(&a.1.abs()));
         importance
     }
 

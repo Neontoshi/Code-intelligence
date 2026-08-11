@@ -24,8 +24,7 @@ impl ThresholdTuner {
         if similarities.is_empty() {
             return 0.85;
         }
-
-        similarities.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        similarities.sort_by(|a, b| a.total_cmp(b));
 
         // Find natural gap in similarity scores
         let mut best_gap = 0.0;

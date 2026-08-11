@@ -83,7 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Sort by absolute difference
-        diffs.sort_by(|a, b| b.1.abs().partial_cmp(&a.1.abs()).unwrap());
+        diffs.sort_by(|a, b| b.1.abs().total_cmp(&a.1.abs()));
 
         println!("   Most distinguishing features:");
         for (name, diff) in diffs.iter().take(5) {

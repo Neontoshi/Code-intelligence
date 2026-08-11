@@ -5,11 +5,19 @@ use crate::engine::stages::RawProject;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
+// Use lazy_static for compiled regex patterns
+use once_cell::sync::Lazy;
+use regex::Regex;
+
+static HASHED_FILE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_-]+-[A-Za-z0-9]{6,10}\.(js|css|map)$").unwrap());
+static MINIFIED_FILE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\.min\.(js|css)$").unwrap());
+static BUNDLED_FILE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"-[A-Za-z0-9]{8,}\.(js|css)$").unwrap());
+
 pub struct FileCollector;
 
 impl FileCollector {
-    // src/engine/file_collector.rs
-
     pub fn collect(root: &Path, config: &PipelineConfig) -> RawProject {
         let skip_dirs = [
             ".git",
@@ -39,14 +47,7 @@ impl FileCollector {
             "Gemfile.lock",
             "poetry.lock",
             "Pipfile.lock",
-            // ⭐ NEW: Skip minified/bundled JS files
-            "browser-BXdiCFWD.js",
-            "app-ByPOcLMs.js",
-            "main-06ciBZDq.js",
-            "index-0pYbquBB.js",
-            "client-BECxR3b0.js",
-            "remote-DmYepkKg.js",
-            "butterchunk-CMvS5UXf.js",
+            "pnpm-lock.yaml",
         ];
 
         let files: Vec<PathBuf> = WalkDir::new(root)
@@ -58,11 +59,18 @@ impl FileCollector {
                     return false;
                 }
 
-                // ⭐ NEW: Skip files that look like bundled/minified JS
-                if name.ends_with(".js")
-                    && (name.contains(".min.") || name.contains("-") && name.len() > 30)
-                {
-                    return false;
+                // Skip files that look like bundled/minified JS
+                if let Some(name) = e.file_name().to_str() {
+                    if HASHED_FILE_RE.is_match(name)
+                        || MINIFIED_FILE_RE.is_match(name)
+                        || BUNDLED_FILE_RE.is_match(name)
+                    {
+                        return false;
+                    }
+                    // Also skip by heuristic: long name with hash pattern
+                    if name.len() > 40 && (name.ends_with(".js") || name.ends_with(".css")) {
+                        return false;
+                    }
                 }
 
                 true
@@ -73,38 +81,18 @@ impl FileCollector {
                     return false;
                 }
 
-                // ⭐ NEW: Skip files in remote-dist/assets/
+                // Skip files in asset directories (common for bundled code)
                 let path_str = e.path().to_string_lossy();
-                if path_str.contains("/remote-dist/assets/") {
-                    return false;
-                }
-                if path_str.contains("/dist/assets/") {
-                    return false;
-                }
-                if path_str.contains("/build/assets/") {
+                if path_str.contains("/remote-dist/assets/")
+                    || path_str.contains("/dist/assets/")
+                    || path_str.contains("/build/assets/")
+                {
                     return false;
                 }
 
                 if let Some(name) = e.path().file_name().and_then(|n| n.to_str()) {
                     if skip_files.contains(&name) {
                         return false;
-                    }
-                }
-
-                // ⭐ NEW: Skip minified files by extension pattern
-                if let Some(name) = e.path().file_name().and_then(|n| n.to_str()) {
-                    if name.ends_with(".min.js") {
-                        return false;
-                    }
-                    // Skip hashed filenames (e.g., "browser-BXdiCFWD.js")
-                    if name.ends_with(".js")
-                        && name.contains("-")
-                        && name.chars().filter(|c| *c == '-').count() >= 1
-                    {
-                        let parts: Vec<&str> = name.split('-').collect();
-                        if parts.len() >= 2 && parts.last().unwrap().len() >= 8 {
-                            return false;
-                        }
                     }
                 }
 

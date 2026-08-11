@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 pub struct CacheEntry<T> {
     pub hash: String,
     pub data: T,
-    pub timestamp: i64, // Unix timestamp instead of DateTime
+    pub timestamp: i64,
     pub version: u32,
 }
 
@@ -45,17 +45,17 @@ impl FileCache {
         self
     }
 
-    pub fn get_or_compute<F>(&self, path: &Path, compute: F) -> String
+    pub fn get_or_compute<F>(&self, path: &Path, compute: F) -> Option<String>
     where
         F: FnOnce() -> String,
     {
         let key = path.to_string_lossy().to_string();
-        let hash = self.hash_file(path);
+        let hash = self.hash_file(path)?;
 
         // Check memory cache first
         if let Some(entry) = self.cache.get(&key) {
             if entry.hash == hash && entry.version == self.version {
-                return entry.data.clone();
+                return Some(entry.data.clone());
             }
         }
 
@@ -74,7 +74,7 @@ impl FileCache {
                                 version: self.version,
                             },
                         );
-                        return entry.data;
+                        return Some(entry.data);
                     }
                 }
             }
@@ -99,17 +99,15 @@ impl FileCache {
             }
         }
 
-        data
+        Some(data)
     }
 
-    pub fn hash_file(&self, path: &Path) -> String {
-        if let Ok(contents) = std::fs::read(path) {
-            let mut hasher = Sha256::new();
-            hasher.update(&contents);
-            format!("{:x}", hasher.finalize())
-        } else {
-            String::new()
-        }
+    /// Returns None for unreadable files (no more sentinel empty string)
+    pub fn hash_file(&self, path: &Path) -> Option<String> {
+        let contents = std::fs::read(path).ok()?;
+        let mut hasher = Sha256::new();
+        hasher.update(&contents);
+        Some(format!("{:x}", hasher.finalize()))
     }
 
     pub fn hash_content(&self, content: &str) -> String {
@@ -137,13 +135,20 @@ impl Default for FileCache {
 }
 
 // ============================================================================
-// Analysis Cache - Stores full ProjectIntelligence
+// Analysis Cache - Stores full ProjectIntelligence with content hashes
 // ============================================================================
+
+/// File entry with content hash for validation
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CachedFileEntry {
+    pub path: String,
+    pub content_hash: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalysisCache {
     pub project_hash: String,
-    pub files: Vec<String>,
+    pub files: Vec<CachedFileEntry>,
     pub function_count: usize,
     pub edge_count: usize,
     pub timestamp: i64,
@@ -194,13 +199,36 @@ impl AnalysisCacheManager {
         }
     }
 
-    pub fn is_valid(&self, project_hash: &str, files: &[PathBuf]) -> bool {
+    /// Validate cache by comparing file paths AND content hashes
+    pub fn is_valid(&self, project_hash: &str, files: &[(PathBuf, String)]) -> bool {
         if let Some(cached) = self.get(project_hash) {
-            let current_files: Vec<String> = files
+            // Build current entries: (path_string, content_hash)
+            let current: Vec<CachedFileEntry> = files
+                .iter()
+                .filter_map(|(path, hash)| {
+                    path.to_str().map(|s| CachedFileEntry {
+                        path: s.to_string(),
+                        content_hash: hash.clone(),
+                    })
+                })
+                .collect();
+
+            cached.files == current
+        } else {
+            false
+        }
+    }
+
+    /// Legacy version for compatibility (deprecated - use is_valid with hashes)
+    #[deprecated(note = "Use is_valid with content hashes instead")]
+    pub fn is_valid_legacy(&self, project_hash: &str, files: &[PathBuf]) -> bool {
+        if let Some(cached) = self.get(project_hash) {
+            let current_paths: Vec<String> = files
                 .iter()
                 .filter_map(|p| p.to_str().map(|s| s.to_string()))
                 .collect();
-            cached.files == current_files
+            let cached_paths: Vec<String> = cached.files.iter().map(|f| f.path.clone()).collect();
+            cached_paths == current_paths
         } else {
             false
         }

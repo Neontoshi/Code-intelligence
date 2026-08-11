@@ -43,11 +43,7 @@ impl LLMAnalyzer {
             .node_indices()
             .map(|idx| (&call_graph[idx], idx))
             .collect();
-        important_functions.sort_by(|a, b| {
-            b.0.importance_score
-                .partial_cmp(&a.0.importance_score)
-                .unwrap()
-        });
+        important_functions.sort_by(|a, b| b.0.importance_score.total_cmp(&a.0.importance_score));
 
         let mut source_map = HashMap::new();
         for file in files {

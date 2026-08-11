@@ -59,8 +59,7 @@ impl ChunkStrategy {
             .node_indices()
             .map(|idx| &call_graph[idx])
             .collect();
-        important_functions
-            .sort_by(|a, b| b.importance_score.partial_cmp(&a.importance_score).unwrap());
+        important_functions.sort_by(|a, b| b.importance_score.total_cmp(&a.importance_score));
 
         // Chunk by function significance
         let mut used_functions = HashMap::new();

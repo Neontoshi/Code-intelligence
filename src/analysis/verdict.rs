@@ -11,7 +11,6 @@ use crate::ml::classifier::DeadCodeClassifier;
 // Signal Types
 // ============================================================================
 
-/// A single piece of evidence about a function
 #[derive(Debug, Clone)]
 pub struct Signal {
     pub name: String,
@@ -67,7 +66,6 @@ impl Verdict {
         self.label == TrainingLabel::Unknown
     }
 
-    /// Generate a human-readable explanation
     pub fn format_explanation(&self) -> String {
         let mut output = String::new();
 
@@ -105,13 +103,9 @@ impl Verdict {
 
 #[derive(Debug, Clone)]
 pub struct VerdictConfig {
-    /// Minimum confidence to label as Dead
     pub dead_threshold: f64,
-    /// Minimum confidence to label as Alive
     pub alive_threshold: f64,
-    /// Whether to use ML predictions
     pub enable_ml: bool,
-    /// Whether to use static analysis
     pub enable_static: bool,
 }
 
@@ -129,7 +123,7 @@ impl Default for VerdictConfig {
 pub struct VerdictEngine {
     config: VerdictConfig,
     ml_model: Option<DeadCodeClassifier>,
-    dynamic_refs: Option<Vec<DynamicReference>>, // ⭐ NEW
+    dynamic_refs: Option<Vec<DynamicReference>>,
 }
 
 impl VerdictEngine {
@@ -142,18 +136,14 @@ impl VerdictEngine {
     }
 
     pub fn with_model_thresholds(self, _model: &DeadCodeClassifier) -> Self {
-        // Currently no-op - thresholds are set directly via with_dead_threshold
-        // This method exists for future use when calibration data includes thresholds
         self
     }
 
-    /// Set the dead threshold directly
     pub fn with_dead_threshold(mut self, threshold: f64) -> Self {
         self.config.dead_threshold = threshold;
         self
     }
 
-    /// Set the alive threshold directly
     pub fn with_alive_threshold(mut self, threshold: f64) -> Self {
         self.config.alive_threshold = threshold;
         self
@@ -170,7 +160,6 @@ impl VerdictEngine {
         self
     }
 
-    /// Generate a verdict for a single function
     pub fn evaluate_function(
         &self,
         func: &FunctionNode,
@@ -180,7 +169,6 @@ impl VerdictEngine {
         let mut signals = Vec::new();
         let mut static_score = 0.0;
 
-        // 1. Static Analysis Signals
         let static_signals = self.collect_static_signals(func, reachability);
         for signal in &static_signals {
             if signal.direction == SignalDirection::SupportsDead {
@@ -191,21 +179,16 @@ impl VerdictEngine {
         }
         signals.extend(static_signals);
 
-        // Normalize static score by total weight, not signal count
         let total_weight: f64 = signals.iter().map(|s| s.weight).sum();
         let normalized_static = if total_weight > 0.0 {
-            // static_score ranges from -total_weight to +total_weight
-            // Map to 0-1 where 0 = all supports Alive, 1 = all supports Dead
             (static_score / total_weight + 1.0) / 2.0
         } else {
             0.5
         };
         let normalized_static = normalized_static.clamp(0.0, 1.0);
 
-        // 2. ML Prediction
         let ml_probability = if self.config.enable_ml {
             if let Some(model) = &self.ml_model {
-                // Create training example
                 use crate::analysis::training_data::FunctionFeatures;
                 let features = FunctionFeatures::from_function(func, call_graph);
                 let example = TrainingExample {
@@ -248,16 +231,12 @@ impl VerdictEngine {
             None
         };
 
-        // 3. Combine evidence
         let combined_score = if let Some(ml) = ml_probability {
-            // Weighted average: 60% static, 40% ML
-            // ml_probability is now P(DEAD)
             normalized_static * 0.6 + ml * 0.4
         } else {
             normalized_static
         };
 
-        // 4. Determine label and confidence
         let (label, confidence) = if combined_score >= self.config.dead_threshold {
             (TrainingLabel::Dead, combined_score)
         } else if combined_score <= self.config.alive_threshold {
@@ -266,7 +245,6 @@ impl VerdictEngine {
             (TrainingLabel::Unknown, combined_score)
         };
 
-        // 5. Generate explanation
         let explanation = self.generate_explanation(
             func,
             &signals,
@@ -295,7 +273,6 @@ impl VerdictEngine {
         let mut verdicts = Vec::new();
         let total_nodes = call_graph.node_count();
 
-        // ⭐ Safety limit for large graphs
         let max_nodes = 2000;
         if total_nodes > max_nodes {
             eprintln!(
@@ -312,14 +289,10 @@ impl VerdictEngine {
             verdicts.push(verdict);
         }
 
-        // Sort by confidence (highest first)
-        verdicts.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
+        // Use total_cmp - never panics on NaN
+        verdicts.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
         verdicts
     }
-
-    // ========================================================================
-    // Helper Methods
-    // ========================================================================
 
     fn collect_static_signals(
         &self,
@@ -328,7 +301,6 @@ impl VerdictEngine {
     ) -> Vec<Signal> {
         let mut signals = Vec::new();
 
-        // 1. Fan-in (callers)
         let fan_in_value = func.fan_in as f64 / 10.0;
         if func.fan_in == 0 {
             signals.push(Signal {
@@ -348,7 +320,6 @@ impl VerdictEngine {
             });
         }
 
-        // 2. Reachability
         let is_reachable = reachability.is_reachable(&func.full_path);
         if is_reachable {
             signals.push(Signal {
@@ -368,7 +339,6 @@ impl VerdictEngine {
             });
         }
 
-        // 3. Public/Private
         if func.is_public {
             signals.push(Signal {
                 name: "is_public".to_string(),
@@ -387,7 +357,6 @@ impl VerdictEngine {
             });
         }
 
-        // 4. Trait Implementation
         if func.trait_impl.is_some() {
             signals.push(Signal {
                 name: "trait_impl".to_string(),
@@ -398,7 +367,6 @@ impl VerdictEngine {
             });
         }
 
-        // 5. Complexity (high complexity suggests it might be used)
         if func.complexity > 10.0 {
             signals.push(Signal {
                 name: "complexity".to_string(),
@@ -409,7 +377,6 @@ impl VerdictEngine {
             });
         }
 
-        // 6. Documentation
         if func.doc_comment.is_some() {
             signals.push(Signal {
                 name: "documentation".to_string(),
@@ -421,14 +388,12 @@ impl VerdictEngine {
         }
 
         if let Some(dynamic_refs) = &self.dynamic_refs {
-            // Check if THIS function is the target of a dynamic reference
             let is_dynamically_referenced = dynamic_refs.iter().any(|r| {
                 r.target_function
                     .as_ref()
                     .map(|f| f == &func.name)
                     .unwrap_or(false)
-                // Also check if the target pattern matches the function name
-                || r.target_pattern.contains(&func.name)
+                    || r.target_pattern.contains(&func.name)
             });
 
             if is_dynamically_referenced {
@@ -436,7 +401,7 @@ impl VerdictEngine {
                     name: "dynamic_reference".to_string(),
                     value: 1.0,
                     direction: SignalDirection::SupportsAlive,
-                    weight: 0.4, // Higher weight for dynamic references
+                    weight: 0.4,
                     explanation: "Referenced dynamically (reflection/callback)".to_string(),
                 });
             }
@@ -447,7 +412,7 @@ impl VerdictEngine {
 
     fn generate_explanation(
         &self,
-        _func: &FunctionNode, // Added underscore to fix unused variable warning
+        _func: &FunctionNode,
         signals: &[Signal],
         label: TrainingLabel,
         confidence: f64,
@@ -511,17 +476,14 @@ impl VerdictEngine {
         parts.join(" ")
     }
 
-    /// Filter verdicts by label - fixed lifetime
     pub fn filter_dead<'a>(&self, verdicts: &'a [Verdict]) -> Vec<&'a Verdict> {
         verdicts.iter().filter(|v| v.is_dead()).collect()
     }
 
-    /// Filter verdicts by label - fixed lifetime
     pub fn filter_alive<'a>(&self, verdicts: &'a [Verdict]) -> Vec<&'a Verdict> {
         verdicts.iter().filter(|v| v.is_alive()).collect()
     }
 
-    /// Filter verdicts by label - fixed lifetime
     pub fn filter_unknown<'a>(&self, verdicts: &'a [Verdict]) -> Vec<&'a Verdict> {
         verdicts.iter().filter(|v| v.needs_review()).collect()
     }
@@ -532,13 +494,12 @@ impl VerdictEngine {
         Self::new(config)
     }
 
-    /// Create a verdict engine with ML support
     pub fn with_ml_model(threshold: f64, model: DeadCodeClassifier) -> Self {
         let mut engine = Self::default_with_threshold(threshold);
         engine = engine.with_ml(model);
         engine
     }
-    /// Get verdict statistics
+
     pub fn stats(&self, verdicts: &[Verdict]) -> VerdictStats {
         let dead = verdicts.iter().filter(|v| v.is_dead()).count();
         let alive = verdicts.iter().filter(|v| v.is_alive()).count();
@@ -586,7 +547,6 @@ mod tests {
     fn create_test_graph() -> (CallGraph, ReachabilityMap) {
         let mut graph = CallGraph::new();
 
-        // Create test functions
         let entry = FunctionNode {
             name: "main".to_string(),
             full_path: "test::main".to_string(),
@@ -660,7 +620,6 @@ mod tests {
         let used_idx = graph.add_function(used);
         let _unused_idx = graph.add_function(unused);
 
-        // Add edge: entry -> used
         graph.add_call(
             entry_idx,
             used_idx,
@@ -670,10 +629,8 @@ mod tests {
             },
         );
 
-        // Calculate fan metrics
         graph.calculate_fan_metrics();
 
-        // Create roots using RootDetector
         let files: Vec<ParsedFile> = vec![];
         let config = RootDetectionConfig::default();
         let root_set = RootDetector::detect_roots(&graph, &files, &config);
@@ -686,7 +643,6 @@ mod tests {
     fn test_verdict_engine_evaluate_all() {
         let (graph, reachability) = create_test_graph();
 
-        // Use a verdict engine with ML disabled and low thresholds for testing
         let mut config = VerdictConfig::default();
         config.enable_ml = false;
         config.enable_static = true;
@@ -696,17 +652,14 @@ mod tests {
         let engine = VerdictEngine::new(config);
         let verdicts = engine.evaluate_all(&graph, &reachability);
 
-        // Should have 3 verdicts
         assert_eq!(verdicts.len(), 3, "Should have 3 verdicts");
 
-        // Check that at least one function is identified as dead
         let dead_count = verdicts
             .iter()
             .filter(|v| v.label == TrainingLabel::Dead)
             .count();
         assert_eq!(dead_count, 1, "Should find exactly 1 dead function");
 
-        // Check that at least one function is identified as alive
         let alive_count = verdicts
             .iter()
             .filter(|v| v.label == TrainingLabel::Alive)
@@ -762,7 +715,6 @@ mod tests {
     fn test_verdict_engine_with_threshold() {
         let (graph, reachability) = create_test_graph();
 
-        // Test with high threshold (0.95) - should have fewer or equal dead
         let config_high = VerdictConfig {
             enable_ml: false,
             enable_static: true,
@@ -776,7 +728,6 @@ mod tests {
             .filter(|v| v.label == TrainingLabel::Dead)
             .count();
 
-        // Test with low threshold (0.50) - should have more or equal dead
         let config_low = VerdictConfig {
             enable_ml: false,
             enable_static: true,
@@ -790,7 +741,6 @@ mod tests {
             .filter(|v| v.label == TrainingLabel::Dead)
             .count();
 
-        // Higher threshold should find fewer or equal dead functions
         assert!(
             dead_high <= dead_low,
             "Higher threshold should find fewer or equal dead functions"
@@ -807,7 +757,6 @@ mod tests {
 
         let engine = VerdictEngine::new(config);
 
-        // Test unused function - should have dead signals
         let unused_idx = graph
             .node_indices()
             .find(|idx| graph[*idx].name == "unused_function")
@@ -815,14 +764,12 @@ mod tests {
         let unused_func = &graph[unused_idx];
         let verdict = engine.evaluate_function(unused_func, &graph, &reachability);
 
-        // Should have at least one signal supporting DEAD
         let has_dead_signal = verdict
             .signals
             .iter()
             .any(|s| s.direction == SignalDirection::SupportsDead);
         assert!(has_dead_signal, "Unused function should have dead signals");
 
-        // Test used function - should have signals supporting ALIVE
         let used_idx = graph
             .node_indices()
             .find(|idx| graph[*idx].name == "used_function")

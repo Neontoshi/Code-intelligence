@@ -2,7 +2,7 @@ use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::collections::HashSet; // ✅ Should already be there // ✅ Use this path
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FunctionNode {
@@ -20,12 +20,11 @@ pub struct FunctionNode {
     pub writes_to: Vec<String>,
     pub reads_from: Vec<String>,
     pub errors: Vec<String>,
-    // Call graph metrics
-    pub fan_in: usize,  // Number of callers
-    pub fan_out: usize, // Number of callees
-    pub is_cycle: bool, // Part of a cycle in the call graph
-    pub depth: usize,   // Call depth from entry points
-    pub layer: String,  // Architecture layer (handler, service, repository, etc.)
+    pub fan_in: usize,
+    pub fan_out: usize,
+    pub is_cycle: bool,
+    pub depth: usize,
+    pub layer: String,
     pub trait_impl: Option<String>,
 }
 
@@ -35,15 +34,24 @@ pub struct CallEdge {
     pub line: usize,
 }
 
+#[derive(Debug, Clone)]
+pub struct CycleDetectionResult {
+    pub cycles: Vec<Vec<NodeIndex>>,
+    pub skipped: bool,
+    pub node_count: usize,
+    pub max_nodes_limit: usize,
+}
+
 #[derive(Clone)]
 pub struct CallGraph {
     pub graph: DiGraph<FunctionNode, CallEdge>,
     pub name_index: HashMap<String, NodeIndex>,
-    // Inverted indexes for fast lookups
     pub name_to_functions: HashMap<String, Vec<NodeIndex>>,
     pub file_to_functions: HashMap<String, Vec<NodeIndex>>,
     pub public_functions: Vec<NodeIndex>,
     pub async_functions: Vec<NodeIndex>,
+    pub cycle_detection_skipped: bool,
+    pub cycle_detection_node_count: usize,
 }
 
 impl CallGraph {
@@ -55,35 +63,39 @@ impl CallGraph {
             file_to_functions: HashMap::new(),
             public_functions: Vec::new(),
             async_functions: Vec::new(),
+            cycle_detection_skipped: false,
+            cycle_detection_node_count: 0,
         }
     }
 
     pub fn add_function(&mut self, func: FunctionNode) -> NodeIndex {
         let name = func.full_path.clone();
-        let idx = self.graph.add_node(func);
-        self.name_index.insert(name.clone(), idx);
 
-        // Update inverted indexes
+        // Check for duplicate - don't silently overwrite
+        if let Some(&existing) = self.name_index.get(&name) {
+            eprintln!("⚠️ Duplicate function: {} (using existing node)", name);
+            return existing;
+        }
+
+        let idx = self.graph.add_node(func);
+        self.name_index.insert(name, idx);
+
         let func_ref = &self.graph[idx];
 
-        // Name index (simple name, not full path)
         self.name_to_functions
             .entry(func_ref.name.clone())
             .or_default()
             .push(idx);
 
-        // File index
         self.file_to_functions
             .entry(func_ref.file.clone())
             .or_default()
             .push(idx);
 
-        // Public functions
         if func_ref.is_public {
             self.public_functions.push(idx);
         }
 
-        // Async functions
         if func_ref.is_async {
             self.async_functions.push(idx);
         }
@@ -94,6 +106,7 @@ impl CallGraph {
     pub fn add_call(&mut self, caller: NodeIndex, callee: NodeIndex, edge: CallEdge) {
         self.graph.add_edge(caller, callee, edge);
     }
+
     pub fn get_functions_by_name(&self, name: &str) -> Vec<&FunctionNode> {
         self.name_to_functions
             .get(name)
@@ -132,11 +145,22 @@ impl CallGraph {
             .collect()
     }
 
+    /// Returns None if multiple functions share the same name
     pub fn get_by_name_simple(&self, name: &str) -> Option<NodeIndex> {
-        // Exact match on simple name (not full path)
-        self.name_to_functions
-            .get(name)
-            .and_then(|indices| indices.first().copied())
+        if let Some(indices) = self.name_to_functions.get(name) {
+            if indices.len() == 1 {
+                Some(indices[0])
+            } else {
+                eprintln!(
+                    "⚠️ Ambiguous function name '{}' ({} matches). Use full_path instead.",
+                    name,
+                    indices.len()
+                );
+                None
+            }
+        } else {
+            None
+        }
     }
 
     pub fn node_indices(&self) -> impl Iterator<Item = NodeIndex> {
@@ -205,32 +229,31 @@ impl CallGraph {
         dot
     }
 
-    pub fn detect_cycles(&self) -> Vec<Vec<NodeIndex>> {
-        let mut cycles = Vec::new();
+    pub fn detect_cycles(&self) -> CycleDetectionResult {
+        const MAX_NODES: usize = 5000;
         let total_nodes = self.graph.node_count();
 
-        // ⭐ Safety limit
-        if total_nodes > 5000 {
-            eprintln!(
-                "⚠️ Graph too large for cycle detection ({} nodes). Skipping.",
-                total_nodes
-            );
-            return cycles;
+        if total_nodes > MAX_NODES {
+            return CycleDetectionResult {
+                cycles: Vec::new(),
+                skipped: true,
+                node_count: total_nodes,
+                max_nodes_limit: MAX_NODES,
+            };
         }
 
-        // Use Tarjan's algorithm with iterative approach
+        let mut cycles = Vec::new();
         let mut index = 0;
         let mut stack = Vec::new();
-        let mut indices = std::collections::HashMap::new();
-        let mut lowlink = std::collections::HashMap::new();
-        let mut on_stack = std::collections::HashSet::new();
+        let mut indices = HashMap::new();
+        let mut lowlink = HashMap::new();
+        let mut on_stack = HashSet::new();
 
         for start_node in self.graph.node_indices() {
             if indices.contains_key(&start_node) {
                 continue;
             }
 
-            // Iterative DFS
             let mut dfs_stack = vec![(start_node, 0)];
             indices.insert(start_node, index);
             lowlink.insert(start_node, index);
@@ -264,7 +287,6 @@ impl CallGraph {
                         }
                     }
                 } else {
-                    // Finished processing this node — copy out of the mutable borrow first
                     let node = *node;
                     let node_low = *lowlink.get(&node).unwrap_or(&0);
 
@@ -277,7 +299,6 @@ impl CallGraph {
                         }
                     }
 
-                    // Check if this is a root of an SCC
                     if node_low == *indices.get(&node).unwrap_or(&0) {
                         let mut scc = Vec::new();
                         while let Some(w) = stack.pop() {
@@ -297,25 +318,38 @@ impl CallGraph {
             }
         }
 
-        cycles
+        CycleDetectionResult {
+            cycles,
+            skipped: false,
+            node_count: total_nodes,
+            max_nodes_limit: MAX_NODES,
+        }
     }
 
-    /// Mark functions that are part of cycles
     pub fn mark_cycle_members(&mut self) {
-        let cycles = self.detect_cycles();
-        let mut cycle_members = HashSet::new();
+        let result = self.detect_cycles();
+        self.cycle_detection_skipped = result.skipped;
+        self.cycle_detection_node_count = result.node_count;
 
-        for cycle in cycles {
+        if result.skipped {
+            eprintln!(
+                "⚠️ Cycle detection skipped: {} nodes exceeds limit of {}",
+                result.node_count, result.max_nodes_limit
+            );
+            return;
+        }
+
+        let mut cycle_members = HashSet::new();
+        for cycle in result.cycles {
             for node in cycle {
                 cycle_members.insert(node);
             }
         }
-
         for node in cycle_members {
             self.graph[node].is_cycle = true;
         }
     }
-    /// Calculate fan-in and fan-out for all functions
+
     pub fn calculate_fan_metrics(&mut self) {
         let mut updates = Vec::new();
         for idx in self.graph.node_indices() {
@@ -329,7 +363,6 @@ impl CallGraph {
         }
     }
 
-    /// Detect architecture layers from file paths
     pub fn detect_layers(&mut self) {
         for idx in self.graph.node_indices() {
             let func = &self.graph[idx];
@@ -361,20 +394,17 @@ impl CallGraph {
         }
     }
 
-    /// Calculate call depth from entry points using iterative BFS
     pub fn calculate_call_depth(&mut self) {
         use std::collections::{HashMap, VecDeque};
 
         let mut depths = HashMap::new();
 
-        // Entry points: public functions with no callers
         let entry_points: Vec<NodeIndex> = self
             .graph
             .node_indices()
             .filter(|&idx| self.graph[idx].is_public && self.get_callers(idx).is_empty())
             .collect();
 
-        // BFS from entry points (iterative, no recursion)
         let mut queue = VecDeque::new();
         for entry in entry_points {
             queue.push_back((entry, 0));
@@ -389,9 +419,6 @@ impl CallGraph {
                 let target = edge.target();
                 let new_depth = depth + 1;
 
-                // Visit each node exactly once — first (shortest) path wins.
-                // A "revisit if deeper" rule never terminates on a cyclic graph,
-                // since walking a cycle repeatedly always increases new_depth.
                 if !depths.contains_key(&target) {
                     depths.insert(target, new_depth);
                     queue.push_back((target, new_depth));
@@ -399,7 +426,6 @@ impl CallGraph {
             }
         }
 
-        // Apply depths, default to 0 for unvisited
         for idx in self.graph.node_indices() {
             self.graph[idx].depth = *depths.get(&idx).unwrap_or(&0);
         }
@@ -411,11 +437,11 @@ impl CallGraph {
             .filter(|idx| self.graph[*idx].importance_score > min_importance)
             .collect();
 
+        // Use total_cmp - never panics on NaN
         candidates.sort_by(|a, b| {
             self.graph[*b]
                 .importance_score
-                .partial_cmp(&self.graph[*a].importance_score)
-                .unwrap()
+                .total_cmp(&self.graph[*a].importance_score)
         });
         candidates.truncate(max_nodes);
         candidates
@@ -425,7 +451,6 @@ impl CallGraph {
 crate::impl_graph_metrics!(CallGraph);
 crate::impl_graph_index!(CallGraph, FunctionNode);
 
-// Allow indexing into &CallGraph (this is fine)
 impl std::ops::Index<petgraph::graph::NodeIndex> for &CallGraph {
     type Output = FunctionNode;
 

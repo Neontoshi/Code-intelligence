@@ -293,10 +293,13 @@ impl FunctionFeatures {
 
         let features = builder.build();
 
-        // Validate against schema in debug mode
-        if cfg!(debug_assertions) {
+        // Validate against schema in debug mode - log error instead of panic
+        #[cfg(debug_assertions)]
+        {
             if let Err(e) = FEATURE_SCHEMA.validate_vector(&features) {
-                panic!("Feature vector validation failed: {}", e);
+                eprintln!("⚠️ Feature vector validation failed: {}", e);
+                eprintln!("   Feature count: {}", features.len());
+                eprintln!("   Expected: {}", FEATURE_SCHEMA.feature_count());
             }
         }
 

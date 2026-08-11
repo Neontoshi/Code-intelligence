@@ -174,7 +174,7 @@ impl CalibratedModel {
             })
             .collect();
 
-        preds.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        preds.sort_by(|a, b| a.0.total_cmp(&b.0));
 
         let bin_size = preds.len() / num_bins;
         for i in 0..num_bins {
