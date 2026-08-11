@@ -138,8 +138,8 @@ impl Default for FileCache {
 // Analysis Cache - Stores full ProjectIntelligence with content hashes
 // ============================================================================
 
-/// File entry with content hash for validation
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// File entry with path and content hash for validation
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CachedFileEntry {
     pub path: String,
     pub content_hash: String,
@@ -154,9 +154,22 @@ pub struct AnalysisCache {
     pub timestamp: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CachedAnalysis {
+    pub project_hash: String,
+    pub root: String,
+    pub function_count: usize,
+    pub edge_count: usize,
+    pub file_count: usize,
+    pub timestamp: i64,
+    pub files: Vec<CachedFileEntry>,
+}
+
 pub struct AnalysisCacheManager {
     cache_dir: PathBuf,
     cache: DashMap<String, AnalysisCache>,
+    #[allow(dead_code)]
+    file_cache: FileCache,
 }
 
 impl AnalysisCacheManager {
@@ -165,6 +178,7 @@ impl AnalysisCacheManager {
         let _ = std::fs::create_dir_all(&cache_dir);
 
         let cache = DashMap::new();
+        let file_cache = FileCache::new().with_persistent_dir(cache_dir.clone());
 
         // Load existing cache
         if let Ok(entries) = std::fs::read_dir(&cache_dir) {
@@ -183,7 +197,11 @@ impl AnalysisCacheManager {
             }
         }
 
-        Self { cache_dir, cache }
+        Self {
+            cache_dir,
+            cache,
+            file_cache,
+        }
     }
 
     pub fn get(&self, project_hash: &str) -> Option<AnalysisCache> {
@@ -200,37 +218,125 @@ impl AnalysisCacheManager {
     }
 
     /// Validate cache by comparing file paths AND content hashes
-    pub fn is_valid(&self, project_hash: &str, files: &[(PathBuf, String)]) -> bool {
+    pub fn is_valid(&self, project_hash: &str, files: &[CachedFileEntry]) -> bool {
         if let Some(cached) = self.get(project_hash) {
-            // Build current entries: (path_string, content_hash)
-            let current: Vec<CachedFileEntry> = files
-                .iter()
-                .filter_map(|(path, hash)| {
-                    path.to_str().map(|s| CachedFileEntry {
-                        path: s.to_string(),
-                        content_hash: hash.clone(),
-                    })
-                })
-                .collect();
-
-            cached.files == current
+            cached.files == files
         } else {
             false
         }
     }
 
-    /// Legacy version for compatibility (deprecated - use is_valid with hashes)
-    #[deprecated(note = "Use is_valid with content hashes instead")]
-    pub fn is_valid_legacy(&self, project_hash: &str, files: &[PathBuf]) -> bool {
-        if let Some(cached) = self.get(project_hash) {
-            let current_paths: Vec<String> = files
-                .iter()
-                .filter_map(|p| p.to_str().map(|s| s.to_string()))
-                .collect();
-            let cached_paths: Vec<String> = cached.files.iter().map(|f| f.path.clone()).collect();
-            cached_paths == current_paths
+    /// Save full analysis result to cache
+    pub fn save_analysis(
+        &self,
+        project_hash: &str,
+        root: &Path,
+        function_count: usize,
+        edge_count: usize,
+        files: &[CachedFileEntry],
+    ) -> Result<(), String> {
+        let cache_path = self
+            .cache_dir
+            .join(format!("{}.analysis.json", project_hash));
+
+        let cached = CachedAnalysis {
+            project_hash: project_hash.to_string(),
+            root: root.to_string_lossy().to_string(),
+            function_count,
+            edge_count,
+            file_count: files.len(),
+            timestamp: chrono::Utc::now().timestamp(),
+            files: files.to_vec(),
+        };
+
+        let data = serde_json::to_string_pretty(&cached)
+            .map_err(|e| format!("Failed to serialize: {}", e))?;
+
+        std::fs::write(&cache_path, data).map_err(|e| format!("Failed to write cache: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Load cached analysis metadata (full reconstruction would need file contents)
+    pub fn load_analysis_metadata(&self, project_hash: &str) -> Option<CachedAnalysis> {
+        let cache_path = self
+            .cache_dir
+            .join(format!("{}.analysis.json", project_hash));
+        let data = std::fs::read_to_string(&cache_path).ok()?;
+        serde_json::from_str(&data).ok()
+    }
+
+    /// Check if cached analysis exists and is valid
+    pub fn has_valid_analysis(&self, project_hash: &str, files: &[CachedFileEntry]) -> bool {
+        if let Some(cached) = self.load_analysis_metadata(project_hash) {
+            // Validate files haven't changed
+            cached.files == files
         } else {
             false
         }
+    }
+
+    pub fn clear(&self) {
+        self.cache.clear();
+        let _ = std::fs::remove_dir_all(&self.cache_dir);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env::temp_dir;
+
+    #[test]
+    fn test_cache_hash_file() {
+        let cache = FileCache::new();
+        let temp_file = temp_dir().join("test.txt");
+        std::fs::write(&temp_file, "hello world").unwrap();
+
+        let hash = cache.hash_file(&temp_file);
+        assert!(hash.is_some());
+
+        let hash_str = hash.unwrap();
+        assert_eq!(hash_str.len(), 64); // SHA256 hex length
+    }
+
+    #[test]
+    fn test_cache_hash_content() {
+        let cache = FileCache::new();
+        let hash1 = cache.hash_content("hello world");
+        let hash2 = cache.hash_content("hello world");
+        assert_eq!(hash1, hash2);
+
+        let hash3 = cache.hash_content("hello world!");
+        assert_ne!(hash1, hash3);
+    }
+
+    #[test]
+    fn test_analysis_cache_manager() {
+        let temp_dir = temp_dir().join("test_cache");
+        let manager = AnalysisCacheManager::new(&temp_dir);
+
+        let project_hash = "test_project";
+        let files = vec![CachedFileEntry {
+            path: "src/main.rs".to_string(),
+            content_hash: "abc123".to_string(),
+        }];
+
+        let cache_entry = AnalysisCache {
+            project_hash: project_hash.to_string(),
+            files: files.clone(),
+            function_count: 10,
+            edge_count: 5,
+            timestamp: chrono::Utc::now().timestamp(),
+        };
+
+        manager.put(project_hash, &cache_entry);
+
+        let retrieved = manager.get(project_hash);
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().function_count, 10);
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

@@ -3,7 +3,7 @@
 use crate::analysis::context::{ProjectAnalysis, ProjectAnalysisBuilder};
 use crate::analysis::features::FeatureExtractor;
 use crate::analysis::importance::ImportanceScorer;
-use crate::engine::cache::FileCache;
+use crate::engine::cache::{AnalysisCacheManager, CachedFileEntry, FileCache};
 use crate::engine::call_graph_builder::CallGraphBuilder;
 use crate::engine::config::PipelineConfig;
 use crate::engine::file_collector::FileCollector;
@@ -17,33 +17,33 @@ use crate::llm::{create_ollama_phi2, CodeUnderstandingEngine, LLMProvider};
 use crate::parser::tree_sitter::{ParsedFile, TreeSitterParser};
 use rayon::prelude::*;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 // ============================================================================
 // Pipeline Struct
 // ============================================================================
-
+#[allow(dead_code)]
 pub struct Pipeline {
-    _parser: TreeSitterParser,
+    parser: TreeSitterParser,
     scorer: ImportanceScorer,
-    _cache: FileCache,
+    cache: FileCache,
     config: PipelineConfig,
     llm_provider: Option<Arc<dyn LLMProvider>>,
     code_understanding: Option<CodeUnderstandingEngine>,
-    _analysis_cache: Option<crate::engine::cache::AnalysisCacheManager>,
+    analysis_cache: Option<AnalysisCacheManager>,
 }
 
 impl Pipeline {
     pub fn new() -> Self {
         Self {
-            _parser: TreeSitterParser::new(),
+            parser: TreeSitterParser::new(),
             scorer: ImportanceScorer::new(),
-            _cache: FileCache::new(),
+            cache: FileCache::new(),
             config: PipelineConfig::default(),
             llm_provider: None,
             code_understanding: None,
-            _analysis_cache: None,
+            analysis_cache: None,
         }
     }
 
@@ -56,6 +56,12 @@ impl Pipeline {
         self.llm_provider = Some(provider.clone());
         self.code_understanding = Some(CodeUnderstandingEngine::new(provider));
         self.config.enable_llm = true;
+        self
+    }
+
+    pub fn with_cache_dir(mut self, cache_dir: PathBuf) -> Self {
+        self.cache = self.cache.with_persistent_dir(cache_dir.clone());
+        self.analysis_cache = Some(AnalysisCacheManager::new(&cache_dir));
         self
     }
 
@@ -78,6 +84,34 @@ impl Pipeline {
     pub fn enable_git(mut self) -> Self {
         self.config.enable_git = true;
         self
+    }
+
+    // ========================================================================
+    // File Hash Collection for Cache
+    // ========================================================================
+
+    fn collect_file_hashes(&self, root: &Path) -> Vec<CachedFileEntry> {
+        let mut entries = Vec::new();
+        let supported_extensions = ["rs", "py", "js", "jsx", "ts", "tsx", "go", "java"];
+
+        for entry in walkdir::WalkDir::new(root)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_file())
+        {
+            let path = entry.path();
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if supported_extensions.contains(&ext) {
+                    if let Some(hash) = self.cache.hash_file(path) {
+                        entries.push(CachedFileEntry {
+                            path: path.to_string_lossy().to_string(),
+                            content_hash: hash,
+                        });
+                    }
+                }
+            }
+        }
+        entries
     }
 
     // ========================================================================
@@ -156,8 +190,10 @@ impl Pipeline {
         AnalyzedProject {
             root: parsed.root,
             files: parsed.files,
-            call_graph,
+            call_graph: call_graph.clone(),
             project_graph,
+            cycle_detection_skipped: call_graph.cycle_detection_skipped,
+            cycle_detection_node_count: call_graph.cycle_detection_node_count,
         }
     }
 
@@ -248,6 +284,28 @@ impl Pipeline {
         root: &Path,
     ) -> Result<ProjectAnalysis, Box<dyn std::error::Error>> {
         let start_time = std::time::Instant::now();
+        let project_hash = self.cache.hash_content(&format!("{:?}", root));
+
+        // Check if we have cached analysis
+        if let Some(cache_mgr) = &self.analysis_cache {
+            let file_entries = self.collect_file_hashes(root);
+
+            if cache_mgr.has_valid_analysis(&project_hash, &file_entries) {
+                if let Some(cached) = cache_mgr.load_analysis_metadata(&project_hash) {
+                    println!("✅ Cache hit! Found cached analysis for {:?}", root);
+                    println!("   Functions: {}", cached.function_count);
+                    println!("   Edges: {}", cached.edge_count);
+                    println!("   Files: {}", cached.file_count);
+
+                    // For now, we still need to do full analysis since we don't store
+                    // the complete ProjectAnalysis in cache yet.
+                    // We'll add full serialization in a future iteration.
+                    println!("   ⚠️ Cache hit only metadata. Full reconstruction coming soon.");
+                }
+            } else {
+                println!("🔍 Cache miss or invalid. Running full analysis...");
+            }
+        }
 
         let raw = self.stage_collect(root);
         println!("📁 Found {} source files", raw.files.len());
@@ -265,9 +323,14 @@ impl Pipeline {
         println!("✅ Successfully parsed {} files", parsed.files.len());
 
         if parsed.files.is_empty() {
-            return Ok(ProjectAnalysisBuilder::new(root.to_path_buf())
+            let analysis = ProjectAnalysisBuilder::new(root.to_path_buf())
                 .with_call_graph(CallGraph::new())
-                .build());
+                .build();
+
+            // Cache empty result
+            self.save_to_cache(&project_hash, root, &analysis)?;
+
+            return Ok(analysis);
         }
 
         println!("🔄 Building graphs in parallel...");
@@ -358,6 +421,9 @@ impl Pipeline {
         let duration = start_time.elapsed();
         println!("⏱️ Analysis completed in {:.2}s", duration.as_secs_f64());
 
+        // Save to cache
+        self.save_to_cache(&project_hash, root, &analysis)?;
+
         Ok(analysis)
     }
 
@@ -396,5 +462,42 @@ impl Pipeline {
         }
 
         Ok(intelligence)
+    }
+
+    // ========================================================================
+    // Cache Helpers
+    // ========================================================================
+
+    fn save_to_cache(
+        &self,
+        project_hash: &str,
+        root: &Path,
+        analysis: &ProjectAnalysis,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(cache_mgr) = &self.analysis_cache {
+            let file_entries = self.collect_file_hashes(root);
+
+            // Store analysis cache metadata
+            let cache_entry = crate::engine::cache::AnalysisCache {
+                project_hash: project_hash.to_string(),
+                files: file_entries.clone(),
+                function_count: analysis.call_graph.node_count(),
+                edge_count: analysis.call_graph.edge_count(),
+                timestamp: chrono::Utc::now().timestamp(),
+            };
+            cache_mgr.put(project_hash, &cache_entry);
+
+            // Store full analysis metadata
+            let _ = cache_mgr.save_analysis(
+                project_hash,
+                root,
+                analysis.call_graph.node_count(),
+                analysis.call_graph.edge_count(),
+                &file_entries,
+            );
+
+            println!("💾 Cached analysis for {:?}", root);
+        }
+        Ok(())
     }
 }

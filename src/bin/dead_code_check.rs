@@ -40,6 +40,14 @@ struct Args {
     /// Show debug info about why functions are excluded
     #[arg(long)]
     debug: bool,
+
+    /// Enable disk cache for faster repeat runs
+    #[arg(long)]
+    cache: bool,
+
+    /// Cache directory (default: <project>/.code-intelligence-cache)
+    #[arg(long)]
+    cache_dir: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -61,6 +69,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔍 Analyzing dead code in: {:?}\n", args.project_dir);
 
     let mut pipeline = Pipeline::new();
+
+    if args.cache {
+        let cache_path = args
+            .cache_dir
+            .clone()
+            .unwrap_or_else(|| args.project_dir.join(".code-intelligence-cache"));
+        pipeline = pipeline.with_cache_dir(cache_path.clone());
+        if args.verbose {
+            println!("💾 Cache enabled: {:?}", cache_path);
+        }
+    }
+
     let analysis = pipeline.process_project(&args.project_dir).await?;
 
     // Try to get git analysis

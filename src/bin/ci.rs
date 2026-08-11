@@ -109,6 +109,12 @@ enum Commands {
         /// Enable Git analysis
         #[arg(long)]
         git: bool,
+        /// Enable disk cache for faster repeat runs
+        #[arg(long)]
+        cache: bool,
+        /// Cache directory (default: <project>/.code-intelligence-cache)
+        #[arg(long)]
+        cache_dir: Option<PathBuf>,
     },
 
     /// Find duplicate code in a project
@@ -407,9 +413,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             verbose,
             llm,
             git,
+            cache,
+            cache_dir,
         } => {
             let project_path = resolve_path(&path)?;
-            run_analyze(&project_path, threshold, verbose, llm, git)?;
+            run_analyze(
+                &project_path,
+                threshold,
+                verbose,
+                llm,
+                git,
+                cache,
+                cache_dir,
+            )?;
         }
         Commands::Dedup {
             path,
@@ -690,6 +706,8 @@ fn run_analyze(
     verbose: bool,
     llm: bool,
     git: bool,
+    cache: bool,
+    cache_dir: Option<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("🔍 Analyzing project: {:?}", path);
 
@@ -717,13 +735,21 @@ fn run_analyze(
     if git {
         println!("📊 Git analysis: enabled");
     }
+    if cache {
+        let cache_path = cache_dir
+            .clone()
+            .unwrap_or_else(|| path.join(".code-intelligence-cache"));
+        println!("💾 Cache enabled: {:?}", cache_path);
+    } else {
+        println!("💾 Cache disabled (use --cache to enable)");
+    }
     println!("");
 
     // Find the dead_code_check binary
     let binary_path = find_binary("dead_code_check");
 
     let status = if let Some(bin_path) = binary_path {
-        let mut cmd = Command::new(&bin_path);
+        let mut cmd = std::process::Command::new(&bin_path);
         cmd.arg(path)
             .args(["--model", &model_path])
             .args(["--threshold", &format!("{:.2}", threshold)]);
@@ -736,6 +762,12 @@ fn run_analyze(
         }
         if git {
             cmd.arg("--git");
+        }
+        if cache {
+            cmd.arg("--cache");
+            if let Some(cache_dir) = &cache_dir {
+                cmd.args(["--cache-dir", &cache_dir.to_string_lossy()]);
+            }
         }
 
         cmd.status()?

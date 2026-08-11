@@ -26,6 +26,8 @@ pub struct AnalyzedProject {
     pub files: Vec<ParsedFile>,
     pub call_graph: CallGraph,
     pub project_graph: ProjectGraph,
+    pub cycle_detection_skipped: bool,
+    pub cycle_detection_node_count: usize,
 }
 
 /// Stage 4: Optimized project with features and indexes
