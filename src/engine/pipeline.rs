@@ -123,10 +123,22 @@ impl Pipeline {
     }
 
     pub fn stage_parse_parallel(&self, raw: RawProject) -> ParsedProject {
+        use indicatif::{ProgressBar, ProgressStyle};
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         let total = raw.files.len();
         let completed = Arc::new(AtomicUsize::new(0));
+
+        // Create a clean progress bar
+        let pb = ProgressBar::new(total as u64);
+        pb.set_style(
+            ProgressStyle::with_template(
+                "  {spinner:.cyan} parsing files [{bar:40.cyan/blue}] {pos}/{len}",
+            )
+            .unwrap()
+            .progress_chars("##-"),
+        );
+        pb.enable_steady_tick(std::time::Duration::from_millis(100));
 
         let parsed_files: Vec<ParsedFile> = raw
             .files
@@ -135,10 +147,9 @@ impl Pipeline {
                 let thread_parser = TreeSitterParser::new();
                 let result = thread_parser.parse_file(file);
 
-                let count = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                if count % 10 == 0 || count == total {
-                    eprintln!("   📄 Parsed {}/{} files", count, total);
-                }
+                // Update the progress bar
+                completed.fetch_add(1, Ordering::Relaxed);
+                pb.inc(1);
 
                 match result {
                     Ok(parsed) => {
@@ -153,6 +164,7 @@ impl Pipeline {
             })
             .collect();
 
+        pb.finish_and_clear();
         ParsedProject {
             root: raw.root,
             files: parsed_files,
@@ -275,10 +287,6 @@ impl Pipeline {
             .build()
     }
 
-    // ========================================================================
-    // Main Processing Methods
-    // ========================================================================
-
     pub async fn process_project(
         &mut self,
         root: &Path,
@@ -297,9 +305,6 @@ impl Pipeline {
                     println!("   Edges: {}", cached.edge_count);
                     println!("   Files: {}", cached.file_count);
 
-                    // For now, we still need to do full analysis since we don't store
-                    // the complete ProjectAnalysis in cache yet.
-                    // We'll add full serialization in a future iteration.
                     println!("   ⚠️ Cache hit only metadata. Full reconstruction coming soon.");
                 }
             } else {
@@ -333,44 +338,20 @@ impl Pipeline {
             return Ok(analysis);
         }
 
-        println!("🔄 Building graphs in parallel...");
+        // 🛑 START: THE CLEAN BUILD PHASE WITH SPINNER
+        let pb = indicatif::ProgressBar::new_spinner();
+        pb.set_style(
+            indicatif::ProgressStyle::default_spinner()
+                .template("{spinner:.cyan} {msg}")?
+                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
+        );
+        pb.set_message("Building graphs and extracting features...");
+        pb.enable_steady_tick(std::time::Duration::from_millis(100));
+
+        // Stage 1: Analyze
         let analyzed = self.stage_analyze_parallel(parsed);
-        println!(
-            "📊 Built call graph: {} functions, {} edges",
-            analyzed.call_graph.node_count(),
-            analyzed.call_graph.edge_count()
-        );
-        println!(
-            "   📇 Indexes: {} names, {} files, {} public, {} async",
-            analyzed.call_graph.name_to_functions.len(),
-            analyzed.call_graph.file_to_functions.len(),
-            analyzed.call_graph.public_functions.len(),
-            analyzed.call_graph.async_functions.len()
-        );
 
-        let project_graph = &analyzed.project_graph;
-        println!(
-            "   📊 Project graph: {} nodes, {} edges",
-            project_graph.node_count(),
-            project_graph.edge_count()
-        );
-
-        let node_count = analyzed.call_graph.node_count();
-        if node_count < 1000 {
-            let mut call_graph = analyzed.call_graph.clone();
-            call_graph.mark_cycle_members();
-            let cycle_count = call_graph
-                .node_indices()
-                .filter(|&idx| call_graph[idx].is_cycle)
-                .count();
-            println!("   🔄 {} functions in cycles", cycle_count);
-        } else {
-            println!(
-                "   ⏭️ Skipping cycle detection ({} nodes > 1000)",
-                node_count
-            );
-        }
-
+        // ⭐ COMPUTE LAYERS + DUPLICATE COUNT BEFORE MOVING ANALYZED
         let layers: std::collections::HashSet<String> = analyzed
             .call_graph
             .node_indices()
@@ -378,20 +359,41 @@ impl Pipeline {
             .collect();
         let mut layer_list: Vec<_> = layers.into_iter().collect();
         layer_list.sort();
-        println!("   📂 Layers: {:?}", layer_list);
 
-        println!("🔄 Extracting features and building indexes in parallel...");
+        let duplicate_count = analyzed.call_graph.duplicate_functions.len(); // ⭐ grab it here, print later
+
+        // Stage 2: Optimize (this moves `analyzed`, so we already grabbed what we needed)
         let optimized = self.stage_optimize_parallel(analyzed);
+
+        pb.finish_and_clear();
+
+        // Print the clean summary — nothing else prints until the spinner is gone
+        println!("\n┌─ Build Summary ────────────────────────────");
         println!(
-            "   ✅ Extracted features for {} functions",
-            optimized.features.all().len()
+            "│ Call graph   : {:>5} functions, {:>5} edges",
+            optimized.call_graph.node_count(),
+            optimized.call_graph.edge_count()
         );
         println!(
-            "   ✅ Built indexes: {} names, {} files, {} hashes",
+            "│ Indexes      : {:>5} names, {:>5} files",
             optimized.rich_indexes.function_name.len(),
-            optimized.rich_indexes.file_to_functions.len(),
-            optimized.rich_indexes.signature_hash.len()
+            optimized.rich_indexes.file_to_functions.len()
         );
+        println!(
+            "│ Project graph: {:>5} nodes, {:>5} edges",
+            optimized.project_graph.node_count(),
+            optimized.project_graph.edge_count()
+        );
+        println!("│ Layers       : {}", layer_list.join(", "));
+        if duplicate_count > 0 {
+            println!(
+                "│ Duplicates   : {:>5} resolved to existing nodes",
+                duplicate_count
+            );
+        }
+        println!("└─────────────────────────────────────────────");
+
+        // 🛑 END: THE CLEAN BUILD PHASE WITH SPINNER
 
         let mut call_graph = optimized.call_graph.clone();
         self.scorer.score_all(&mut call_graph);

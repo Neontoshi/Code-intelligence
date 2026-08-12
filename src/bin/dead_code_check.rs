@@ -6,10 +6,13 @@ use code_intelligence::analysis::dynamic_refs::DynamicRefDetector;
 use code_intelligence::analysis::git_analysis::GitAnalyzer;
 use code_intelligence::analysis::roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector};
 use code_intelligence::analysis::verdict::{Verdict, VerdictConfig, VerdictEngine};
+use code_intelligence::analysis::AnalysisMetadata;
 use code_intelligence::graph::GraphMetrics;
 use code_intelligence::ml::classifier::DeadCodeClassifier;
 use code_intelligence::Pipeline;
-use std::path::PathBuf;
+use serde_json;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Dead Code Analyzer with ML Support")]
@@ -48,6 +51,18 @@ struct Args {
     /// Cache directory (default: <project>/.code-intelligence-cache)
     #[arg(long)]
     cache_dir: Option<PathBuf>,
+}
+
+fn get_current_commit(project_dir: &Path) -> String {
+    let output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["rev-parse", "HEAD"])
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        _ => "unknown".to_string(),
+    }
 }
 
 #[tokio::main]
@@ -391,13 +406,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build final analysis using imported verdicts + legacy types/modules
     // Clone types and modules since we need them for the report
     let filtered_analysis = DeadCodeAnalysis {
-        functions: dead_functions_with_impact.clone(), // ⭐ Clone for later use
-        types: legacy_analysis.types.clone(),          // ⭐ Clone
-        modules: legacy_analysis.modules.clone(),      // ⭐ Clone
+        functions: dead_functions_with_impact.clone(),
+        types: legacy_analysis.types.clone(),
+        modules: legacy_analysis.modules.clone(),
         reachability: reachability.clone(),
         summary: code_intelligence::analysis::dead_code::AnalysisSummary {
             total_functions: analysis.call_graph.node_count(),
-            dead_functions: dead_functions_with_impact.len(), // Use original, not moved
+            dead_functions: dead_functions_with_impact.len(),
             dead_types: legacy_analysis.summary.dead_types,
             dead_modules: legacy_analysis.summary.dead_modules,
             dead_files: legacy_analysis.summary.dead_files,
@@ -421,8 +436,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let report = impact_analyzer.generate_report(&filtered_analysis);
     println!("{}", report);
 
-    // Final Summary
+    // ============================================================
+    // ⭐ SAVE ANALYSIS METADATA FOR DASHBOARD
+    // ============================================================
+    let metadata = AnalysisMetadata {
+        analysis_id: format!("analysis_{}", chrono::Utc::now().timestamp()),
+        model_version: args
+            .model
+            .as_ref()
+            .map(|p| {
+                p.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .unwrap_or_else(|| "unknown".to_string()),
+        feature_schema_version: 1,
+        source_commit: get_current_commit(&args.project_dir),
+        analysis_timestamp: chrono::Utc::now().timestamp(),
+        total_functions: analysis.call_graph.node_count(),
+        dead_candidates: filtered_analysis.functions.len(),
+    };
 
+    let metadata_path = args.project_dir.join(".code-intelligence-metadata.json");
+    if let Ok(json) = serde_json::to_string_pretty(&metadata) {
+        let _ = std::fs::write(&metadata_path, json);
+        if args.verbose {
+            println!("💾 Analysis metadata saved to: {:?}", metadata_path);
+        }
+    }
+
+    // ============================================================
+    // Final Summary
+    // ============================================================
     println!("\n📊 Final Results:");
     println!("   Dead functions: {}", filtered_analysis.functions.len());
     println!("   Dead types: {}", filtered_analysis.summary.dead_types);

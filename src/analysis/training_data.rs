@@ -1,7 +1,5 @@
 // src/analysis/training_data.rs
 
-//! Training data generation for ML-based dead code detection
-
 use crate::graph::call_graph::{CallGraph, FunctionNode};
 use crate::ml::feature_schema::{FeatureVectorBuilder, FEATURE_SCHEMA};
 use serde::{Deserialize, Serialize};
@@ -17,12 +15,11 @@ pub struct TrainingExample {
     pub label: TrainingLabel,
     pub confidence: f64,
     pub source: String,
-    // ⭐ NEW METADATA FIELDS
     pub repository_id: Option<String>,
     pub commit_hash: Option<String>,
-    pub dataset_split: Option<String>, // "train", "val", "test"
-    pub label_reason: Option<String>, // "root", "has_callers", "test_function", "library_export", "truly_dead"
-    pub label_version: Option<u32>,   // Version of labeling logic
+    pub dataset_split: Option<String>,
+    pub label_reason: Option<String>,
+    pub label_version: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

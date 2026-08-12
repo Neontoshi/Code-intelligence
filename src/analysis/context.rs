@@ -116,6 +116,17 @@ pub struct ProjectAnalysisBuilder {
     rich_indexes: Option<RichIndexes>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AnalysisMetadata {
+    pub analysis_id: String,
+    pub model_version: String,
+    pub feature_schema_version: u32,
+    pub source_commit: String,
+    pub analysis_timestamp: i64,
+    pub total_functions: usize,
+    pub dead_candidates: usize,
+}
+
 impl ProjectAnalysisBuilder {
     pub fn new(root: PathBuf) -> Self {
         Self {

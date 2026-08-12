@@ -1,5 +1,7 @@
 // src/bin/dead_code_dashboard.rs
 
+mod dashboard_ui;
+
 use code_intelligence::analysis::dead_code::DeadCodeDetector;
 use code_intelligence::Pipeline;
 use crossterm::{
@@ -7,42 +9,93 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use dashboard_ui::styles::{ACCENT, ACCENT_DIM, BAD, MUTED, TEXT, WARN};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::widgets::TableState;
 use ratatui::{
     backend::{Backend, CrosstermBackend},
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
     symbols,
-    text::{Line, Span, Text},
-    widgets::{
-        Bar, BarChart, BarGroup, Block, BorderType, Borders, Cell, Gauge, Paragraph, Row, Table,
-        TableState, Tabs,
-    },
+    text::{Line, Span},
+    widgets::{Block, BorderType, Borders, Paragraph, Tabs},
     Frame, Terminal,
 };
+use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
 
-// ---------- Palette ----------
-// Keeping a small, consistent palette makes the whole dashboard read as one
-// coherent UI instead of a pile of ad-hoc colors.
-const ACCENT: Color = Color::Cyan;
-const ACCENT_DIM: Color = Color::DarkGray;
-const GOOD: Color = Color::Green;
-const WARN: Color = Color::Yellow;
-const BAD: Color = Color::Red;
-const TEXT: Color = Color::White;
-const MUTED: Color = Color::Gray;
+// ============================================================================
+// Data Structures
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DecisionType {
+    ConfirmedDead,
+    ConfirmedAlive,
+    FalsePositive,
+    NeedsInvestigation,
+    Deferred,
+    Stale,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash, Eq)]
+pub enum CandidateStatus {
+    Pending,
+    ConfirmedDead,
+    ConfirmedAlive,
+    FalsePositive,
+    Deferred,
+    Stale,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DashboardDecision {
+    pub candidate_id: String,
+    pub decision: DecisionType,
+    pub reason: Option<String>,
+    pub user: String,
+    pub timestamp: i64,
+    pub analysis_id: String,
+    pub model_version: String,
+    pub source_commit: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnalysisMetadata {
+    pub analysis_id: String,
+    pub model_version: String,
+    pub feature_schema_version: u32,
+    pub source_commit: String,
+    pub analysis_timestamp: i64,
+    pub total_functions: usize,
+    pub dead_candidates: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeadFunctionExtended {
+    pub id: String,
+    pub analysis_id: String,
+    pub function_name: String,
+    pub file: String,
+    pub line: usize,
+    pub confidence: f64,
+    pub level: String,
+    pub impact: String,
+    pub loc: usize,
+    pub order: usize,
+    pub model_version: String,
+    pub source_commit: String,
+    pub evidence: Vec<String>,
+    pub counter_evidence: Vec<String>,
+    pub status: CandidateStatus,
+}
 
 #[derive(Debug, Clone)]
-struct DeadFunction {
-    name: String,
-    file: String,
-    confidence: f64,
-    level: String,
-    impact: String,
-    loc: usize,
-    order: usize,
+pub enum Action {
+    ConfirmDead(String),
+    FalsePositive(String),
+    Defer(String),
 }
 
 #[derive(Debug, Clone)]
@@ -59,8 +112,12 @@ struct AnalysisSummary {
 #[derive(Debug, Clone)]
 struct DeadCodeAnalysis {
     summary: AnalysisSummary,
-    functions: Vec<DeadFunction>,
+    functions: Vec<DeadFunctionExtended>,
 }
+
+// ============================================================================
+// App State
+// ============================================================================
 
 struct App {
     analysis: Option<DeadCodeAnalysis>,
@@ -69,10 +126,19 @@ struct App {
     tabs: Vec<String>,
     loading: bool,
     error: Option<String>,
+    project_path: PathBuf,
+    decisions: Vec<DashboardDecision>,
+    analysis_metadata: Option<AnalysisMetadata>,
+    show_confirmation: bool,
+    show_reason_dialog: bool,
+    pending_action: Option<Action>,
+    pending_id: Option<String>,
+    reason_input: String,
+    current_commit: String,
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(path: PathBuf) -> Self {
         Self {
             analysis: None,
             table_state: TableState::default(),
@@ -83,14 +149,122 @@ impl App {
                 "List".to_string(),
                 "By File".to_string(),
                 "Priority".to_string(),
+                "History".to_string(),
             ],
             loading: true,
             error: None,
+            project_path: path,
+            decisions: Vec::new(),
+            analysis_metadata: None,
+            show_confirmation: false,
+            show_reason_dialog: false,
+            pending_action: None,
+            pending_id: None,
+            reason_input: String::new(),
+            current_commit: String::new(),
+        }
+    }
+
+    fn get_current_commit(&self) -> String {
+        use std::process::Command;
+        let output = Command::new("git")
+            .current_dir(&self.project_path)
+            .args(["rev-parse", "HEAD"])
+            .output();
+        match output {
+            Ok(out) if out.status.success() => {
+                String::from_utf8_lossy(&out.stdout).trim().to_string()
+            }
+            _ => "unknown".to_string(),
+        }
+    }
+
+    fn load_analysis_metadata(&self) -> Option<AnalysisMetadata> {
+        let path = self.project_path.join(".code-intelligence-metadata.json");
+        if path.exists() {
+            let data = std::fs::read_to_string(&path).ok()?;
+            serde_json::from_str(&data).ok()
+        } else {
+            None
+        }
+    }
+
+    fn load_decisions(&self) -> Vec<DashboardDecision> {
+        let path = self.project_path.join(".code-intelligence-decisions.json");
+        if path.exists() {
+            let data = std::fs::read_to_string(&path).unwrap_or_default();
+            serde_json::from_str(&data).unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn save_decision(&self, decision: &DashboardDecision) {
+        let path = self.project_path.join(".code-intelligence-decisions.json");
+        let mut decisions = self.load_decisions();
+        decisions.push(decision.clone());
+        let _ = std::fs::write(&path, serde_json::to_string_pretty(&decisions).unwrap());
+    }
+
+    fn get_analysis_id(&self) -> String {
+        self.analysis_metadata
+            .as_ref()
+            .map(|m| m.analysis_id.clone())
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+
+    fn get_model_version(&self) -> String {
+        self.analysis_metadata
+            .as_ref()
+            .map(|m| m.model_version.clone())
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+
+    fn get_source_commit(&self) -> String {
+        self.analysis_metadata
+            .as_ref()
+            .map(|m| m.source_commit.clone())
+            .unwrap_or_else(|| self.current_commit.clone())
+    }
+
+    fn record_decision(
+        &mut self,
+        candidate_id: &str,
+        decision: DecisionType,
+        reason: Option<String>,
+    ) {
+        let decision_record = DashboardDecision {
+            candidate_id: candidate_id.to_string(),
+            decision: decision.clone(),
+            reason,
+            user: std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
+            timestamp: chrono::Utc::now().timestamp(),
+            analysis_id: self.get_analysis_id(),
+            model_version: self.get_model_version(),
+            source_commit: self.get_source_commit(),
+        };
+        self.save_decision(&decision_record);
+        self.decisions.push(decision_record);
+        if let Some(analysis) = &mut self.analysis {
+            if let Some(candidate) = analysis.functions.iter_mut().find(|c| c.id == candidate_id) {
+                candidate.status = match decision {
+                    DecisionType::ConfirmedDead => CandidateStatus::ConfirmedDead,
+                    DecisionType::ConfirmedAlive => CandidateStatus::ConfirmedAlive,
+                    DecisionType::FalsePositive => CandidateStatus::FalsePositive,
+                    DecisionType::Deferred => CandidateStatus::Deferred,
+                    _ => candidate.status.clone(),
+                };
+            }
         }
     }
 
     fn load_data(&mut self, path: PathBuf) {
         self.loading = true;
+        self.current_commit = self.get_current_commit();
+        self.analysis_metadata = self.load_analysis_metadata();
+        self.decisions = self.load_decisions();
+
+        // 🛑 REMOVED THE RAW PRINTLN! STATEMENTS SO THE TUI ISN'T CORRUPTED
 
         let result = std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
@@ -100,7 +274,6 @@ impl App {
                     .process_project(&path)
                     .await
                     .map_err(|e| e.to_string())?;
-
                 let dead_analysis = DeadCodeDetector::analyze(
                     &analysis.call_graph,
                     &analysis.type_graph,
@@ -109,28 +282,79 @@ impl App {
                     &analysis.files,
                     None,
                 );
-
                 Ok::<_, String>(dead_analysis)
             })
         });
 
         match result.join().unwrap() {
             Ok(analysis) => {
-                let mut functions: Vec<DeadFunction> = analysis
+                let is_stale = self
+                    .analysis_metadata
+                    .as_ref()
+                    .map(|m| m.source_commit != self.current_commit)
+                    .unwrap_or(false);
+
+                let mut functions: Vec<DeadFunctionExtended> = analysis
                     .functions
                     .iter()
-                    .map(|f| DeadFunction {
-                        name: f.name.clone(),
-                        file: f.file.clone(),
-                        confidence: f.score.score * 100.0,
-                        level: format!("{:?}", f.score.level),
-                        impact: f.impact.estimated_removal_impact.clone(),
-                        loc: f.impact.lines_of_code,
-                        order: f.removal_order,
+                    .map(|f| {
+                        let candidate_id = format!(
+                            "{}::{}::{}",
+                            self.get_analysis_id(),
+                            f.file.replace('/', "_"),
+                            f.name
+                        );
+                        let status = if is_stale {
+                            CandidateStatus::Stale
+                        } else if let Some(decision) = self
+                            .decisions
+                            .iter()
+                            .find(|d| d.candidate_id == candidate_id)
+                        {
+                            match decision.decision {
+                                DecisionType::ConfirmedDead => CandidateStatus::ConfirmedDead,
+                                DecisionType::ConfirmedAlive => CandidateStatus::ConfirmedAlive,
+                                DecisionType::FalsePositive => CandidateStatus::FalsePositive,
+                                DecisionType::Deferred => CandidateStatus::Deferred,
+                                _ => CandidateStatus::Pending,
+                            }
+                        } else {
+                            CandidateStatus::Pending
+                        };
+
+                        DeadFunctionExtended {
+                            id: candidate_id,
+                            analysis_id: self.get_analysis_id(),
+                            function_name: f.name.clone(),
+                            file: f.file.clone(),
+                            line: f.line,
+                            confidence: f.score.score * 100.0,
+                            level: format!("{:?}", f.score.level),
+                            impact: f.impact.estimated_removal_impact.clone(),
+                            loc: f.impact.lines_of_code,
+                            order: f.removal_order,
+                            model_version: self.get_model_version(),
+                            source_commit: self.get_source_commit(),
+                            evidence: f
+                                .score
+                                .factors
+                                .iter()
+                                .filter(|s| s.contribution > 0.0)
+                                .map(|s| s.explanation.clone())
+                                .collect(),
+                            counter_evidence: f
+                                .score
+                                .factors
+                                .iter()
+                                .filter(|s| s.contribution < 0.0)
+                                .map(|s| s.explanation.clone())
+                                .collect(),
+                            status,
+                        }
                     })
                     .collect();
-                functions.sort_by_key(|f| f.order);
 
+                functions.sort_by_key(|f| f.order);
                 self.analysis = Some(DeadCodeAnalysis {
                     summary: AnalysisSummary {
                         total_functions: analysis.summary.total_functions,
@@ -162,8 +386,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         PathBuf::from(".")
     };
 
-    println!("Analyzing dead code in: {:?}", path);
-    println!("Loading...");
+    // No println here!
+    // No indicatif spinner here!
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -171,9 +395,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new();
+    let mut app = App::new(path.clone());
     app.load_data(path);
-
     let res = run_app(&mut terminal, &mut app);
 
     disable_raw_mode()?;
@@ -187,97 +410,182 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Err(err) = res {
         println!("{:?}", err);
     }
-
     Ok(())
 }
+
+// ============================================================================
+// UI Rendering (thin wrapper that calls dashboard_ui)
+// ============================================================================
 
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<()> {
     loop {
         terminal.draw(|f| ui(f, app))?;
-
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Esc => return Ok(()),
-                    KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
-                        app.selected_tab = (app.selected_tab + 1) % app.tabs.len();
-                    }
-                    KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
-                        app.selected_tab = if app.selected_tab == 0 {
-                            app.tabs.len() - 1
-                        } else {
-                            app.selected_tab - 1
-                        };
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        let count = app
-                            .analysis
-                            .as_ref()
-                            .map(|a| a.functions.len())
-                            .unwrap_or(0);
-                        let selected = app.table_state.selected().unwrap_or(0);
-                        if count > 0 && selected < count - 1 {
-                            app.table_state.select(Some(selected + 1));
-                        }
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        let selected = app.table_state.selected().unwrap_or(0);
-                        if selected > 0 {
-                            app.table_state.select(Some(selected - 1));
-                        }
-                    }
-                    KeyCode::Char('g') => {
-                        app.table_state.select(Some(0));
-                    }
-                    KeyCode::Char('G') => {
-                        let count = app
-                            .analysis
-                            .as_ref()
-                            .map(|a| a.functions.len())
-                            .unwrap_or(0);
-                        if count > 0 {
-                            app.table_state.select(Some(count - 1));
-                        }
-                    }
-                    _ => {}
+                if handle_dialogs(app, key.code) {
+                    continue;
+                }
+                if handle_navigation(app, key.code)? {
+                    continue;
+                }
+                if handle_actions(app, key.code) {
+                    continue;
                 }
             }
         }
     }
 }
 
-// ---------- Shared helpers ----------
-
-fn confidence_color(confidence: f64) -> Color {
-    if confidence >= 80.0 {
-        BAD
-    } else if confidence >= 60.0 {
-        WARN
-    } else {
-        GOOD
+fn handle_dialogs(app: &mut App, key: KeyCode) -> bool {
+    if app.show_confirmation {
+        match key {
+            KeyCode::Char('y') | KeyCode::Enter => {
+                if let Some(action) = app.pending_action.take() {
+                    match action {
+                        Action::ConfirmDead(id) => {
+                            app.record_decision(&id, DecisionType::ConfirmedDead, None)
+                        }
+                        Action::FalsePositive(id) => {
+                            app.show_reason_dialog = true;
+                            app.pending_id = Some(id);
+                        }
+                        Action::Defer(id) => app.record_decision(&id, DecisionType::Deferred, None),
+                    }
+                    app.show_confirmation = false;
+                }
+            }
+            KeyCode::Char('n') | KeyCode::Esc => {
+                app.show_confirmation = false;
+                app.pending_action = None;
+            }
+            _ => {}
+        }
+        return true;
     }
+
+    if app.show_reason_dialog {
+        match key {
+            KeyCode::Char(c) => app.reason_input.push(c),
+            KeyCode::Backspace => {
+                app.reason_input.pop();
+            }
+            KeyCode::Enter => {
+                if let Some(id) = app.pending_id.take() {
+                    let reason = if app.reason_input.is_empty() {
+                        None
+                    } else {
+                        Some(app.reason_input.clone())
+                    };
+                    app.record_decision(&id, DecisionType::FalsePositive, reason);
+                    app.reason_input.clear();
+                }
+                app.show_reason_dialog = false;
+            }
+            KeyCode::Esc => {
+                app.show_reason_dialog = false;
+                app.pending_id = None;
+                app.reason_input.clear();
+            }
+            _ => {}
+        }
+        return true;
+    }
+    false
 }
 
-fn impact_color(impact: &str) -> Color {
-    if impact.contains("High") {
-        BAD
-    } else if impact.contains("Medium") {
-        WARN
-    } else {
-        GOOD
+fn handle_navigation(app: &mut App, key: KeyCode) -> io::Result<bool> {
+    match key {
+        KeyCode::Char('q') | KeyCode::Esc => return Ok(true), // Quit
+        KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
+            app.selected_tab = (app.selected_tab + 1) % app.tabs.len();
+        }
+        KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
+            app.selected_tab = if app.selected_tab == 0 {
+                app.tabs.len() - 1
+            } else {
+                app.selected_tab - 1
+            };
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            let count = app
+                .analysis
+                .as_ref()
+                .map(|a| a.functions.len())
+                .unwrap_or(0);
+            let selected = app.table_state.selected().unwrap_or(0);
+            if count > 0 && selected < count - 1 {
+                app.table_state.select(Some(selected + 1));
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            let selected = app.table_state.selected().unwrap_or(0);
+            if selected > 0 {
+                app.table_state.select(Some(selected - 1));
+            }
+        }
+        KeyCode::Char('g') => app.table_state.select(Some(0)),
+        KeyCode::Char('G') => {
+            let count = app
+                .analysis
+                .as_ref()
+                .map(|a| a.functions.len())
+                .unwrap_or(0);
+            if count > 0 {
+                app.table_state.select(Some(count - 1));
+            }
+        }
+        _ => return Ok(false),
     }
+    Ok(false)
 }
 
-fn outer_block(title: &str) -> Block<'_> {
-    Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(ACCENT_DIM))
-        .title(Span::styled(
-            format!(" {} ", title),
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-        ))
+fn handle_actions(app: &mut App, key: KeyCode) -> bool {
+    match key {
+        KeyCode::Char('d') => {
+            if let Some(selected) = app.table_state.selected() {
+                if let Some(candidate) = app
+                    .analysis
+                    .as_ref()
+                    .and_then(|a| a.functions.get(selected))
+                {
+                    if candidate.status != CandidateStatus::Stale {
+                        app.show_confirmation = true;
+                        app.pending_action = Some(Action::ConfirmDead(candidate.id.clone()));
+                    }
+                }
+            }
+        }
+        KeyCode::Char('f') => {
+            if let Some(selected) = app.table_state.selected() {
+                if let Some(candidate) = app
+                    .analysis
+                    .as_ref()
+                    .and_then(|a| a.functions.get(selected))
+                {
+                    if candidate.status != CandidateStatus::Stale {
+                        app.show_confirmation = true;
+                        app.pending_action = Some(Action::FalsePositive(candidate.id.clone()));
+                    }
+                }
+            }
+        }
+        KeyCode::Char('s') => {
+            if let Some(selected) = app.table_state.selected() {
+                if let Some(candidate) = app
+                    .analysis
+                    .as_ref()
+                    .and_then(|a| a.functions.get(selected))
+                {
+                    if candidate.status != CandidateStatus::Stale {
+                        app.show_confirmation = true;
+                        app.pending_action = Some(Action::Defer(candidate.id.clone()));
+                    }
+                }
+            }
+        }
+        _ => return false,
+    }
+    true
 }
 
 fn ui(f: &mut Frame, app: &mut App) {
@@ -290,8 +598,7 @@ fn ui(f: &mut Frame, app: &mut App) {
         ])
         .split(f.size());
 
-    // Header: title + tabs combined into one strip for a tighter, more
-    // polished top bar.
+    // Header
     let header_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(28), Constraint::Min(0)])
@@ -300,7 +607,7 @@ fn ui(f: &mut Frame, app: &mut App) {
     let title = Paragraph::new(vec![Line::from(vec![
         Span::styled("⬢ ", Style::default().fg(ACCENT)),
         Span::styled(
-            "Dead Code",
+            "Dead Code Dashboard",
             Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
         ),
     ])])
@@ -336,419 +643,44 @@ fn ui(f: &mut Frame, app: &mut App) {
         .divider(symbols::DOT);
     f.render_widget(tabs, header_chunks[1]);
 
-    // Main content
+    // Main content - delegate to dashboard_ui
     match &app.analysis {
         Some(analysis) => match app.selected_tab {
-            0 => render_summary(f, root[1], analysis),
-            1 => render_charts(f, root[1], analysis),
-            2 => render_list(f, root[1], analysis, &mut app.table_state),
-            3 => render_by_file(f, root[1], analysis),
-            4 => render_priority(f, root[1], analysis),
+            0 => dashboard_ui::render_summary(f, root[1], analysis, app),
+            1 => dashboard_ui::render_charts(f, root[1], analysis),
+            2 => dashboard_ui::render_list(f, root[1], analysis, &mut app.table_state),
+            3 => dashboard_ui::render_by_file(f, root[1], analysis),
+            4 => dashboard_ui::render_priority(f, root[1], analysis),
+            5 => dashboard_ui::render_history(f, root[1], &app.decisions),
             _ => {}
         },
         None => {
             if app.loading {
-                let loading = Paragraph::new("⏳ Loading...")
-                    .alignment(Alignment::Center)
-                    .style(Style::default().fg(WARN));
-                f.render_widget(loading, root[1]);
+                f.render_widget(
+                    Paragraph::new("⏳ Loading...")
+                        .alignment(Alignment::Center)
+                        .style(Style::default().fg(WARN)),
+                    root[1],
+                );
             } else if let Some(ref err) = app.error {
-                let error = Paragraph::new(format!("✖ Error: {}", err))
-                    .alignment(Alignment::Center)
-                    .style(Style::default().fg(BAD));
-                f.render_widget(error, root[1]);
+                f.render_widget(
+                    Paragraph::new(format!("✖ Error: {}", err))
+                        .alignment(Alignment::Center)
+                        .style(Style::default().fg(BAD)),
+                    root[1],
+                );
             }
         }
     }
 
-    // Footer help bar
-    let help = Paragraph::new(Line::from(vec![
-        Span::styled(" Tab/←→ ", Style::default().fg(Color::Black).bg(ACCENT)),
-        Span::raw(" switch tab   "),
-        Span::styled(" ↑↓/jk ", Style::default().fg(Color::Black).bg(ACCENT)),
-        Span::raw(" move   "),
-        Span::styled(" g/G ", Style::default().fg(Color::Black).bg(ACCENT)),
-        Span::raw(" top/bottom   "),
-        Span::styled(" q ", Style::default().fg(Color::Black).bg(BAD)),
-        Span::raw(" quit"),
-    ]))
-    .style(Style::default().fg(MUTED));
-    f.render_widget(help, root[2]);
-}
-
-fn stat_card(title: &str, value: String, color: Color) -> Paragraph<'static> {
-    Paragraph::new(vec![
-        Line::from(Span::styled(
-            value,
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(title.to_string(), Style::default().fg(MUTED))),
-    ])
-    .alignment(Alignment::Center)
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(ACCENT_DIM)),
-    )
-}
-
-fn render_summary(f: &mut Frame, area: Rect, analysis: &DeadCodeAnalysis) {
-    let summary = &analysis.summary;
-    let dead_pct = if summary.total_functions > 0 {
-        summary.dead_functions as f64 / summary.total_functions as f64 * 100.0
-    } else {
-        0.0
-    };
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(5),
-            Constraint::Length(5),
-            Constraint::Length(3),
-            Constraint::Min(0),
-        ])
-        .split(area);
-
-    // Row 1: headline stat cards
-    let cards = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-        ])
-        .split(rows[0]);
-
-    f.render_widget(
-        stat_card("Total Functions", summary.total_functions.to_string(), TEXT),
-        cards[0],
-    );
-    f.render_widget(
-        stat_card(
-            "Dead Functions",
-            summary.dead_functions.to_string(),
-            confidence_color(dead_pct),
-        ),
-        cards[1],
-    );
-    f.render_widget(
-        stat_card(
-            "Avg Confidence",
-            format!("{:.1}%", summary.avg_confidence * 100.0),
-            confidence_color(summary.avg_confidence * 100.0),
-        ),
-        cards[2],
-    );
-    f.render_widget(
-        stat_card(
-            "LOC Removable",
-            summary.estimated_loc_removable.to_string(),
-            ACCENT,
-        ),
-        cards[3],
-    );
-
-    // Row 2: secondary stat cards
-    let cards2 = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(33),
-            Constraint::Percentage(33),
-            Constraint::Percentage(34),
-        ])
-        .split(rows[1]);
-
-    f.render_widget(
-        stat_card("Dead Types", summary.dead_types.to_string(), MUTED),
-        cards2[0],
-    );
-    f.render_widget(
-        stat_card("Dead Modules", summary.dead_modules.to_string(), MUTED),
-        cards2[1],
-    );
-    f.render_widget(
-        stat_card("Dead Files", summary.dead_files.to_string(), MUTED),
-        cards2[2],
-    );
-
-    // Row 3: dead-code proportion gauge, colored by severity
-    let gauge = Gauge::default()
-        .block(outer_block("Dead Code Share"))
-        .gauge_style(
-            Style::default()
-                .fg(confidence_color(dead_pct))
-                .bg(Color::Black),
-        )
-        .ratio((dead_pct / 100.0).clamp(0.0, 1.0))
-        .label(format!("{:.1}% of functions are dead", dead_pct));
-    f.render_widget(gauge, rows[2]);
-
-    // Row 4: quick read-out / legend
-    let legend = Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled("● ", Style::default().fg(BAD)),
-            Span::raw("High confidence (≥80%) — safe to remove first"),
-        ]),
-        Line::from(vec![
-            Span::styled("● ", Style::default().fg(WARN)),
-            Span::raw("Medium confidence (60–79%) — review before removing"),
-        ]),
-        Line::from(vec![
-            Span::styled("● ", Style::default().fg(GOOD)),
-            Span::raw("Lower confidence (<60%) — double-check usage first"),
-        ]),
-    ])
-    .block(outer_block("How to read this"))
-    .style(Style::default().fg(TEXT));
-    f.render_widget(legend, rows[3]);
-}
-
-fn render_charts(f: &mut Frame, area: Rect, analysis: &DeadCodeAnalysis) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(area);
-
-    // ---- Confidence distribution as a real BarChart ----
-    let conf_order = ["Guaranteed", "VeryLikely", "Probably", "Uncertain", "Other"];
-    let mut conf_counts: std::collections::HashMap<&str, u64> = std::collections::HashMap::new();
-    for func in &analysis.functions {
-        let level = if func.confidence >= 95.0 {
-            "Guaranteed"
-        } else if func.confidence >= 80.0 {
-            "VeryLikely"
-        } else if func.confidence >= 60.0 {
-            "Probably"
-        } else if func.confidence >= 40.0 {
-            "Uncertain"
-        } else {
-            "Other"
-        };
-        *conf_counts.entry(level).or_insert(0) += 1;
+    // Dialogs
+    if app.show_confirmation {
+        dashboard_ui::render_confirmation_dialog(f, f.size(), &app.pending_action);
+    }
+    if app.show_reason_dialog {
+        dashboard_ui::render_reason_dialog(f, f.size(), &app.reason_input);
     }
 
-    let conf_bars: Vec<Bar> = conf_order
-        .iter()
-        .map(|level| {
-            let count = *conf_counts.get(level).unwrap_or(&0);
-            let color = match *level {
-                "Guaranteed" | "VeryLikely" => BAD,
-                "Probably" => WARN,
-                _ => GOOD,
-            };
-            Bar::default()
-                .label(Line::from(*level))
-                .value(count)
-                .style(Style::default().fg(color))
-                .value_style(Style::default().fg(Color::Black).bg(color))
-        })
-        .collect();
-
-    let confidence_chart = BarChart::default()
-        .block(outer_block("Confidence Distribution"))
-        .data(BarGroup::default().bars(&conf_bars))
-        .bar_width(9)
-        .bar_gap(2);
-    f.render_widget(confidence_chart, chunks[0]);
-
-    // ---- Impact distribution as a real BarChart ----
-    let impact_order = ["High", "Medium", "Low"];
-    let mut impact_counts: std::collections::HashMap<&str, u64> = std::collections::HashMap::new();
-    for func in &analysis.functions {
-        let impact = if func.impact.contains("High") {
-            "High"
-        } else if func.impact.contains("Medium") {
-            "Medium"
-        } else {
-            "Low"
-        };
-        *impact_counts.entry(impact).or_insert(0) += 1;
-    }
-
-    let impact_bars: Vec<Bar> = impact_order
-        .iter()
-        .map(|level| {
-            let count = *impact_counts.get(level).unwrap_or(&0);
-            let color = impact_color(level);
-            Bar::default()
-                .label(Line::from(*level))
-                .value(count)
-                .style(Style::default().fg(color))
-                .value_style(Style::default().fg(Color::Black).bg(color))
-        })
-        .collect();
-
-    let impact_chart = BarChart::default()
-        .block(outer_block("Impact Distribution"))
-        .data(BarGroup::default().bars(&impact_bars))
-        .bar_width(9)
-        .bar_gap(2);
-    f.render_widget(impact_chart, chunks[1]);
-}
-
-fn render_list(f: &mut Frame, area: Rect, analysis: &DeadCodeAnalysis, state: &mut TableState) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(0)])
-        .split(area);
-
-    let header_text = Paragraph::new(format!(
-        "{} dead functions — sorted by removal order",
-        analysis.functions.len()
-    ))
-    .style(Style::default().fg(MUTED));
-    f.render_widget(header_text, chunks[0]);
-
-    let rows: Vec<Row> = analysis
-        .functions
-        .iter()
-        .map(|func| {
-            let conf_color = confidence_color(func.confidence);
-            let impact_color = impact_color(&func.impact);
-            Row::new(vec![
-                Cell::from(func.order.to_string()).style(Style::default().fg(MUTED)),
-                Cell::from(func.name.clone()).style(Style::default().fg(TEXT)),
-                Cell::from(format!("{:.1}%", func.confidence))
-                    .style(Style::default().fg(conf_color).add_modifier(Modifier::BOLD)),
-                Cell::from(func.level.clone()).style(Style::default().fg(conf_color)),
-                Cell::from(func.impact.clone()).style(Style::default().fg(impact_color)),
-                Cell::from(func.loc.to_string()).style(Style::default().fg(MUTED)),
-            ])
-        })
-        .collect();
-
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(5),
-            Constraint::Percentage(38),
-            Constraint::Length(11),
-            Constraint::Length(12),
-            Constraint::Length(24),
-            Constraint::Length(6),
-        ],
-    )
-    .header(
-        Row::new(vec!["#", "Function", "Conf.", "Level", "Impact", "LOC"])
-            .style(
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(ACCENT)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .height(1),
-    )
-    .block(outer_block("All Dead Functions"))
-    .highlight_style(
-        Style::default()
-            .add_modifier(Modifier::REVERSED)
-            .add_modifier(Modifier::BOLD),
-    )
-    .highlight_symbol("▶ ");
-
-    f.render_stateful_widget(table, chunks[1], state);
-}
-
-fn render_by_file(f: &mut Frame, area: Rect, analysis: &DeadCodeAnalysis) {
-    let mut file_groups: std::collections::HashMap<String, Vec<&DeadFunction>> =
-        std::collections::HashMap::new();
-    for func in &analysis.functions {
-        file_groups.entry(func.file.clone()).or_default().push(func);
-    }
-
-    let mut files: Vec<_> = file_groups.into_iter().collect();
-    // Worst files (most dead functions) first.
-    files.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
-
-    let mut lines: Vec<Line> = Vec::new();
-    for (file, funcs) in files.iter() {
-        let short_file = file.split('/').last().unwrap_or(file);
-        lines.push(Line::from(vec![
-            Span::styled("▸ ", Style::default().fg(ACCENT)),
-            Span::styled(
-                short_file.to_string(),
-                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!("  ({} functions)", funcs.len()),
-                Style::default().fg(MUTED),
-            ),
-        ]));
-        let mut sorted_funcs = funcs.clone();
-        sorted_funcs.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
-        for func in sorted_funcs.iter().take(5) {
-            let color = confidence_color(func.confidence);
-            lines.push(Line::from(vec![
-                Span::raw("    "),
-                Span::styled("● ", Style::default().fg(color)),
-                Span::styled(func.name.clone(), Style::default().fg(TEXT)),
-                Span::styled(
-                    format!("  {:.1}%", func.confidence),
-                    Style::default().fg(color),
-                ),
-            ]));
-        }
-        if sorted_funcs.len() > 5 {
-            lines.push(Line::from(Span::styled(
-                format!("    … and {} more", sorted_funcs.len() - 5),
-                Style::default().fg(MUTED),
-            )));
-        }
-        lines.push(Line::from(""));
-    }
-
-    let paragraph = Paragraph::new(Text::from(lines))
-        .block(outer_block("Dead Functions by File"))
-        .wrap(ratatui::widgets::Wrap { trim: true });
-
-    f.render_widget(paragraph, area);
-}
-
-fn render_priority(f: &mut Frame, area: Rect, analysis: &DeadCodeAnalysis) {
-    let mut lines: Vec<Line> = Vec::new();
-
-    for func in analysis.functions.iter().take(20) {
-        let color = confidence_color(func.confidence);
-        lines.push(Line::from(vec![
-            Span::styled(format!("{:>3}. ", func.order), Style::default().fg(MUTED)),
-            Span::styled("● ", Style::default().fg(color)),
-            Span::styled(
-                func.name.clone(),
-                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!("  ({} · {:.1}%)", func.impact, func.confidence),
-                Style::default().fg(color),
-            ),
-        ]));
-        lines.push(Line::from(vec![
-            Span::raw("     "),
-            Span::styled(
-                func.file
-                    .split('/')
-                    .last()
-                    .unwrap_or(&func.file)
-                    .to_string(),
-                Style::default().fg(MUTED),
-            ),
-            Span::styled(format!("  ·  {} LOC", func.loc), Style::default().fg(MUTED)),
-        ]));
-        lines.push(Line::from(""));
-    }
-
-    if analysis.functions.len() > 20 {
-        lines.push(Line::from(Span::styled(
-            format!("… and {} more functions", analysis.functions.len() - 20),
-            Style::default().fg(MUTED),
-        )));
-    }
-
-    let paragraph = Paragraph::new(Text::from(lines))
-        .block(outer_block("Priority Removal Order"))
-        .wrap(ratatui::widgets::Wrap { trim: true });
-
-    f.render_widget(paragraph, area);
+    // Footer
+    dashboard_ui::render_help(f, root[2], app.show_confirmation || app.show_reason_dialog);
 }

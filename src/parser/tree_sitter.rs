@@ -311,7 +311,6 @@ impl TreeSitterParser {
     }
 
     pub fn parse_file(&self, path: &Path) -> Result<ParsedFile, String> {
-        println!("📄 Parsing file: {:?}", path); // ← ADD THIS
         let config = self
             .detect_language(path)
             .ok_or_else(|| format!("Unsupported file: {:?}", path))?;

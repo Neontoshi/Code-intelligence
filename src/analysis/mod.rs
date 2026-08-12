@@ -11,6 +11,7 @@ pub mod training_data;
 pub mod verdict;
 
 pub use context::AnalysisIndexes;
+pub use context::AnalysisMetadata;
 pub use context::ProjectAnalysis;
 pub use context::ProjectAnalysisBuilder;
 pub use context::ProjectMetrics;

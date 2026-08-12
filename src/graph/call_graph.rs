@@ -52,6 +52,7 @@ pub struct CallGraph {
     pub async_functions: Vec<NodeIndex>,
     pub cycle_detection_skipped: bool,
     pub cycle_detection_node_count: usize,
+    pub duplicate_functions: Vec<String>, // ⭐ new
 }
 
 impl CallGraph {
@@ -65,18 +66,17 @@ impl CallGraph {
             async_functions: Vec::new(),
             cycle_detection_skipped: false,
             cycle_detection_node_count: 0,
+            duplicate_functions: Vec::new(),
         }
     }
 
     pub fn add_function(&mut self, func: FunctionNode) -> NodeIndex {
         let name = func.full_path.clone();
 
-        // Check for duplicate - don't silently overwrite
         if let Some(&existing) = self.name_index.get(&name) {
-            eprintln!("⚠️ Duplicate function: {} (using existing node)", name);
+            self.duplicate_functions.push(name);
             return existing;
         }
-
         let idx = self.graph.add_node(func);
         self.name_index.insert(name, idx);
 
