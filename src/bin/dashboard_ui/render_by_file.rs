@@ -9,12 +9,17 @@ use ratatui::{
 };
 use std::collections::HashMap;
 
-use super::styles::{
-    confidence_color, outer_block, status_color, status_emoji, ACCENT, MUTED, TEXT, WARN,
-};
+use super::styles::{confidence_color, outer_block, ACCENT, MUTED, TEXT, WARN};
 
-pub fn render_by_file(f: &mut Frame, area: Rect, analysis: &crate::DeadCodeAnalysis) {
-    let mut file_groups: HashMap<String, Vec<&crate::DeadFunctionExtended>> = HashMap::new();
+pub fn render_by_file(
+    f: &mut Frame,
+    area: Rect,
+    analysis: &code_intelligence::analysis::dead_code::DeadCodeAnalysis,
+) {
+    let mut file_groups: HashMap<
+        String,
+        Vec<&code_intelligence::analysis::dead_code::DeadFunction>,
+    > = HashMap::new();
     for func in &analysis.functions {
         file_groups.entry(func.file.clone()).or_default().push(func);
     }
@@ -49,7 +54,7 @@ pub fn render_by_file(f: &mut Frame, area: Rect, analysis: &crate::DeadCodeAnaly
         .bar_gap(1);
     f.render_widget(by_file_chart, rows[0]);
 
-    // ---------- Bottom: drill-down detail, same info as before ----------
+    // ---------- Bottom: drill-down detail ----------
     let mut lines: Vec<Line> = Vec::new();
     for (file, funcs) in files.iter() {
         let short_file = file.split('/').last().unwrap_or(file);
@@ -65,21 +70,16 @@ pub fn render_by_file(f: &mut Frame, area: Rect, analysis: &crate::DeadCodeAnaly
             ),
         ]));
         let mut sorted_funcs = funcs.clone();
-        sorted_funcs.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
+        sorted_funcs.sort_by(|a, b| b.score.score.partial_cmp(&a.score.score).unwrap());
         for func in sorted_funcs.iter().take(5) {
-            let color = confidence_color(func.confidence);
-            let status_emoji = status_emoji(&func.status);
+            let color = confidence_color(func.score.score * 100.0);
             lines.push(Line::from(vec![
                 Span::raw("    "),
                 Span::styled("● ", Style::default().fg(color)),
-                Span::styled(func.function_name.clone(), Style::default().fg(TEXT)),
+                Span::styled(func.name.clone(), Style::default().fg(TEXT)),
                 Span::styled(
-                    format!("  {:.1}%", func.confidence),
+                    format!("  {:.1}%", func.score.score * 100.0),
                     Style::default().fg(color),
-                ),
-                Span::styled(
-                    format!(" {}", status_emoji),
-                    Style::default().fg(status_color(&func.status)),
                 ),
             ]));
         }

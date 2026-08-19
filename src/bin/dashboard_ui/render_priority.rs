@@ -8,11 +8,13 @@ use ratatui::{
     Frame,
 };
 
-use super::styles::{
-    confidence_color, outer_block, status_color, status_emoji, ACCENT, GOOD, MUTED, TEXT,
-};
+use super::styles::{confidence_color, outer_block, ACCENT, GOOD, MUTED, TEXT};
 
-pub fn render_priority(f: &mut Frame, area: Rect, analysis: &crate::DeadCodeAnalysis) {
+pub fn render_priority(
+    f: &mut Frame,
+    area: Rect,
+    analysis: &code_intelligence::analysis::dead_code::DeadCodeAnalysis,
+) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(0)])
@@ -34,34 +36,32 @@ pub fn render_priority(f: &mut Frame, area: Rect, analysis: &crate::DeadCodeAnal
     let mut lines: Vec<Line> = Vec::new();
 
     for (i, func) in analysis.functions.iter().take(20).enumerate() {
-        let color = confidence_color(func.confidence);
-        let status_emoji = status_emoji(&func.status);
+        let confidence_pct = func.score.score * 100.0;
+        let color = confidence_color(confidence_pct);
 
-        // Gold/silver/bronze for the top 3 — these are the highest-value removals
         let rank_color = match i {
-            0 => Color::Rgb(255, 215, 0),   // gold
-            1 => Color::Rgb(192, 192, 192), // silver
-            2 => Color::Rgb(205, 127, 50),  // bronze
+            0 => Color::Rgb(255, 215, 0),
+            1 => Color::Rgb(192, 192, 192),
+            2 => Color::Rgb(205, 127, 50),
             _ => MUTED,
         };
 
         lines.push(Line::from(vec![
             Span::styled(
-                format!("{:>3}. ", func.order),
+                format!("{:>3}. ", func.removal_order),
                 Style::default().fg(rank_color).add_modifier(Modifier::BOLD),
             ),
             Span::styled("● ", Style::default().fg(color)),
             Span::styled(
-                func.function_name.clone(),
+                func.name.clone(),
                 Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!("  ({} · {:.1}%)", func.impact, func.confidence),
+                format!(
+                    "  ({} · {:.1}%)",
+                    func.impact.estimated_removal_impact, confidence_pct
+                ),
                 Style::default().fg(color),
-            ),
-            Span::styled(
-                format!(" {}", status_emoji),
-                Style::default().fg(status_color(&func.status)),
             ),
         ]));
         lines.push(Line::from(vec![
@@ -74,15 +74,21 @@ pub fn render_priority(f: &mut Frame, area: Rect, analysis: &crate::DeadCodeAnal
                     .to_string(),
                 Style::default().fg(MUTED),
             ),
-            Span::styled(format!("  ·  {} LOC", func.loc), Style::default().fg(MUTED)),
+            Span::styled(
+                format!("  ·  {} LOC", func.impact.lines_of_code),
+                Style::default().fg(MUTED),
+            ),
         ]));
 
         // Show evidence if available
-        if !func.evidence.is_empty() {
+        if !func.score.factors.is_empty() {
             let evidence_text = func
-                .evidence
-                .first()
-                .map(|s| s.as_str())
+                .score
+                .factors
+                .iter()
+                .filter(|f| f.contribution > 0.0)
+                .next()
+                .map(|f| f.explanation.as_str())
                 .unwrap_or("No evidence");
             lines.push(Line::from(vec![
                 Span::raw("     "),

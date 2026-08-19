@@ -2,7 +2,7 @@
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Bar, BarChart, BarGroup, Gauge, Paragraph},
     Frame,
@@ -10,9 +10,14 @@ use ratatui::{
 use std::collections::HashMap;
 
 use super::styles::*;
-use crate::{App, CandidateStatus, DeadCodeAnalysis};
+use crate::App;
 
-pub fn render_summary(f: &mut Frame, area: Rect, analysis: &DeadCodeAnalysis, app: &App) {
+pub fn render_summary(
+    f: &mut Frame,
+    area: Rect,
+    analysis: &code_intelligence::analysis::dead_code::DeadCodeAnalysis,
+    app: &App,
+) {
     let summary = &analysis.summary;
     let dead_pct = if summary.total_functions > 0 {
         summary.dead_functions as f64 / summary.total_functions as f64 * 100.0
@@ -23,12 +28,12 @@ pub fn render_summary(f: &mut Frame, area: Rect, analysis: &DeadCodeAnalysis, ap
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6), // hero row
-            Constraint::Length(3), // slim stat strip
-            Constraint::Length(4), // gauge (taller than before)
-            Constraint::Length(4), // decision status bar
-            Constraint::Min(6),    // dead functions by file (fills old dead space)
-            Constraint::Length(3), // metadata
+            Constraint::Length(6),
+            Constraint::Length(3),
+            Constraint::Length(4),
+            Constraint::Length(4),
+            Constraint::Min(6),
+            Constraint::Length(3),
         ])
         .split(area);
 
@@ -92,7 +97,7 @@ pub fn render_summary(f: &mut Frame, area: Rect, analysis: &DeadCodeAnalysis, ap
         strip_cols[4],
     );
 
-    // ---------- Row 3: gauge (now taller, label rendered inside) ----------
+    // ---------- Row 3: gauge ----------
     let gauge = Gauge::default()
         .block(outer_block("Dead Code Share"))
         .gauge_style(
@@ -104,51 +109,52 @@ pub fn render_summary(f: &mut Frame, area: Rect, analysis: &DeadCodeAnalysis, ap
         .label(format!("{:.1}% of functions are dead", dead_pct));
     f.render_widget(gauge, rows[2]);
 
-    // ---------- Row 4: decision status as a horizontal bar ----------
-    let mut status_counts: HashMap<CandidateStatus, usize> = HashMap::new();
+    // ---------- Row 4: decision status ----------
+    // Since DeadFunction doesn't have status, we show confidence distribution
+    let mut conf_counts: HashMap<&str, u64> = HashMap::new();
     for func in &analysis.functions {
-        *status_counts.entry(func.status.clone()).or_insert(0) += 1;
+        let confidence_pct = func.score.score * 100.0;
+        let level = if confidence_pct >= 95.0 {
+            "Guaranteed"
+        } else if confidence_pct >= 80.0 {
+            "VeryLikely"
+        } else if confidence_pct >= 60.0 {
+            "Probably"
+        } else {
+            "Uncertain"
+        };
+        *conf_counts.entry(level).or_insert(0) += 1;
     }
 
-    let status_order = [
-        CandidateStatus::Pending,
-        CandidateStatus::ConfirmedDead,
-        CandidateStatus::FalsePositive,
-        CandidateStatus::Stale,
-    ];
-    let status_labels = ["Pending", "Dead", "FP", "Stale"];
+    let conf_order = ["Guaranteed", "VeryLikely", "Probably", "Uncertain"];
+    let conf_colors = [BAD, Color::Red, WARN, GOOD];
 
-    let status_bars: Vec<Bar> = status_order
+    let conf_bars: Vec<Bar> = conf_order
         .iter()
-        .zip(status_labels.iter())
-        .map(|(status, label)| {
-            let count = *status_counts.get(status).unwrap_or(&0) as u64;
-            let color = status_color(status);
+        .zip(conf_colors.iter())
+        .map(|(label, color)| {
+            let count = *conf_counts.get(label).unwrap_or(&0);
             Bar::default()
                 .label(Line::from(*label))
                 .value(count)
-                .style(Style::default().fg(color))
-                .value_style(Style::default().fg(ratatui::style::Color::Black).bg(color))
+                .style(Style::default().fg(*color))
+                .value_style(Style::default().fg(Color::Black).bg(*color))
         })
         .collect();
 
     let status_chart = BarChart::default()
-        .block(outer_block("Decision Status"))
+        .block(outer_block("Confidence Distribution"))
         .direction(Direction::Horizontal)
-        .data(BarGroup::default().bars(&status_bars))
+        .data(BarGroup::default().bars(&conf_bars))
         .bar_width(1)
         .bar_gap(1);
     f.render_widget(status_chart, rows[3]);
 
-    // ---------- Row 5: dead functions by file (fills the old empty space) ----------
+    // ---------- Row 5: dead functions by file ----------
     let mut file_counts: HashMap<&str, u64> = HashMap::new();
     for func in &analysis.functions {
-        if func.status != CandidateStatus::FalsePositive
-            && func.status != CandidateStatus::ConfirmedAlive
-        {
-            let basename = func.file.rsplit('/').next().unwrap_or(&func.file);
-            *file_counts.entry(basename).or_insert(0) += 1;
-        }
+        let basename = func.file.rsplit('/').next().unwrap_or(&func.file);
+        *file_counts.entry(basename).or_insert(0) += 1;
     }
 
     let mut file_list: Vec<(&str, u64)> = file_counts.into_iter().collect();
@@ -162,7 +168,7 @@ pub fn render_summary(f: &mut Frame, area: Rect, analysis: &DeadCodeAnalysis, ap
                 .label(Line::from(*file))
                 .value(*count)
                 .style(Style::default().fg(WARN))
-                .value_style(Style::default().fg(ratatui::style::Color::Black).bg(WARN))
+                .value_style(Style::default().fg(Color::Black).bg(WARN))
         })
         .collect();
 
@@ -198,9 +204,7 @@ pub fn render_summary(f: &mut Frame, area: Rect, analysis: &DeadCodeAnalysis, ap
     f.render_widget(metadata_paragraph, rows[5]);
 }
 
-/// A large, high-contrast stat block for the two numbers that matter most.
-/// No big-text crate needed — weight comes from color, bold, borders, and
-/// generous vertical padding rather than literal font size.
+/// A large, high-contrast stat block
 fn hero_stat(title: &str, value: String, color: ratatui::style::Color) -> Paragraph<'static> {
     Paragraph::new(vec![
         Line::from(""),

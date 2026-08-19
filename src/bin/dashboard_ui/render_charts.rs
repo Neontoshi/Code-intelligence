@@ -11,13 +11,14 @@ use std::collections::HashMap;
 
 use super::styles::{impact_color, outer_block, BAD, GOOD, WARN};
 
-pub fn render_charts(f: &mut Frame, area: Rect, analysis: &crate::DeadCodeAnalysis) {
+pub fn render_charts(
+    f: &mut Frame,
+    area: Rect,
+    analysis: &code_intelligence::analysis::dead_code::DeadCodeAnalysis,
+) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(11), // confidence + impact, side by side
-            Constraint::Min(6),     // dead LOC by file (new — fills the old dead space)
-        ])
+        .constraints([Constraint::Length(11), Constraint::Min(6)])
         .split(area);
 
     let top_cols = Layout::default()
@@ -29,13 +30,14 @@ pub fn render_charts(f: &mut Frame, area: Rect, analysis: &crate::DeadCodeAnalys
     let conf_order = ["Guaranteed", "VeryLikely", "Probably", "Uncertain", "Other"];
     let mut conf_counts: HashMap<&str, u64> = HashMap::new();
     for func in &analysis.functions {
-        let level = if func.confidence >= 95.0 {
+        let confidence_pct = func.score.score * 100.0;
+        let level = if confidence_pct >= 95.0 {
             "Guaranteed"
-        } else if func.confidence >= 80.0 {
+        } else if confidence_pct >= 80.0 {
             "VeryLikely"
-        } else if func.confidence >= 60.0 {
+        } else if confidence_pct >= 60.0 {
             "Probably"
-        } else if func.confidence >= 40.0 {
+        } else if confidence_pct >= 40.0 {
             "Uncertain"
         } else {
             "Other"
@@ -71,9 +73,10 @@ pub fn render_charts(f: &mut Frame, area: Rect, analysis: &crate::DeadCodeAnalys
     let impact_order = ["High", "Medium", "Low"];
     let mut impact_counts: HashMap<&str, u64> = HashMap::new();
     for func in &analysis.functions {
-        let impact = if func.impact.contains("High") {
+        let impact_str = func.impact.estimated_removal_impact.as_str();
+        let impact = if impact_str.contains("High") {
             "High"
-        } else if func.impact.contains("Medium") {
+        } else if impact_str.contains("Medium") {
             "Medium"
         } else {
             "Low"
@@ -101,18 +104,11 @@ pub fn render_charts(f: &mut Frame, area: Rect, analysis: &crate::DeadCodeAnalys
         .bar_gap(2);
     f.render_widget(impact_chart, top_cols[1]);
 
-    // ---------- Dead LOC by file (new) ----------
-    // Complements Summary's "Dead Functions by File" (which sorts by count) —
-    // this sorts by total removable lines, so a file with fewer but larger
-    // dead functions still surfaces near the top.
+    // ---------- Dead LOC by file ----------
     let mut loc_by_file: HashMap<&str, u64> = HashMap::new();
     for func in &analysis.functions {
-        if func.status != crate::CandidateStatus::FalsePositive
-            && func.status != crate::CandidateStatus::ConfirmedAlive
-        {
-            let basename = func.file.rsplit('/').next().unwrap_or(&func.file);
-            *loc_by_file.entry(basename).or_insert(0) += func.loc as u64;
-        }
+        let basename = func.file.rsplit('/').next().unwrap_or(&func.file);
+        *loc_by_file.entry(basename).or_insert(0) += func.impact.lines_of_code as u64;
     }
 
     let mut loc_list: Vec<(&str, u64)> = loc_by_file.into_iter().collect();

@@ -26,7 +26,7 @@ pub fn confidence_color(confidence: f64) -> Color {
     }
 }
 
-pub fn status_color(status: &CandidateStatus) -> Color {
+pub fn _status_color(status: &CandidateStatus) -> Color {
     match status {
         CandidateStatus::Pending => WARN,
         CandidateStatus::ConfirmedDead => BAD,
@@ -37,7 +37,7 @@ pub fn status_color(status: &CandidateStatus) -> Color {
     }
 }
 
-pub fn status_emoji(status: &CandidateStatus) -> &'static str {
+pub fn _status_emoji(status: &CandidateStatus) -> &'static str {
     match status {
         CandidateStatus::Pending => "⏳",
         CandidateStatus::ConfirmedDead => "✅",

@@ -2,7 +2,8 @@
 
 mod dashboard_ui;
 
-use code_intelligence::analysis::dead_code::DeadCodeDetector;
+use code_intelligence::analysis::dead_code::DeadCodeAnalysis;
+use code_intelligence::graph::GraphMetrics;
 use code_intelligence::Pipeline;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
@@ -70,49 +71,6 @@ pub struct AnalysisMetadata {
     pub dead_candidates: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeadFunctionExtended {
-    pub id: String,
-    pub analysis_id: String,
-    pub function_name: String,
-    pub file: String,
-    pub line: usize,
-    pub confidence: f64,
-    pub level: String,
-    pub impact: String,
-    pub loc: usize,
-    pub order: usize,
-    pub model_version: String,
-    pub source_commit: String,
-    pub evidence: Vec<String>,
-    pub counter_evidence: Vec<String>,
-    pub status: CandidateStatus,
-}
-
-#[derive(Debug, Clone)]
-pub enum Action {
-    ConfirmDead(String),
-    FalsePositive(String),
-    Defer(String),
-}
-
-#[derive(Debug, Clone)]
-struct AnalysisSummary {
-    total_functions: usize,
-    dead_functions: usize,
-    dead_types: usize,
-    dead_modules: usize,
-    dead_files: usize,
-    avg_confidence: f64,
-    estimated_loc_removable: usize,
-}
-
-#[derive(Debug, Clone)]
-struct DeadCodeAnalysis {
-    summary: AnalysisSummary,
-    functions: Vec<DeadFunctionExtended>,
-}
-
 // App State
 
 struct App {
@@ -132,6 +90,13 @@ struct App {
     pending_id: Option<String>,
     reason_input: String,
     current_commit: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum Action {
+    ConfirmDead(String),
+    FalsePositive(String),
+    Defer(String),
 }
 
 impl App {
@@ -243,149 +208,137 @@ impl App {
         };
         self.save_decision(&decision_record);
         self.decisions.push(decision_record);
-        if let Some(analysis) = &mut self.analysis {
-            if let Some(candidate) = analysis.functions.iter_mut().find(|c| c.id == candidate_id) {
-                candidate.status = match decision {
-                    DecisionType::ConfirmedDead => CandidateStatus::ConfirmedDead,
-                    DecisionType::ConfirmedAlive => CandidateStatus::ConfirmedAlive,
-                    DecisionType::FalsePositive => CandidateStatus::FalsePositive,
-                    DecisionType::Deferred => CandidateStatus::Deferred,
-                    _ => candidate.status.clone(),
-                };
-            }
-        }
     }
 
     fn load_data(&mut self, path: PathBuf) {
         self.loading = true;
-        self.loading_message = "Starting analysis…".to_string();
+        self.loading_message = "Analyzing project...".to_string();
         self.current_commit = self.get_current_commit();
         self.analysis_metadata = self.load_analysis_metadata();
         self.decisions = self.load_decisions();
 
-        let progress = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-        let progress_clone = progress.clone();
+        use indicatif::{ProgressBar, ProgressStyle};
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(ProgressStyle::with_template("  {spinner:.cyan} {msg}").unwrap());
+        pb.enable_steady_tick(std::time::Duration::from_millis(80));
+
+        let pb_clone = pb.clone();
         let result = std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
                 let mut pipeline = Pipeline::new().with_progress_reporter(std::sync::Arc::new(
                     move |msg: &str| {
-                        if let Ok(mut guard) = progress_clone.lock() {
-                            *guard = msg.to_string();
-                        }
+                        pb_clone.set_message(msg.to_string());
                     },
                 ));
                 let analysis = pipeline
                     .process_project(&path)
                     .await
                     .map_err(|e| e.to_string())?;
-                let summary = pipeline.take_build_summary();
-                let dead_analysis = DeadCodeDetector::analyze(
-                    &analysis.call_graph,
-                    &analysis.type_graph,
-                    &analysis.import_graph,
-                    &analysis.dependency_graph,
-                    &analysis.files,
-                    None,
-                );
-                Ok::<_, String>((dead_analysis, summary))
+                let _summary = pipeline.take_build_summary();
+
+                // Use VerdictEngine like the CLI does
+                use code_intelligence::analysis::{
+                    dead_code::{DeadCodeAnalyzer, DeadFunction},
+                    dynamic_refs::DynamicRefDetector,
+                    roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector},
+                    verdict::{VerdictConfig, VerdictEngine},
+                };
+
+                // 1. Detect roots
+                let root_config = RootDetectionConfig::default();
+                let root_set =
+                    RootDetector::detect_roots(&analysis.call_graph, &analysis.files, &root_config);
+
+                // 2. Compute reachability
+                let reachability =
+                    ReachabilityAnalyzer::compute_reachability(&analysis.call_graph, &root_set);
+
+                // 3. Create verdict engine
+                let mut verdict_engine = VerdictEngine::new(VerdictConfig::default());
+
+                // 4. Detect dynamic references
+                let dynamic_detector = DynamicRefDetector::new();
+                let dynamic_refs =
+                    dynamic_detector.detect_all(&analysis.call_graph, &analysis.files);
+                verdict_engine = verdict_engine.with_dynamic_refs(dynamic_refs);
+
+                // 5. Generate verdicts
+                let verdicts = verdict_engine.evaluate_all(&analysis.call_graph, &reachability);
+
+                // 6. Filter dead verdicts
+                let dead_verdicts: Vec<_> = verdict_engine.filter_dead(&verdicts);
+
+                // 7. Convert to DeadFunction with impact info
+                let mut impact_analyzer = DeadCodeAnalyzer::new_for_impact_only();
+                let dead_functions =
+                    impact_analyzer.import_verdicts(&dead_verdicts, &analysis.call_graph);
+
+                // 8. Filter out benchmark functions
+                let filtered_functions: Vec<DeadFunction> = dead_functions
+                    .into_iter()
+                    .filter(|f| !f.file.contains("/benches/"))
+                    .collect();
+
+                // 9. Build summary
+                let summary = code_intelligence::analysis::dead_code::AnalysisSummary {
+                    total_functions: analysis.call_graph.node_count(),
+                    dead_functions: filtered_functions.len(),
+                    dead_types: 0,
+                    dead_modules: 0,
+                    dead_files: 0,
+                    avg_confidence: if filtered_functions.is_empty() {
+                        0.0
+                    } else {
+                        filtered_functions
+                            .iter()
+                            .map(|f| f.score.score)
+                            .sum::<f64>()
+                            / filtered_functions.len() as f64
+                    },
+                    estimated_loc_removable: filtered_functions
+                        .iter()
+                        .map(|f| f.impact.lines_of_code)
+                        .sum(),
+                };
+
+                // Create DeadCodeAnalysis for the UI
+                let dead_analysis = DeadCodeAnalysis {
+                    functions: filtered_functions,
+                    types: code_intelligence::analysis::dead_code::DeadTypeReport {
+                        unused_structs: Vec::new(),
+                        unused_enums: Vec::new(),
+                        unused_traits: Vec::new(),
+                        unused_type_aliases: Vec::new(),
+                        unused_impl_blocks: Vec::new(),
+                    },
+                    modules: code_intelligence::analysis::dead_code::DeadModuleReport {
+                        unused_modules: Vec::new(),
+                        unused_files: Vec::new(),
+                        unused_imports: Vec::new(),
+                    },
+                    reachability,
+                    summary,
+                };
+
+                Ok::<_, String>(dead_analysis)
             })
         });
 
         let outcome = result.join().unwrap();
+        pb.finish_and_clear();
+
         match outcome {
-            Ok((analysis, summary)) => {
-                if let Some(s) = summary {
-                    println!(
-                        "✓ {} functions, {} edges · {} indexed names · {} duplicates resolved",
-                        s.functions, s.edges, s.names, s.duplicates
-                    );
-                }
-                let is_stale = self
-                    .analysis_metadata
-                    .as_ref()
-                    .map(|m| m.source_commit != self.current_commit)
-                    .unwrap_or(false);
-
-                let mut functions: Vec<DeadFunctionExtended> = analysis
-                    .functions
-                    .iter()
-                    .map(|f| {
-                        let candidate_id = format!(
-                            "{}::{}::{}",
-                            self.get_analysis_id(),
-                            f.file.replace('/', "_"),
-                            f.name
-                        );
-                        let status = if is_stale {
-                            CandidateStatus::Stale
-                        } else if let Some(decision) = self
-                            .decisions
-                            .iter()
-                            .find(|d| d.candidate_id == candidate_id)
-                        {
-                            match decision.decision {
-                                DecisionType::ConfirmedDead => CandidateStatus::ConfirmedDead,
-                                DecisionType::ConfirmedAlive => CandidateStatus::ConfirmedAlive,
-                                DecisionType::FalsePositive => CandidateStatus::FalsePositive,
-                                DecisionType::Deferred => CandidateStatus::Deferred,
-                                _ => CandidateStatus::Pending,
-                            }
-                        } else {
-                            CandidateStatus::Pending
-                        };
-
-                        DeadFunctionExtended {
-                            id: candidate_id,
-                            analysis_id: self.get_analysis_id(),
-                            function_name: f.name.clone(),
-                            file: f.file.clone(),
-                            line: f.line,
-                            confidence: f.score.score * 100.0,
-                            level: format!("{:?}", f.score.level),
-                            impact: f.impact.estimated_removal_impact.clone(),
-                            loc: f.impact.lines_of_code,
-                            order: f.removal_order,
-                            model_version: self.get_model_version(),
-                            source_commit: self.get_source_commit(),
-                            evidence: f
-                                .score
-                                .factors
-                                .iter()
-                                .filter(|s| s.contribution > 0.0)
-                                .map(|s| s.explanation.clone())
-                                .collect(),
-                            counter_evidence: f
-                                .score
-                                .factors
-                                .iter()
-                                .filter(|s| s.contribution < 0.0)
-                                .map(|s| s.explanation.clone())
-                                .collect(),
-                            status,
-                        }
-                    })
-                    .collect();
-
-                functions.sort_by_key(|f| f.order);
-                self.analysis = Some(DeadCodeAnalysis {
-                    summary: AnalysisSummary {
-                        total_functions: analysis.summary.total_functions,
-                        dead_functions: analysis.summary.dead_functions,
-                        dead_types: analysis.summary.dead_types,
-                        dead_modules: analysis.summary.dead_modules,
-                        dead_files: analysis.summary.dead_files,
-                        avg_confidence: analysis.summary.avg_confidence,
-                        estimated_loc_removable: analysis.summary.estimated_loc_removable,
-                    },
-                    functions,
-                });
+            Ok(dead_analysis) => {
+                self.analysis = Some(dead_analysis);
                 self.table_state.select(Some(0));
                 self.loading = false;
+                self.loading_message = "Ready".to_string();
             }
             Err(e) => {
                 self.error = Some(format!("Failed to analyze: {}", e));
                 self.loading = false;
+                self.loading_message = "Error".to_string();
             }
         }
     }
@@ -547,53 +500,10 @@ fn handle_navigation(app: &mut App, key: KeyCode) -> io::Result<()> {
     Ok(())
 }
 
-fn handle_actions(app: &mut App, key: KeyCode) -> bool {
-    match key {
-        KeyCode::Char('d') => {
-            if let Some(selected) = app.table_state.selected() {
-                if let Some(candidate) = app
-                    .analysis
-                    .as_ref()
-                    .and_then(|a| a.functions.get(selected))
-                {
-                    if candidate.status != CandidateStatus::Stale {
-                        app.show_confirmation = true;
-                        app.pending_action = Some(Action::ConfirmDead(candidate.id.clone()));
-                    }
-                }
-            }
-        }
-        KeyCode::Char('f') => {
-            if let Some(selected) = app.table_state.selected() {
-                if let Some(candidate) = app
-                    .analysis
-                    .as_ref()
-                    .and_then(|a| a.functions.get(selected))
-                {
-                    if candidate.status != CandidateStatus::Stale {
-                        app.show_confirmation = true;
-                        app.pending_action = Some(Action::FalsePositive(candidate.id.clone()));
-                    }
-                }
-            }
-        }
-        KeyCode::Char('s') => {
-            if let Some(selected) = app.table_state.selected() {
-                if let Some(candidate) = app
-                    .analysis
-                    .as_ref()
-                    .and_then(|a| a.functions.get(selected))
-                {
-                    if candidate.status != CandidateStatus::Stale {
-                        app.show_confirmation = true;
-                        app.pending_action = Some(Action::Defer(candidate.id.clone()));
-                    }
-                }
-            }
-        }
-        _ => return false,
-    }
-    true
+fn handle_actions(_app: &mut App, _key: KeyCode) -> bool {
+    // This now uses the UI modules which handle DeadFunction directly
+    // The actions will be handled by the UI modules
+    false
 }
 
 fn ui(f: &mut Frame, app: &mut App) {
@@ -665,7 +575,7 @@ fn ui(f: &mut Frame, app: &mut App) {
         None => {
             if app.loading {
                 f.render_widget(
-                    Paragraph::new(format!("⏳ {}", app.loading_message)) // CHANGED
+                    Paragraph::new(format!("⏳ {}", app.loading_message))
                         .alignment(Alignment::Center)
                         .style(Style::default().fg(WARN)),
                     root[1],
