@@ -116,6 +116,106 @@ impl CallGraphBuilder {
         }
 
         // ============================================================
+        // ⭐ NEW: Build type-to-implementations index for method resolution
+        // ============================================================
+        let mut type_to_impls: HashMap<String, Vec<String>> = HashMap::new();
+        let mut method_to_impls: HashMap<String, Vec<String>> = HashMap::new();
+
+        for (path, _) in &func_index {
+            let parts: Vec<&str> = path.split("::").collect();
+            if parts.len() >= 3 {
+                // Format: file::Type::method
+                let type_name = parts[1].to_string();
+                let method_name = parts[2].to_string();
+
+                // Index by type
+                type_to_impls
+                    .entry(type_name.clone())
+                    .or_default()
+                    .push(path.clone());
+
+                // Index by method name (for resolving calls like `uf.union()`)
+                method_to_impls
+                    .entry(method_name)
+                    .or_default()
+                    .push(path.clone());
+            }
+        }
+
+        // ============================================================
+        // ⭐ NEW: Build local variable type tracking from parser info
+        // ============================================================
+        // This is a simplified approach - we track variable assignments
+        // by parsing the source code for `let x = Type::new()` patterns
+        let mut var_to_type: HashMap<String, String> = HashMap::new();
+
+        // Build a map of variable names to their types by scanning source
+        for file in files {
+            let source = &file.source;
+
+            // Pattern: `let variable_name: TypeName` or `let variable_name = TypeName::new()`
+            let lines: Vec<&str> = source.lines().collect();
+            for (_i, line) in lines.iter().enumerate() {
+                let trimmed = line.trim();
+
+                // Pattern 1: `let var: Type`
+                if trimmed.starts_with("let ") && trimmed.contains(':') {
+                    let parts: Vec<&str> = trimmed.split(':').collect();
+                    if parts.len() >= 2 {
+                        let var_part = parts[0].trim().trim_start_matches("let ").trim();
+                        let type_part = parts[1]
+                            .trim()
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or("")
+                            .trim();
+
+                        // Clean up type name (remove generics, lifetime annotations)
+                        let clean_type = type_part
+                            .split('<')
+                            .next()
+                            .unwrap_or(type_part)
+                            .split('&')
+                            .last()
+                            .unwrap_or(type_part)
+                            .trim();
+
+                        if !clean_type.is_empty() && !clean_type.starts_with('_') {
+                            var_to_type.insert(var_part.to_string(), clean_type.to_string());
+                        }
+                    }
+                }
+
+                // Pattern 2: `let var = Type::new()` or `let var = Type { ... }`
+                if trimmed.starts_with("let ") && trimmed.contains("= ") {
+                    let parts: Vec<&str> = trimmed.split("= ").collect();
+                    if parts.len() >= 2 {
+                        let var_part = parts[0].trim().trim_start_matches("let ").trim();
+                        let init_part = parts[1].trim();
+
+                        // Check if it's a constructor call: Type::new() or Type { ... }
+                        if init_part.contains("::") {
+                            let type_part = init_part.split("::").next().unwrap_or("").trim();
+                            // Remove generics
+                            let clean_type =
+                                type_part.split('<').next().unwrap_or(type_part).trim();
+
+                            if !clean_type.is_empty() && !clean_type.starts_with('_') {
+                                var_to_type.insert(var_part.to_string(), clean_type.to_string());
+                            }
+                        } else if init_part.contains('{') && !init_part.contains('.') {
+                            // Struct literal: Type { field: value }
+                            let type_part = init_part.split('{').next().unwrap_or("").trim();
+                            if !type_part.is_empty() && !type_part.starts_with('_') {
+                                var_to_type.insert(var_part.to_string(), type_part.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ============================================================
         // Trait-method index for operator-overload resolution
         // ============================================================
         let mut trait_method_index: HashMap<(String, String), Vec<petgraph::graph::NodeIndex>> =
@@ -157,6 +257,19 @@ impl CallGraphBuilder {
                     .entry(container)
                     .or_default()
                     .push(path.clone());
+            }
+        }
+
+        // ============================================================
+        // ⭐ NEW: Build type name -> type definition index
+        // ============================================================
+        let mut type_definition_index: HashMap<String, Vec<String>> = HashMap::new();
+        for file in files {
+            for type_info in &file.types {
+                type_definition_index
+                    .entry(type_info.name.clone())
+                    .or_default()
+                    .push(file.path.clone());
             }
         }
 
@@ -253,23 +366,24 @@ impl CallGraphBuilder {
                         let simple_name = called_name.rsplit("::").next().unwrap_or(called_name);
 
                         // ============================================================
-                        // TIER 1.5: Handle method calls (variable.method)
+                        // TIER 1.5: ⭐ IMPROVED Method calls (variable.method)
                         // ============================================================
                         if !found && called_name.contains(".") {
                             let parts: Vec<&str> = called_name.split('.').collect();
                             if parts.len() == 2 {
+                                let receiver = parts[0];
                                 let method = parts[1];
 
-                                // Try to find a method with this name in the same container
-                                if let Some(container) = &func.container {
-                                    let full_path =
-                                        format!("{}::{}::{}", file_path, container, method);
-                                    if let Some(&callee_idx) = func_index.get(&full_path) {
+                                // ⭐ STRATEGY 1: Check if receiver is a known type from variable tracking
+                                if let Some(var_type) = var_to_type.get(receiver) {
+                                    // Try to find method on this type
+                                    let type_method = format!("{}::{}", var_type, method);
+                                    if let Some(&callee_idx) = func_index.get(&type_method) {
                                         call_graph.add_call(
                                             caller_idx,
                                             callee_idx,
                                             CallEdge {
-                                                call_type: "method_call".to_string(),
+                                                call_type: "method_call_resolved".to_string(),
                                                 line: func.line,
                                             },
                                         );
@@ -277,7 +391,7 @@ impl CallGraphBuilder {
                                     }
                                 }
 
-                                // If not found, try as standalone function
+                                // ⭐ STRATEGY 2: Try to find method in the same file
                                 if !found {
                                     let full_path = format!("{}::{}", file_path, method);
                                     if let Some(&callee_idx) = func_index.get(&full_path) {
@@ -285,7 +399,98 @@ impl CallGraphBuilder {
                                             caller_idx,
                                             callee_idx,
                                             CallEdge {
-                                                call_type: "method_call".to_string(),
+                                                call_type: "method_call_same_file".to_string(),
+                                                line: func.line,
+                                            },
+                                        );
+                                        found = true;
+                                    }
+                                }
+
+                                // ⭐ STRATEGY 3: Try to find method in the same container
+                                if !found {
+                                    if let Some(container) = &func.container {
+                                        let full_path =
+                                            format!("{}::{}::{}", file_path, container, method);
+                                        if let Some(&callee_idx) = func_index.get(&full_path) {
+                                            call_graph.add_call(
+                                                caller_idx,
+                                                callee_idx,
+                                                CallEdge {
+                                                    call_type: "method_call_container".to_string(),
+                                                    line: func.line,
+                                                },
+                                            );
+                                            found = true;
+                                        }
+                                    }
+                                }
+
+                                // ⭐ STRATEGY 4: Try to find method by name (unambiguous)
+                                if !found {
+                                    if let Some(paths) = method_to_impls.get(method) {
+                                        if paths.len() == 1 {
+                                            if let Some(&callee_idx) = func_index.get(&paths[0]) {
+                                                call_graph.add_call(
+                                                    caller_idx,
+                                                    callee_idx,
+                                                    CallEdge {
+                                                        call_type: "method_call_by_name"
+                                                            .to_string(),
+                                                        line: func.line,
+                                                    },
+                                                );
+                                                found = true;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // ⭐ STRATEGY 5: Try common method patterns (heuristic)
+                                if !found {
+                                    // Common methods like new, default, clone, etc.
+                                    let common_methods = vec![
+                                        "new", "default", "clone", "from", "into", "try_from",
+                                        "is_empty", "len", "capacity", "clear", "push", "pop",
+                                    ];
+                                    if common_methods.contains(&method) {
+                                        // Try to find by name alone
+                                        if let Some(paths) = func_by_name.get(method) {
+                                            if paths.len() == 1 {
+                                                if let Some(&callee_idx) = func_index.get(&paths[0])
+                                                {
+                                                    call_graph.add_call(
+                                                        caller_idx,
+                                                        callee_idx,
+                                                        CallEdge {
+                                                            call_type: "method_call_common"
+                                                                .to_string(),
+                                                            line: func.line,
+                                                        },
+                                                    );
+                                                    found = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // ⭐ STRATEGY 6: Try to infer from context (if receiver is a struct literal)
+                                if !found
+                                    && receiver
+                                        .chars()
+                                        .next()
+                                        .map(|c| c.is_uppercase())
+                                        .unwrap_or(false)
+                                {
+                                    // Receiver looks like a type name (starts with uppercase)
+                                    let type_method = format!("{}::{}", receiver, method);
+                                    if let Some(&callee_idx) = func_index.get(&type_method) {
+                                        call_graph.add_call(
+                                            caller_idx,
+                                            callee_idx,
+                                            CallEdge {
+                                                call_type: "method_call_type".to_string(),
                                                 line: func.line,
                                             },
                                         );
@@ -326,6 +531,30 @@ impl CallGraphBuilder {
                             && !called_name.starts_with("Self::")
                         {
                             // Already handled by TIER 1
+                        }
+
+                        // ============================================================
+                        // TIER 1.8: ⭐ NEW Handle constructor calls
+                        // ============================================================
+                        if !found && called_name.contains("::") {
+                            let is_constructor = called_name.ends_with("::new")
+                                || called_name.ends_with("::default")
+                                || called_name.ends_with("::from")
+                                || called_name.ends_with("::with_capacity");
+
+                            if is_constructor {
+                                if let Some(&callee_idx) = func_index.get(called_name) {
+                                    call_graph.add_call(
+                                        caller_idx,
+                                        callee_idx,
+                                        CallEdge {
+                                            call_type: "constructor".to_string(),
+                                            line: func.line,
+                                        },
+                                    );
+                                    found = true;
+                                }
+                            }
                         }
 
                         // ============================================================
@@ -469,6 +698,36 @@ impl CallGraphBuilder {
                         }
 
                         // ============================================================
+                        // ⭐ NEW TIER 7: Try method resolution by receiver type (heuristic)
+                        // ============================================================
+                        if !found && called_name.contains(".") {
+                            let parts: Vec<&str> = called_name.split('.').collect();
+                            if parts.len() == 2 {
+                                let method = parts[1];
+                                // Try to find any function with this name in the current file
+                                if let Some(paths) = func_by_name.get(method) {
+                                    for path in paths {
+                                        if path.starts_with(&file_path) && path != &caller_path {
+                                            if let Some(&callee_idx) = func_index.get(path) {
+                                                call_graph.add_call(
+                                                    caller_idx,
+                                                    callee_idx,
+                                                    CallEdge {
+                                                        call_type: "method_call_heuristic"
+                                                            .to_string(),
+                                                        line: func.line,
+                                                    },
+                                                );
+                                                found = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // ============================================================
                         // Unresolved call - skip it
                         // ============================================================
                         if !found {
@@ -479,21 +738,6 @@ impl CallGraphBuilder {
             }
         }
 
-        // All manual edge patching has been removed.
-        // The Tier 0-6 resolver above handles all call relationships correctly
-        // based on the parsed AST and import resolution.
-        //
-        // If specific edges are still missing, they indicate a bug in the resolver
-        // that should be fixed by adding a new resolution tier, not by hardcoding
-        // one-off fixes that run unconditionally for every project.
-        //
-        // Common missing patterns to add as new tiers:
-        //   - Operator overloads on custom types (currently handled via "op::" prefix)
-        //   - Method calls on generic type parameters
-        //   - Associated functions on trait objects
-        //   - FFI/extern function pointers
-        //
-        // DO NOT add manual edge patches here for specific function names.
         call_graph
     }
 
