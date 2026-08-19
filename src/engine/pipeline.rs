@@ -20,9 +20,19 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-// ============================================================================
-// Pipeline Struct
-// ============================================================================
+pub type ProgressFn = Arc<dyn Fn(&str) + Send + Sync>;
+
+#[derive(Debug, Clone, Default)]
+pub struct BuildSummary {
+    pub functions: usize,
+    pub edges: usize,
+    pub names: usize,
+    pub files: usize,
+    pub nodes: usize,
+    pub proj_edges: usize,
+    pub duplicates: usize,
+}
+
 #[allow(dead_code)]
 pub struct Pipeline {
     parser: TreeSitterParser,
@@ -32,6 +42,8 @@ pub struct Pipeline {
     llm_provider: Option<Arc<dyn LLMProvider>>,
     code_understanding: Option<CodeUnderstandingEngine>,
     analysis_cache: Option<AnalysisCacheManager>,
+    progress: Option<ProgressFn>,
+    last_build_summary: Option<BuildSummary>,
 }
 
 impl Pipeline {
@@ -44,6 +56,8 @@ impl Pipeline {
             llm_provider: None,
             code_understanding: None,
             analysis_cache: None,
+            progress: None,
+            last_build_summary: None,
         }
     }
 
@@ -63,6 +77,19 @@ impl Pipeline {
         self.cache = self.cache.with_persistent_dir(cache_dir.clone());
         self.analysis_cache = Some(AnalysisCacheManager::new(&cache_dir));
         self
+    }
+
+    pub fn with_progress_reporter(mut self, f: ProgressFn) -> Self {
+        self.progress = Some(f);
+        self
+    }
+    pub fn take_build_summary(&mut self) -> Option<BuildSummary> {
+        self.last_build_summary.take()
+    }
+    fn report(&self, msg: &str) {
+        if let Some(f) = &self.progress {
+            f(msg);
+        }
     }
 
     pub async fn with_ollama_phi2(mut self) -> Result<Self, String> {
@@ -123,22 +150,10 @@ impl Pipeline {
     }
 
     pub fn stage_parse_parallel(&self, raw: RawProject) -> ParsedProject {
-        use indicatif::{ProgressBar, ProgressStyle};
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         let total = raw.files.len();
         let completed = Arc::new(AtomicUsize::new(0));
-
-        // Create a clean progress bar
-        let pb = ProgressBar::new(total as u64);
-        pb.set_style(
-            ProgressStyle::with_template(
-                "  {spinner:.cyan} parsing files [{bar:40.cyan/blue}] {pos}/{len}",
-            )
-            .unwrap()
-            .progress_chars("##-"),
-        );
-        pb.enable_steady_tick(std::time::Duration::from_millis(100));
 
         let parsed_files: Vec<ParsedFile> = raw
             .files
@@ -147,24 +162,18 @@ impl Pipeline {
                 let thread_parser = TreeSitterParser::new();
                 let result = thread_parser.parse_file(file);
 
-                // Update the progress bar
-                completed.fetch_add(1, Ordering::Relaxed);
-                pb.inc(1);
+                let count = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                self.report(&format!("parsing files ({}/{})", count, total));
 
                 match result {
-                    Ok(parsed) => {
-                        if !parsed.functions.is_empty() || !parsed.types.is_empty() {
-                            Some(parsed)
-                        } else {
-                            None
-                        }
+                    Ok(parsed) if !parsed.functions.is_empty() || !parsed.types.is_empty() => {
+                        Some(parsed)
                     }
-                    Err(_e) => None,
+                    _ => None,
                 }
             })
             .collect();
 
-        pb.finish_and_clear();
         ParsedProject {
             root: raw.root,
             files: parsed_files,
@@ -300,32 +309,21 @@ impl Pipeline {
 
             if cache_mgr.has_valid_analysis(&project_hash, &file_entries) {
                 if let Some(cached) = cache_mgr.load_analysis_metadata(&project_hash) {
-                    println!("✅ Cache hit! Found cached analysis for {:?}", root);
-                    println!("   Functions: {}", cached.function_count);
-                    println!("   Edges: {}", cached.edge_count);
-                    println!("   Files: {}", cached.file_count);
-
-                    println!("   ⚠️ Cache hit only metadata. Full reconstruction coming soon.");
+                    self.report(&format!(
+                        "cache hit: {} functions, {} edges, {} files",
+                        cached.function_count, cached.edge_count, cached.file_count
+                    ));
                 }
             } else {
-                println!("🔍 Cache miss or invalid. Running full analysis...");
+                self.report("cache miss, running full analysis...");
             }
         }
 
         let raw = self.stage_collect(root);
-        println!("📁 Found {} source files", raw.files.len());
+        self.report(&format!("found {} files", raw.files.len()));
 
-        if raw.files.len() > self.config.max_files {
-            println!(
-                "⚠️ Too many files ({}), limiting to {}",
-                raw.files.len(),
-                self.config.max_files
-            );
-        }
-
-        println!("🔄 Parsing files in parallel...");
         let parsed = self.stage_parse_parallel(raw);
-        println!("✅ Successfully parsed {} files", parsed.files.len());
+        self.report(&format!("parsed {} files", parsed.files.len()));
 
         if parsed.files.is_empty() {
             let analysis = ProjectAnalysisBuilder::new(root.to_path_buf())
@@ -338,20 +336,20 @@ impl Pipeline {
             return Ok(analysis);
         }
 
-        // 🛑 START: THE CLEAN BUILD PHASE WITH SPINNER
-        let pb = indicatif::ProgressBar::new_spinner();
-        pb.set_style(
-            indicatif::ProgressStyle::default_spinner()
-                .template("{spinner:.cyan} {msg}")?
-                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
-        );
-        pb.set_message("Building graphs and extracting features...");
-        pb.enable_steady_tick(std::time::Duration::from_millis(100));
-
-        // Stage 1: Analyze
+        self.report("building graphs...");
         let analyzed = self.stage_analyze_parallel(parsed);
 
-        // ⭐ COMPUTE LAYERS + DUPLICATE COUNT BEFORE MOVING ANALYZED
+        let node_count = analyzed.call_graph.node_count();
+        let mut cycle_count = 0;
+        if node_count < 1000 {
+            let mut call_graph_for_cycles = analyzed.call_graph.clone();
+            call_graph_for_cycles.mark_cycle_members();
+            cycle_count = call_graph_for_cycles
+                .node_indices()
+                .filter(|&idx| call_graph_for_cycles[idx].is_cycle)
+                .count();
+        }
+
         let layers: std::collections::HashSet<String> = analyzed
             .call_graph
             .node_indices()
@@ -360,55 +358,28 @@ impl Pipeline {
         let mut layer_list: Vec<_> = layers.into_iter().collect();
         layer_list.sort();
 
-        let duplicate_count = analyzed.call_graph.duplicate_functions.len(); // ⭐ grab it here, print later
-
-        // Stage 2: Optimize (this moves `analyzed`, so we already grabbed what we needed)
+        self.report("extracting features...");
         let optimized = self.stage_optimize_parallel(analyzed);
-
-        pb.finish_and_clear();
-
-        // Print the clean summary — nothing else prints until the spinner is gone
-        println!("\n┌─ Build Summary ────────────────────────────");
-        println!(
-            "│ Call graph   : {:>5} functions, {:>5} edges",
-            optimized.call_graph.node_count(),
-            optimized.call_graph.edge_count()
-        );
-        println!(
-            "│ Indexes      : {:>5} names, {:>5} files",
-            optimized.rich_indexes.function_name.len(),
-            optimized.rich_indexes.file_to_functions.len()
-        );
-        println!(
-            "│ Project graph: {:>5} nodes, {:>5} edges",
-            optimized.project_graph.node_count(),
-            optimized.project_graph.edge_count()
-        );
-        println!("│ Layers       : {}", layer_list.join(", "));
-        if duplicate_count > 0 {
-            println!(
-                "│ Duplicates   : {:>5} resolved to existing nodes",
-                duplicate_count
-            );
-        }
-        println!("└─────────────────────────────────────────────");
-
-        // 🛑 END: THE CLEAN BUILD PHASE WITH SPINNER
 
         let mut call_graph = optimized.call_graph.clone();
         self.scorer.score_all(&mut call_graph);
-        println!("📈 Scored function importance");
+
+        self.last_build_summary = Some(BuildSummary {
+            functions: call_graph.node_count(),
+            edges: call_graph.edge_count(),
+            names: optimized.rich_indexes.function_name.len(),
+            files: optimized.rich_indexes.file_to_functions.len(),
+            nodes: optimized.project_graph.node_count(),
+            proj_edges: optimized.project_graph.edge_count(),
+            duplicates: call_graph.duplicate_functions.len(),
+        });
+        let _ = cycle_count; // available if you want to fold into BuildSummary too
+        let _ = layer_list; // available if you want to fold into BuildSummary too
 
         let llm_analysis = if self.config.enable_llm && self.code_understanding.is_some() {
-            println!("🤖 Running LLM analysis...");
+            self.report("running LLM analysis...");
             let engine = self.code_understanding.as_mut().unwrap();
             let analysis = LLMAnalyzer::analyze(engine, &call_graph, &optimized.files).await;
-            if let Ok(ref a) = analysis {
-                println!("✅ LLM analysis complete");
-                println!("   - Documentation generated: {}", a.has_documentation);
-                println!("   - Functions summarized: {}", a.summarized_count);
-                println!("   - Issues found: {}", a.issues_count);
-            }
             analysis.ok()
         } else {
             None
@@ -420,8 +391,7 @@ impl Pipeline {
         };
         let analysis = self.stage_finalize(final_optimized, llm_analysis);
 
-        let duration = start_time.elapsed();
-        println!("⏱️ Analysis completed in {:.2}s", duration.as_secs_f64());
+        let _duration = start_time.elapsed();
 
         // Save to cache
         self.save_to_cache(&project_hash, root, &analysis)?;

@@ -601,21 +601,36 @@ impl DeadCodeAnalyzer {
             10
         };
 
-        let caller_count = func.fan_in;
-        let (estimated_removal_impact, removal_cost) = if caller_count == 0 {
+        // Impact is now based on removal risk (size + complexity), not caller
+        // count. Caller count is a poor signal here: functions that reach this
+        // method are already confidently dead, which by definition means they
+        // have ~0 callers — so the old caller-count logic collapsed almost
+        // everything into "Low impact" regardless of how much code or
+        // complexity was actually being removed.
+        let (estimated_removal_impact, removal_cost) = if lines_of_code >= 50 || complexity >= 15.0
+        {
             (
-                "Low impact - no direct callers".to_string(),
-                RemovalCost::Low,
+                format!(
+                    "High impact - {} LOC, complexity {:.1}",
+                    lines_of_code, complexity
+                ),
+                RemovalCost::High,
             )
-        } else if caller_count <= 3 {
+        } else if lines_of_code >= 20 || complexity >= 7.0 {
             (
-                format!("Medium impact - {} direct callers", caller_count),
+                format!(
+                    "Medium impact - {} LOC, complexity {:.1}",
+                    lines_of_code, complexity
+                ),
                 RemovalCost::Medium,
             )
         } else {
             (
-                format!("High impact - {} direct callers", caller_count),
-                RemovalCost::High,
+                format!(
+                    "Low impact - {} LOC, complexity {:.1}",
+                    lines_of_code, complexity
+                ),
+                RemovalCost::Low,
             )
         };
 

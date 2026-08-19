@@ -1,8 +1,8 @@
 // src/bin/dashboard_ui/render_history.rs
 
 use ratatui::{
-    layout::Rect,
-    style::Style,
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Paragraph, Wrap},
     Frame,
@@ -12,6 +12,20 @@ use super::styles::{outer_block, ACCENT, BAD, GOOD, MUTED, TEXT, WARN};
 use crate::{DashboardDecision, DecisionType};
 
 pub fn render_history(f: &mut Frame, area: Rect, decisions: &[DashboardDecision]) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(area);
+
+    let header_text = Line::from(vec![Span::styled(
+        format!(" {} decisions recorded ", decisions.len()),
+        Style::default()
+            .fg(Color::Black)
+            .bg(ACCENT)
+            .add_modifier(Modifier::BOLD),
+    )]);
+    f.render_widget(Paragraph::new(header_text), rows[0]);
+
     let mut lines = Vec::new();
 
     if decisions.is_empty() {
@@ -105,5 +119,5 @@ pub fn render_history(f: &mut Frame, area: Rect, decisions: &[DashboardDecision]
         .block(outer_block("Decision History"))
         .wrap(Wrap { trim: true });
 
-    f.render_widget(paragraph, area);
+    f.render_widget(paragraph, rows[1]);
 }

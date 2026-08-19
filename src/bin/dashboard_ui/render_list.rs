@@ -2,7 +2,8 @@
 
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Cell, Paragraph, Row, Table, TableState},
     Frame,
 };
@@ -22,20 +23,40 @@ pub fn render_list(
         .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(area);
 
-    let header_text = format!(
-        "{} dead functions — [d] dead  [f] false-positive  [s] defer",
-        analysis.functions.len()
-    );
-    let header = Paragraph::new(header_text).style(Style::default().fg(MUTED));
+    let header_text = Line::from(vec![
+        Span::styled(
+            format!(" {} dead functions ", analysis.functions.len()),
+            Style::default()
+                .fg(Color::Black)
+                .bg(ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(" d ", Style::default().fg(Color::Black).bg(Color::Red)),
+        Span::raw(" dead   "),
+        Span::styled(" f ", Style::default().fg(Color::Black).bg(Color::Green)),
+        Span::raw(" false-positive   "),
+        Span::styled(" s ", Style::default().fg(Color::Black).bg(Color::Yellow)),
+        Span::raw(" defer"),
+    ]);
+    let header = Paragraph::new(header_text);
     f.render_widget(header, chunks[0]);
 
     let rows: Vec<Row> = analysis
         .functions
         .iter()
-        .map(|func| {
+        .enumerate()
+        .map(|(i, func)| {
             let conf_color = confidence_color(func.confidence);
             let status_color = status_color(&func.status);
             let status_emoji = status_emoji(&func.status);
+
+            // Subtle row striping so long lists don't blur together
+            let row_bg = if i % 2 == 0 {
+                Color::Reset
+            } else {
+                Color::Rgb(20, 22, 30)
+            };
 
             Row::new(vec![
                 Cell::from(func.order.to_string()).style(Style::default().fg(MUTED)),
@@ -49,6 +70,7 @@ pub fn render_list(
                     .style(Style::default().fg(impact_color(&func.impact))),
                 Cell::from(func.loc.to_string()).style(Style::default().fg(MUTED)),
             ])
+            .style(Style::default().bg(row_bg))
         })
         .collect();
 
@@ -70,7 +92,7 @@ pub fn render_list(
         ])
         .style(
             Style::default()
-                .fg(ratatui::style::Color::Black)
+                .fg(Color::Black)
                 .bg(ACCENT)
                 .add_modifier(Modifier::BOLD),
         )

@@ -12,10 +12,18 @@ use std::collections::HashMap;
 use super::styles::{impact_color, outer_block, BAD, GOOD, WARN};
 
 pub fn render_charts(f: &mut Frame, area: Rect, analysis: &crate::DeadCodeAnalysis) {
-    let chunks = Layout::default()
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(11), // confidence + impact, side by side
+            Constraint::Min(6),     // dead LOC by file (new — fills the old dead space)
+        ])
+        .split(area);
+
+    let top_cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(area);
+        .split(rows[0]);
 
     // Confidence distribution
     let conf_order = ["Guaranteed", "VeryLikely", "Probably", "Uncertain", "Other"];
@@ -57,7 +65,7 @@ pub fn render_charts(f: &mut Frame, area: Rect, analysis: &crate::DeadCodeAnalys
         .data(BarGroup::default().bars(&conf_bars))
         .bar_width(9)
         .bar_gap(2);
-    f.render_widget(confidence_chart, chunks[0]);
+    f.render_widget(confidence_chart, top_cols[0]);
 
     // Impact distribution
     let impact_order = ["High", "Medium", "Low"];
@@ -91,5 +99,42 @@ pub fn render_charts(f: &mut Frame, area: Rect, analysis: &crate::DeadCodeAnalys
         .data(BarGroup::default().bars(&impact_bars))
         .bar_width(9)
         .bar_gap(2);
-    f.render_widget(impact_chart, chunks[1]);
+    f.render_widget(impact_chart, top_cols[1]);
+
+    // ---------- Dead LOC by file (new) ----------
+    // Complements Summary's "Dead Functions by File" (which sorts by count) —
+    // this sorts by total removable lines, so a file with fewer but larger
+    // dead functions still surfaces near the top.
+    let mut loc_by_file: HashMap<&str, u64> = HashMap::new();
+    for func in &analysis.functions {
+        if func.status != crate::CandidateStatus::FalsePositive
+            && func.status != crate::CandidateStatus::ConfirmedAlive
+        {
+            let basename = func.file.rsplit('/').next().unwrap_or(&func.file);
+            *loc_by_file.entry(basename).or_insert(0) += func.loc as u64;
+        }
+    }
+
+    let mut loc_list: Vec<(&str, u64)> = loc_by_file.into_iter().collect();
+    loc_list.sort_by(|a, b| b.1.cmp(&a.1));
+    loc_list.truncate(8);
+
+    let loc_bars: Vec<Bar> = loc_list
+        .iter()
+        .map(|(file, loc)| {
+            Bar::default()
+                .label(Line::from(*file))
+                .value(*loc)
+                .style(Style::default().fg(BAD))
+                .value_style(Style::default().fg(Color::Black).bg(BAD))
+        })
+        .collect();
+
+    let loc_chart = BarChart::default()
+        .block(outer_block("Dead LOC by File (top 8)"))
+        .direction(Direction::Horizontal)
+        .data(BarGroup::default().bars(&loc_bars))
+        .bar_width(1)
+        .bar_gap(1);
+    f.render_widget(loc_chart, rows[1]);
 }

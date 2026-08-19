@@ -25,9 +25,7 @@ use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
 
-// ============================================================================
 // Data Structures
-// ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DecisionType {
@@ -115,9 +113,7 @@ struct DeadCodeAnalysis {
     functions: Vec<DeadFunctionExtended>,
 }
 
-// ============================================================================
 // App State
-// ============================================================================
 
 struct App {
     analysis: Option<DeadCodeAnalysis>,
@@ -125,6 +121,7 @@ struct App {
     selected_tab: usize,
     tabs: Vec<String>,
     loading: bool,
+    loading_message: String,
     error: Option<String>,
     project_path: PathBuf,
     decisions: Vec<DashboardDecision>,
@@ -152,6 +149,7 @@ impl App {
                 "History".to_string(),
             ],
             loading: true,
+            loading_message: String::new(),
             error: None,
             project_path: path,
             decisions: Vec::new(),
@@ -260,20 +258,28 @@ impl App {
 
     fn load_data(&mut self, path: PathBuf) {
         self.loading = true;
+        self.loading_message = "Starting analysis…".to_string();
         self.current_commit = self.get_current_commit();
         self.analysis_metadata = self.load_analysis_metadata();
         self.decisions = self.load_decisions();
 
-        // 🛑 REMOVED THE RAW PRINTLN! STATEMENTS SO THE TUI ISN'T CORRUPTED
-
+        let progress = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let progress_clone = progress.clone();
         let result = std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                let mut pipeline = Pipeline::new();
+                let mut pipeline = Pipeline::new().with_progress_reporter(std::sync::Arc::new(
+                    move |msg: &str| {
+                        if let Ok(mut guard) = progress_clone.lock() {
+                            *guard = msg.to_string();
+                        }
+                    },
+                ));
                 let analysis = pipeline
                     .process_project(&path)
                     .await
                     .map_err(|e| e.to_string())?;
+                let summary = pipeline.take_build_summary();
                 let dead_analysis = DeadCodeDetector::analyze(
                     &analysis.call_graph,
                     &analysis.type_graph,
@@ -282,12 +288,19 @@ impl App {
                     &analysis.files,
                     None,
                 );
-                Ok::<_, String>(dead_analysis)
+                Ok::<_, String>((dead_analysis, summary))
             })
         });
 
-        match result.join().unwrap() {
-            Ok(analysis) => {
+        let outcome = result.join().unwrap();
+        match outcome {
+            Ok((analysis, summary)) => {
+                if let Some(s) = summary {
+                    println!(
+                        "✓ {} functions, {} edges · {} indexed names · {} duplicates resolved",
+                        s.functions, s.edges, s.names, s.duplicates
+                    );
+                }
                 let is_stale = self
                     .analysis_metadata
                     .as_ref()
@@ -386,9 +399,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         PathBuf::from(".")
     };
 
-    // No println here!
-    // No indicatif spinner here!
-
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -413,27 +423,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ============================================================================
 // UI Rendering (thin wrapper that calls dashboard_ui)
-// ============================================================================
-
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<()> {
+    terminal.clear()?;
     loop {
         terminal.draw(|f| ui(f, app))?;
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
+                // Check for quit first
+                if key.code == KeyCode::Char('q') || key.code == KeyCode::Esc {
+                    break;
+                }
                 if handle_dialogs(app, key.code) {
                     continue;
                 }
-                if handle_navigation(app, key.code)? {
-                    continue;
-                }
-                if handle_actions(app, key.code) {
-                    continue;
-                }
+                handle_navigation(app, key.code)?;
+                handle_actions(app, key.code);
             }
         }
     }
+    Ok(())
 }
 
 fn handle_dialogs(app: &mut App, key: KeyCode) -> bool {
@@ -493,9 +502,8 @@ fn handle_dialogs(app: &mut App, key: KeyCode) -> bool {
     false
 }
 
-fn handle_navigation(app: &mut App, key: KeyCode) -> io::Result<bool> {
+fn handle_navigation(app: &mut App, key: KeyCode) -> io::Result<()> {
     match key {
-        KeyCode::Char('q') | KeyCode::Esc => return Ok(true), // Quit
         KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
             app.selected_tab = (app.selected_tab + 1) % app.tabs.len();
         }
@@ -534,9 +542,9 @@ fn handle_navigation(app: &mut App, key: KeyCode) -> io::Result<bool> {
                 app.table_state.select(Some(count - 1));
             }
         }
-        _ => return Ok(false),
+        _ => {}
     }
-    Ok(false)
+    Ok(())
 }
 
 fn handle_actions(app: &mut App, key: KeyCode) -> bool {
@@ -657,7 +665,7 @@ fn ui(f: &mut Frame, app: &mut App) {
         None => {
             if app.loading {
                 f.render_widget(
-                    Paragraph::new("⏳ Loading...")
+                    Paragraph::new(format!("⏳ {}", app.loading_message)) // CHANGED
                         .alignment(Alignment::Center)
                         .style(Style::default().fg(WARN)),
                     root[1],
