@@ -570,6 +570,9 @@ mod tests {
             depth: 0,
             layer: "core".to_string(),
             trait_impl: None,
+            is_test: false,
+            is_trait_method: false,
+            is_trait_default: false,
         };
 
         let used = FunctionNode {
@@ -595,6 +598,9 @@ mod tests {
             depth: 0,
             layer: "core".to_string(),
             trait_impl: None,
+            is_test: false,
+            is_trait_method: false,
+            is_trait_default: false,
         };
 
         let unused = FunctionNode {
@@ -620,6 +626,9 @@ mod tests {
             depth: 0,
             layer: "core".to_string(),
             trait_impl: None,
+            is_test: false,
+            is_trait_method: false,
+            is_trait_default: false,
         };
 
         let entry_idx = graph.add_function(entry);

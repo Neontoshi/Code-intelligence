@@ -30,6 +30,10 @@ pub struct FunctionInfo {
     pub purpose: String,
     pub trait_impl: Option<String>,
     pub decorators: Vec<String>,
+    // ⭐ NEW FLAGS
+    pub is_test: bool,
+    pub is_trait_method: bool,
+    pub is_trait_default: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -162,7 +166,7 @@ impl TreeSitterParser {
             },
         );
 
-        // TypeScript (TS) - without JSX
+        // TypeScript (TS)
         langs.insert(
             "ts".to_string(),
             LanguageConfig {
@@ -194,7 +198,7 @@ impl TreeSitterParser {
             },
         );
 
-        // TypeScript with JSX (TSX) - ⭐ NEW
+        // TypeScript with JSX (TSX)
         langs.insert(
             "tsx".to_string(),
             LanguageConfig {
@@ -202,20 +206,17 @@ impl TreeSitterParser {
                 extensions: vec!["tsx".to_string()],
                 language_fn: tree_sitter_typescript::language_tsx,
                 function_kinds: vec![
-                    // Standard function declarations
                     "function_declaration".to_string(),
                     "function_expression".to_string(),
                     "arrow_function".to_string(),
                     "method_definition".to_string(),
                     "generator_function_declaration".to_string(),
-                    // ⭐ CRITICAL: React component patterns
                     "function".to_string(),
                     "lexical_declaration".to_string(),
                     "variable_declaration".to_string(),
                     "variable_declarator".to_string(),
                     "export_statement".to_string(),
                     "export_default".to_string(),
-                    // Class components
                     "class_declaration".to_string(),
                     "class".to_string(),
                     "method_definition".to_string(),
@@ -421,6 +422,11 @@ impl TreeSitterParser {
         let body_start_line = node.start_position().row + 1;
         let body_end_line = node.end_position().row + 1;
 
+        // ⭐ NEW: Detect test, trait methods, and trait defaults
+        let is_test = Self::has_test_attribute(node, source);
+        let is_trait_method = Self::is_trait_method(node, source);
+        let is_trait_default = Self::is_trait_default_method(node, source);
+
         Some(FunctionInfo {
             name,
             line,
@@ -438,7 +444,61 @@ impl TreeSitterParser {
             purpose,
             trait_impl: trait_impl.map(|s| s.to_string()),
             decorators,
+            // ⭐ NEW FLAGS
+            is_test,
+            is_trait_method,
+            is_trait_default,
         })
+    }
+
+    // ⭐ NEW: Check if function has test attribute
+    fn has_test_attribute(node: &Node, source: &str) -> bool {
+        let start_byte = node.start_byte();
+        let text_before = if start_byte > 0 && start_byte <= source.len() {
+            &source[..start_byte]
+        } else {
+            return false;
+        };
+
+        let test_patterns = [
+            "#[test]",
+            "#[tokio::test]",
+            "#[async_std::test]",
+            "#[wasm_bindgen_test]",
+            "#[test_case]",
+            "#[bench]",
+            "#[criterion]",
+        ];
+
+        for pattern in test_patterns {
+            if text_before.contains(pattern) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    // ⭐ NEW: Check if this is a trait method definition
+    fn is_trait_method(node: &Node, _source: &str) -> bool {
+        let mut current = node.parent();
+        while let Some(parent) = current {
+            let kind = parent.kind();
+            if kind == "trait_item" || kind == "trait_declaration" {
+                return true;
+            }
+            current = parent.parent();
+        }
+        false
+    }
+
+    // ⭐ NEW: Check if this is a trait default method (has a body in the trait)
+    fn is_trait_default_method(node: &Node, source: &str) -> bool {
+        if !Self::is_trait_method(node, source) {
+            return false;
+        }
+        // Check if it has a body (block)
+        node.child_by_field_name("body").is_some()
     }
 
     fn parse_parameters(node: &Node, source: &str) -> Vec<ParamInfo> {
@@ -465,21 +525,28 @@ impl TreeSitterParser {
         params
     }
 
-    // Add this function after extract_calls()
-
     fn extract_calls(node: &Node, source: &str) -> Vec<String> {
         let mut calls = Vec::new();
         Self::walk_for_calls_with_context(node, source, &mut calls, None);
         Self::walk_for_jsx_components(node, source, &mut calls);
 
+        // Deduplicate calls
+        let mut seen = std::collections::HashSet::new();
+        calls.retain(|call| {
+            if seen.contains(call) {
+                false
+            } else {
+                seen.insert(call.clone());
+                true
+            }
+        });
+
         calls
     }
 
-    // ⭐ NEW: Walk the AST for JSX components
     fn walk_for_jsx_components(node: &Node, source: &str, calls: &mut Vec<String>) {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            // Check for JSX element (self-closing or with children)
             if child.kind() == "jsx_element" || child.kind() == "jsx_self_closing_element" {
                 if let Some(open_tag) = child.child_by_field_name("open_tag") {
                     if let Some(tag_name) = open_tag.child_by_field_name("name") {
@@ -509,10 +576,8 @@ impl TreeSitterParser {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             match child.kind() {
-                // CALL EXPRESSION: function_name() or self.method() or Type::method()
                 "call_expression" => {
                     if let Some(func) = child.child_by_field_name("function") {
-                        // Case 1: Field expression — x.method() or self.method()
                         if func.kind() == "field_expression" {
                             let receiver = func
                                 .child_by_field_name("value")
@@ -530,25 +595,23 @@ impl TreeSitterParser {
                                         calls.push(format!("{}::{}", receiver, method_name));
                                     } else {
                                         calls.push(format!("{}.{}", receiver, method_name));
+                                        if let Some(container) = receiver_type {
+                                            calls.push(format!("{}::{}", container, method_name));
+                                        }
                                     }
                                 }
                             }
-                        }
-                        // Case 2: Scoped/qualified identifier — Type::function()
-                        else if func.kind() == "scoped_identifier"
+                        } else if func.kind() == "scoped_identifier"
                             || func.kind() == "qualified_identifier"
                         {
                             if let Ok(name) = func.utf8_text(source.as_bytes()) {
                                 calls.push(name.to_string());
                             }
-                        }
-                        // Case 3: Plain call — function_name()
-                        else if let Ok(name) = func.utf8_text(source.as_bytes()) {
+                        } else if let Ok(name) = func.utf8_text(source.as_bytes()) {
                             calls.push(name.to_string());
                         }
                     }
                 }
-                // METHOD CALL: Generic method call detection
                 "method_call" | "method_invocation" => {
                     if let Some(receiver) = child.child_by_field_name("receiver") {
                         let receiver_text = receiver
@@ -566,20 +629,20 @@ impl TreeSitterParser {
                                     calls.push(format!("{}::{}", receiver_text, method_name));
                                 } else {
                                     calls.push(format!("{}.{}", receiver_text, method_name));
+                                    if let Some(container) = receiver_type {
+                                        calls.push(format!("{}::{}", container, method_name));
+                                    }
                                 }
                             }
                         }
                     }
                 }
-                // CHAIN EXPRESSION: x.y().z()
                 "chain_expression" | "chained_call" => {
                     Self::walk_for_calls_with_context(&child, source, calls, receiver_type);
                 }
-                // INDEX EXPRESSION: a[b] → op::index
                 "index_expression" => {
                     calls.push("op::index".to_string());
                 }
-                // BINARY EXPRESSION: a + b → op::add
                 "binary_expression" => {
                     if let Some(op_node) = child.child_by_field_name("operator") {
                         if let Ok(op) = op_node.utf8_text(source.as_bytes()) {
@@ -597,7 +660,6 @@ impl TreeSitterParser {
                         }
                     }
                 }
-                // SCOPED IDENTIFIER: Type::method (standalone)
                 "scoped_identifier" | "qualified_identifier" => {
                     if let Ok(text) = child.utf8_text(source.as_bytes()) {
                         if text.contains("::") {
@@ -609,7 +671,6 @@ impl TreeSitterParser {
                         }
                     }
                 }
-                // FIELD EXPRESSION: self.method (standalone)
                 "field_expression" => {
                     if let (Some(value), Some(field)) = (
                         child.child_by_field_name("value"),
@@ -628,6 +689,27 @@ impl TreeSitterParser {
                                 calls.push(format!("{}::{}", receiver, method_name));
                             } else {
                                 calls.push(format!("{}.{}", receiver, method_name));
+                                if let Some(container) = receiver_type {
+                                    calls.push(format!("{}::{}", container, method_name));
+                                }
+                            }
+                        }
+                    }
+                }
+                "let_declaration" | "variable_declaration" => {
+                    if let Some(pattern) = child.child_by_field_name("pattern") {
+                        if let Some(type_node) = child.child_by_field_name("type") {
+                            if let (Ok(_var_name), Ok(type_name)) = (
+                                pattern.utf8_text(source.as_bytes()),
+                                type_node.utf8_text(source.as_bytes()),
+                            ) {
+                                Self::walk_for_calls_with_context(
+                                    &child,
+                                    source,
+                                    calls,
+                                    Some(type_name.trim()),
+                                );
+                                continue;
                             }
                         }
                     }

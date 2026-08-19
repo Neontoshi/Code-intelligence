@@ -48,6 +48,9 @@ fn benchmark_dedup(c: &mut Criterion) {
             depth: 0,
             layer: String::new(),
             trait_impl: func.trait_impl.clone(),
+            is_test: false,
+            is_trait_method: false,
+            is_trait_default: false,
         };
         call_graph.add_function(node);
     }
@@ -93,6 +96,9 @@ fn benchmark_compression(c: &mut Criterion) {
             depth: 0,
             layer: String::new(),
             trait_impl: func.trait_impl.clone(),
+            is_test: false,
+            is_trait_method: false,
+            is_trait_default: false,
         };
         call_graph.add_function(node);
     }

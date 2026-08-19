@@ -314,6 +314,9 @@ mod tests {
             depth: 0,
             layer: "core".to_string(),
             trait_impl: None,
+            is_test: true,
+            is_trait_method: false,
+            is_trait_default: false,
         }
     }
 

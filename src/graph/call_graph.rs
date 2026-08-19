@@ -28,6 +28,9 @@ pub struct FunctionNode {
     pub depth: usize,
     pub layer: String,
     pub trait_impl: Option<String>,
+    pub is_test: bool,
+    pub is_trait_method: bool,
+    pub is_trait_default: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

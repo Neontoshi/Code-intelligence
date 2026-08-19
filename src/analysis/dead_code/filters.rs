@@ -4,6 +4,21 @@ use crate::graph::call_graph::FunctionNode;
 
 /// Check if a function should never be considered dead
 pub fn is_never_dead(func: &FunctionNode) -> bool {
+    // ⭐ NEW: Skip test functions (detected by parser)
+    if func.is_test {
+        return true;
+    }
+
+    // ⭐ NEW: Skip trait default methods
+    if func.is_trait_default {
+        return true;
+    }
+
+    // ⭐ NEW: Skip trait methods that are implemented
+    if func.is_trait_method {
+        return true;
+    }
+
     // 1. Trait implementations (Rust, Go interfaces, etc.)
     if func.trait_impl.is_some() {
         return true;
@@ -12,7 +27,6 @@ pub fn is_never_dead(func: &FunctionNode) -> bool {
     // 2. Framework-decorated methods (detect by doc comments)
     if let Some(doc) = &func.doc_comment {
         // Common framework decorator patterns
-        // NestJS, Spring, FastAPI, Flask, etc.
         let decorator_patterns = [
             // HTTP method decorators
             "@Get",
@@ -144,8 +158,6 @@ pub fn is_never_dead(func: &FunctionNode) -> bool {
             || doc.contains("Swagger")
             || doc.contains("Schema")
             || doc.contains("Example")
-            || doc.contains("swagger")
-            || doc.contains("openapi")
         {
             return true;
         }
@@ -179,7 +191,6 @@ pub fn is_never_dead(func: &FunctionNode) -> bool {
         "equals",
         "hashCode",
         "finalize",
-        "clone",
         "clone_from",
         "partial_cmp",
         "eq",
@@ -301,10 +312,27 @@ pub fn is_never_dead(func: &FunctionNode) -> bool {
 
 /// Get the reason why a function is filtered
 pub fn filter_reason(func: &FunctionNode) -> Option<&'static str> {
+    // ⭐ NEW: Check test functions first
+    if func.is_test {
+        return Some("test_function");
+    }
+
+    // ⭐ NEW: Check trait default methods
+    if func.is_trait_default {
+        return Some("trait_default_method");
+    }
+
+    // ⭐ NEW: Check trait methods
+    if func.is_trait_method {
+        return Some("trait_method");
+    }
+
+    // Check trait implementations
     if func.trait_impl.is_some() {
         return Some("trait_implementation");
     }
 
+    // Check doc comments for decorators
     if let Some(doc) = &func.doc_comment {
         let decorator_patterns = [
             "@Get",
@@ -337,20 +365,46 @@ pub fn filter_reason(func: &FunctionNode) -> Option<&'static str> {
         }
     }
 
+    // React props
     if func.name.contains('{') && func.name.contains('}') {
         return Some("react_props");
     }
 
-    let common_trait_methods = ["fmt", "default", "from", "into", "try_from", "try_into"];
+    // Common trait methods
+    let common_trait_methods = [
+        "fmt",
+        "default",
+        "from",
+        "into",
+        "try_from",
+        "try_into",
+        "clone",
+        "drop",
+        "as_ref",
+        "as_mut",
+        "borrow",
+        "borrow_mut",
+        "to_owned",
+        "to_string",
+        "into_iter",
+        "iter",
+        "iter_mut",
+        "toString",
+        "equals",
+        "hashCode",
+        "finalize",
+    ];
     if common_trait_methods.contains(&func.name.as_str()) {
         return Some("trait_method");
     }
 
+    // Entry points
     let entry_points = ["main", "async_main", "run", "start", "init"];
     if entry_points.contains(&func.name.as_str()) {
         return Some("entry_point");
     }
 
+    // Framework file patterns
     let file = &func.file;
     let framework_file_patterns = [
         ".controller.",
@@ -367,9 +421,20 @@ pub fn filter_reason(func: &FunctionNode) -> Option<&'static str> {
         "/tests/",
         "/test/",
         "/bench/",
+        "/benches/",
         "/generated/",
         "/gen/",
         "/proto/",
+        "/traits/",
+        "/trait/",
+        "/impls/",
+        "/derive/",
+        "/admin/",
+        "/management/",
+        "/migrations/",
+        "/serializers/",
+        "/permissions/",
+        "/throttling/",
     ];
     for pattern in framework_file_patterns {
         if file.contains(pattern) {

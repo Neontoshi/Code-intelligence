@@ -101,6 +101,9 @@ impl CallGraphBuilder {
                     depth: 0,
                     layer: String::new(),
                     trait_impl: func.trait_impl.clone(),
+                    is_test: func.is_test,
+                    is_trait_method: func.is_trait_method,
+                    is_trait_default: func.is_trait_default,
                 };
                 let idx = call_graph.add_function(node);
                 func_index.insert(full_path.clone(), idx);
@@ -715,6 +718,44 @@ impl CallGraphBuilder {
                                                     CallEdge {
                                                         call_type: "method_call_heuristic"
                                                             .to_string(),
+                                                        line: func.line,
+                                                    },
+                                                );
+                                                found = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // ============================================================
+                        // TIER 8: Trait method resolution (for dynamic dispatch)
+                        // ============================================================
+                        if !found && called_name.contains("::") {
+                            // Check if this is a trait method call
+                            // e.g., LLMProvider::model_name()
+                            let parts: Vec<&str> = called_name.split("::").collect();
+                            if parts.len() >= 2 {
+                                let trait_name = parts[0];
+                                let method_name = parts[parts.len() - 1];
+
+                                // Look for trait definitions
+                                for idx in call_graph.node_indices() {
+                                    let func = &call_graph[idx];
+                                    // If this function is a trait method with matching name
+                                    if func.name == method_name && func.trait_impl.is_some() {
+                                        // Check if the trait name matches
+                                        if let Some(trait_impl) = &func.trait_impl {
+                                            if trait_impl.contains(trait_name)
+                                                || trait_name.contains(trait_impl)
+                                            {
+                                                call_graph.add_call(
+                                                    caller_idx,
+                                                    idx,
+                                                    CallEdge {
+                                                        call_type: "trait_method".to_string(),
                                                         line: func.line,
                                                     },
                                                 );

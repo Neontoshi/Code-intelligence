@@ -239,7 +239,7 @@ impl App {
 
                 // Use VerdictEngine like the CLI does
                 use code_intelligence::analysis::{
-                    dead_code::{DeadCodeAnalyzer, DeadFunction},
+                    dead_code::{filters::is_never_dead, DeadCodeAnalyzer, DeadFunction},
                     dynamic_refs::DynamicRefDetector,
                     roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector},
                     verdict::{VerdictConfig, VerdictEngine},
@@ -274,10 +274,45 @@ impl App {
                 let dead_functions =
                     impact_analyzer.import_verdicts(&dead_verdicts, &analysis.call_graph);
 
-                // 8. Filter out benchmark functions
+                // 8. ⭐ Filter using is_never_dead (same as CLI)
                 let filtered_functions: Vec<DeadFunction> = dead_functions
                     .into_iter()
-                    .filter(|f| !f.file.contains("/benches/"))
+                    .filter(|f| {
+                        !is_never_dead(
+                            &analysis
+                                .call_graph
+                                .name_index
+                                .get(&f.full_path)
+                                .map(|idx| &analysis.call_graph[*idx])
+                                .unwrap_or(&code_intelligence::graph::call_graph::FunctionNode {
+                                    name: f.name.clone(),
+                                    full_path: f.full_path.clone(),
+                                    file: f.file.clone(),
+                                    line: f.line,
+                                    body_start_line: 0,
+                                    body_end_line: 0,
+                                    is_public: false,
+                                    is_async: false,
+                                    params: Vec::new(),
+                                    returns: Vec::new(),
+                                    complexity: 0.0,
+                                    importance_score: 0.0,
+                                    doc_comment: None,
+                                    writes_to: Vec::new(),
+                                    reads_from: Vec::new(),
+                                    errors: Vec::new(),
+                                    fan_in: 0,
+                                    fan_out: 0,
+                                    is_cycle: false,
+                                    depth: 0,
+                                    layer: String::new(),
+                                    trait_impl: None,
+                                    is_test: false,
+                                    is_trait_method: false,
+                                    is_trait_default: false,
+                                }),
+                        )
+                    })
                     .collect();
 
                 // 9. Build summary
@@ -501,8 +536,6 @@ fn handle_navigation(app: &mut App, key: KeyCode) -> io::Result<()> {
 }
 
 fn handle_actions(_app: &mut App, _key: KeyCode) -> bool {
-    // This now uses the UI modules which handle DeadFunction directly
-    // The actions will be handled by the UI modules
     false
 }
 
