@@ -1,20 +1,18 @@
-//! Filters for dead code detection - prevents false positives
-
 use crate::graph::call_graph::FunctionNode;
 
 /// Check if a function should never be considered dead
 pub fn is_never_dead(func: &FunctionNode) -> bool {
-    // ⭐ NEW: Skip test functions (detected by parser)
+    //Skip test functions (detected by parser)
     if func.is_test {
         return true;
     }
 
-    // ⭐ NEW: Skip trait default methods
+    // Skip trait default methods
     if func.is_trait_default {
         return true;
     }
 
-    // ⭐ NEW: Skip trait methods that are implemented
+    // Skip trait methods that are implemented
     if func.is_trait_method {
         return true;
     }

@@ -118,8 +118,6 @@ impl FunctionFeatures {
 
         use crate::optimize::dedup::core::compute_signature_hash;
 
-        // For body_hash, we'd need source, but we can use a placeholder
-        // The deduplication function will need to compute it properly
         let sig_hash = compute_signature_hash(func);
 
         Self {
@@ -189,11 +187,6 @@ impl FunctionFeatures {
 
         let is_associated = matches!(func.name.as_str(), "new" | "default" | "from");
 
-        // full_path is built as "file::Container::function" when the function
-        // lives inside an impl/container block, or "file::function" otherwise
-        // (see CallGraphBuilder::build). File paths use '/' not '::', so this
-        // split is unambiguous and works for every function in the codebase —
-        // not just the handful of files a hardcoded list happened to cover.
         let mut type_name = None;
         let mut type_path = None;
         let segments: Vec<&str> = func.full_path.rsplitn(3, "::").collect();
@@ -456,7 +449,7 @@ impl TrainingDataCollector {
         call_graph: &CallGraph,
         label: TrainingLabel,
         confidence: f64,
-        source_label: &str, // Renamed from `source` to avoid conflict
+        source_label: &str,
     ) {
         let example = TrainingExample {
             function_name: func.name.clone(),

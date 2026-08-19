@@ -37,7 +37,7 @@ pub fn render_summary(
         ])
         .split(area);
 
-    // ---------- Row 1: hero cards ----------
+    //  Row 1: hero cards
     let hero_cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -60,7 +60,7 @@ pub fn render_summary(
         hero_cols[1],
     );
 
-    // ---------- Row 2: slim stat strip ----------
+    //  Row 2: slim stat strip
     let strip_cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -97,7 +97,7 @@ pub fn render_summary(
         strip_cols[4],
     );
 
-    // ---------- Row 3: gauge ----------
+    //  Row 3: gauge
     let gauge = Gauge::default()
         .block(outer_block("Dead Code Share"))
         .gauge_style(
@@ -109,7 +109,7 @@ pub fn render_summary(
         .label(format!("{:.1}% of functions are dead", dead_pct));
     f.render_widget(gauge, rows[2]);
 
-    // ---------- Row 4: decision status ----------
+    //  Row 4: decision status
     // Since DeadFunction doesn't have status, we show confidence distribution
     let mut conf_counts: HashMap<&str, u64> = HashMap::new();
     for func in &analysis.functions {
@@ -150,7 +150,7 @@ pub fn render_summary(
         .bar_gap(1);
     f.render_widget(status_chart, rows[3]);
 
-    // ---------- Row 5: dead functions by file ----------
+    //  Row 5: dead functions by file
     let mut file_counts: HashMap<&str, u64> = HashMap::new();
     for func in &analysis.functions {
         let basename = func.file.rsplit('/').next().unwrap_or(&func.file);
@@ -180,7 +180,7 @@ pub fn render_summary(
         .bar_gap(1);
     f.render_widget(by_file_chart, rows[4]);
 
-    // ---------- Row 6: metadata ----------
+    //  Row 6: metadata
     let metadata = if let Some(meta) = &app.analysis_metadata {
         format!(
             "ID: {} | Model: {} | Commit: {} | Analyzed: {}",

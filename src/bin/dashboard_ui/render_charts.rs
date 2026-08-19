@@ -104,7 +104,7 @@ pub fn render_charts(
         .bar_gap(2);
     f.render_widget(impact_chart, top_cols[1]);
 
-    // ---------- Dead LOC by file ----------
+    //  Dead LOC by file
     let mut loc_by_file: HashMap<&str, u64> = HashMap::new();
     for func in &analysis.functions {
         let basename = func.file.rsplit('/').next().unwrap_or(&func.file);

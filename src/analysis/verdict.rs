@@ -7,10 +7,7 @@ use crate::graph::call_graph::{CallGraph, FunctionNode};
 use crate::graph::traits::GraphMetrics;
 use crate::ml::classifier::DeadCodeClassifier;
 
-// ============================================================================
 // Signal Types
-// ============================================================================
-
 #[derive(Debug, Clone)]
 pub struct Signal {
     pub name: String,
@@ -37,9 +34,7 @@ impl SignalDirection {
     }
 }
 
-// ============================================================================
 // Verdict Types
-// ============================================================================
 
 #[derive(Debug, Clone)]
 pub struct Verdict {
@@ -97,9 +92,7 @@ impl Verdict {
     }
 }
 
-// ============================================================================
 // Verdict Engine
-// ============================================================================
 
 #[derive(Debug, Clone)]
 pub struct VerdictConfig {

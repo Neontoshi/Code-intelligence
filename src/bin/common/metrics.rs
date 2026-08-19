@@ -1,7 +1,5 @@
 // src/bin/common/metrics.rs
 
-//! Shared evaluation metrics for all training/evaluation binaries
-
 use code_intelligence::analysis::training_data::{TrainingExample, TrainingLabel};
 use code_intelligence::ml::classifier::DeadCodeClassifier;
 

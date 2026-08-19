@@ -18,7 +18,7 @@ impl Default for PipelineConfig {
             llm_temperature: 0.3,
             llm_max_tokens: 1000,
             max_files: 10000,
-            max_file_size: 1_000_000, // 1MB
+            max_file_size: 1_000_000,
         }
     }
 }

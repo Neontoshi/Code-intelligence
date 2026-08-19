@@ -436,9 +436,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let report = impact_analyzer.generate_report(&filtered_analysis);
     println!("{}", report);
 
-    // ============================================================
     // ⭐ SAVE ANALYSIS METADATA FOR DASHBOARD
-    // ============================================================
     let metadata = AnalysisMetadata {
         analysis_id: format!("analysis_{}", chrono::Utc::now().timestamp()),
         model_version: args
@@ -466,9 +464,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // ============================================================
     // Final Summary
-    // ============================================================
     println!("\n📊 Final Results:");
     println!("   Dead functions: {}", filtered_analysis.functions.len());
     println!("   Dead types: {}", filtered_analysis.summary.dead_types);

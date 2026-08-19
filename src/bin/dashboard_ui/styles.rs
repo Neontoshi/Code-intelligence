@@ -7,7 +7,7 @@ use ratatui::{
     widgets::Block,
 };
 
-// ---------- Palette ----------
+//  Palette
 pub const ACCENT: Color = Color::Cyan;
 pub const ACCENT_DIM: Color = Color::DarkGray;
 pub const GOOD: Color = Color::Green;

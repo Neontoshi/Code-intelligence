@@ -113,10 +113,7 @@ impl Pipeline {
         self
     }
 
-    // ========================================================================
     // File Hash Collection for Cache
-    // ========================================================================
-
     fn collect_file_hashes(&self, root: &Path) -> Vec<CachedFileEntry> {
         let mut entries = Vec::new();
         let supported_extensions = ["rs", "py", "js", "jsx", "ts", "tsx", "go", "java"];
@@ -141,10 +138,7 @@ impl Pipeline {
         entries
     }
 
-    // ========================================================================
     // Stage Methods
-    // ========================================================================
-
     pub fn stage_collect(&self, root: &Path) -> RawProject {
         FileCollector::collect(root, &self.config)
     }
@@ -373,8 +367,8 @@ impl Pipeline {
             proj_edges: optimized.project_graph.edge_count(),
             duplicates: call_graph.duplicate_functions.len(),
         });
-        let _ = cycle_count; // available if you want to fold into BuildSummary too
-        let _ = layer_list; // available if you want to fold into BuildSummary too
+        let _ = cycle_count;
+        let _ = layer_list;
 
         let llm_analysis = if self.config.enable_llm && self.code_understanding.is_some() {
             self.report("running LLM analysis...");
@@ -436,10 +430,7 @@ impl Pipeline {
         Ok(intelligence)
     }
 
-    // ========================================================================
     // Cache Helpers
-    // ========================================================================
-
     fn save_to_cache(
         &self,
         project_hash: &str,

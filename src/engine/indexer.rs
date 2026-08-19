@@ -1,14 +1,8 @@
-//! Rich indexes for O(1) lookups across all analysis data
-
 use crate::graph::call_graph::FunctionNode;
 use crate::optimize::dedup::core::{compute_ast_hash, compute_exact_hash, compute_signature_hash};
 use crate::parser::tree_sitter::ParsedFile;
 use dashmap::DashMap;
 use std::sync::Arc;
-
-// ============================================================================
-// Index Types
-// ============================================================================
 
 /// Comprehensive indexes for fast lookups
 #[derive(Debug, Clone)]
@@ -67,10 +61,6 @@ impl RichIndexes {
             layer_index: Arc::new(DashMap::new()),
         }
     }
-
-    // ========================================================================
-    // Query Methods
-    // ========================================================================
 
     /// Get functions by signature hash
     pub fn get_by_signature_hash(&self, hash: &str) -> Vec<String> {
@@ -180,10 +170,6 @@ impl Default for RichIndexes {
         Self::new()
     }
 }
-
-// ============================================================================
-// Index Builder
-// ============================================================================
 
 pub struct IndexBuilder {
     indexes: RichIndexes,
@@ -311,7 +297,6 @@ impl IndexBuilder {
 
     fn build_call_indexes(&mut self, functions: &[FunctionNode]) {
         for _func in functions {
-            // Caller index would need call graph data
             // This is a placeholder - real implementation would use CallGraph
         }
     }
@@ -343,10 +328,6 @@ impl Default for IndexBuilder {
         Self::new()
     }
 }
-
-// ============================================================================
-// Index Cache
-// ============================================================================
 
 pub struct IndexCache {
     cache: DashMap<String, RichIndexes>,

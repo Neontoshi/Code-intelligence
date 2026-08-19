@@ -37,8 +37,8 @@ pub struct DeadFunction {
     pub score: DeadScore,
     pub impact: FunctionImpact,
     pub removal_order: usize,
-    pub is_binary_only: bool,   // functions only used in binaries
-    pub is_internal_call: bool, // functions called internally in same file
+    pub is_binary_only: bool,
+    pub is_internal_call: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -73,7 +73,7 @@ pub struct DeadCodeAnalyzer {
     cache: HashMap<String, DeadCodeAnalysis>,
     ml_model: Option<DeadCodeClassifier>,
     use_ml: bool,
-    use_verdict_engine: bool, // ⭐ NEW: Flag to use verdict engine mode
+    use_verdict_engine: bool,
 }
 
 impl DeadCodeAnalyzer {
@@ -204,10 +204,6 @@ impl DeadCodeAnalyzer {
         dead_functions
     }
 
-    // ================================================================
-    // Binary Detection Helpers
-    // ================================================================
-
     /// Check if a function is only used in binary executables
     fn is_binary_only_function(&self, func: &FunctionNode) -> bool {
         // Functions in bin/ directories are binary-only
@@ -241,9 +237,7 @@ impl DeadCodeAnalyzer {
         false
     }
 
-    // ================================================================
     // Helper methods
-    // ================================================================
 
     fn is_generated_file(func: &FunctionNode) -> bool {
         func.file.contains(".gen.go")
@@ -319,9 +313,7 @@ impl DeadCodeAnalyzer {
         HashUtils::hash_string(&content)
     }
 
-    // ================================================================
     // MAIN ANALYSIS METHOD
-    // ================================================================
 
     #[deprecated(
         since = "0.2.0",
@@ -670,7 +662,7 @@ impl DeadCodeAnalyzer {
             analysis.summary.avg_confidence * 100.0
         ));
 
-        // ⭐ NEW: Show binary-only and internal call counts
+        // Show binary-only and internal call counts
         let binary_only = analysis
             .functions
             .iter()

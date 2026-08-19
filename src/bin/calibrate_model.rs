@@ -69,9 +69,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n📊 Calibration Statistics:");
     stats.print();
 
-    // Save calibrated model
-    // For now, we save the classifier portion
-    // In the future, save the full CalibratedModel
     let mut new_classifier = DeadCodeClassifier::new();
     new_classifier.model = Some(calibrated.classifier);
     new_classifier.save(&args.output.to_string_lossy())?;
@@ -79,4 +76,3 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-

@@ -5,57 +5,36 @@ use crate::optimize::dedup::core::{compute_ast_hash, compute_exact_hash, compute
 use crate::parser::tree_sitter::ParsedFile;
 use std::collections::HashMap;
 
-// ============================================================================
 // Function Features
-// ============================================================================
 
 /// All features extracted from a function - computed once, used everywhere
 #[derive(Debug, Clone)]
 pub struct FunctionFeatures {
-    // Core identifiers
     pub full_path: String,
     pub name: String,
     pub file: String,
     pub line: usize,
-
-    // Hashes
     pub signature_hash: String,
     pub ast_hash: String,
     pub body_hash: String,
-
-    // Metrics
     pub complexity: f64,
     pub cyclomatic_complexity: f64,
     pub nesting_depth: usize,
     pub line_count: usize,
     pub token_count: usize,
-
-    // Signature
     pub param_count: usize,
     pub return_count: usize,
     pub is_public: bool,
     pub is_async: bool,
-
-    // Call relationships
     pub call_count: usize,
     pub caller_count: usize,
     pub fan_in: usize,
     pub fan_out: usize,
-
-    // Language
     pub language: String,
     pub layer: String,
-
-    // Feature vector for ML
     pub feature_vector: Vec<f64>,
-
-    // Normalized tokens for similarity
     pub normalized_tokens: Vec<String>,
-
-    // Body text (for reference)
     pub body: Option<String>,
-
-    // Documentation
     pub doc_comment: Option<String>,
 }
 
@@ -141,10 +120,7 @@ impl FunctionFeatures {
         }
     }
 
-    // ========================================================================
     // Computation Helpers
-    // ========================================================================
-
     fn compute_complexity_metrics(source: &str) -> (f64, f64, usize) {
         let mut complexity: f64 = 1.0;
         let mut cyclomatic: f64 = 1.0;
@@ -278,9 +254,7 @@ impl FunctionFeatures {
         features
     }
 
-    // ========================================================================
     // Similarity Methods
-    // ========================================================================
 
     /// Cosine similarity between two feature vectors
     pub fn cosine_similarity(&self, other: &FunctionFeatures) -> f64 {
@@ -318,9 +292,7 @@ impl FunctionFeatures {
     }
 }
 
-// ============================================================================
 // Feature Extractor
-// ============================================================================
 
 #[derive(Debug)]
 pub struct FeatureExtractor {

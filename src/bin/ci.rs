@@ -28,9 +28,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-// ============================================================================
 // Config
-// ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalConfig {
@@ -70,10 +68,6 @@ pub struct ProjectConfig {
     pub dead_count: Option<usize>,
 }
 
-// ============================================================================
-// CLI Arguments
-// ============================================================================
-
 #[derive(Parser, Debug)]
 #[command(
     name = "ci",
@@ -89,9 +83,7 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    // ========================================================================
     // Core Analysis
-    // ========================================================================
     /// Analyze a project for dead code
     Analyze {
         /// Path to analyze (defaults to current directory)
@@ -174,9 +166,6 @@ enum Commands {
         max_tokens: usize,
     },
 
-    // ========================================================================
-    // Outcome Management
-    // ========================================================================
     /// List dead functions found in a project
     List {
         /// Path to list (defaults to current directory)
@@ -236,9 +225,6 @@ enum Commands {
         llm: bool,
     },
 
-    // ========================================================================
-    // Training & Model Management
-    // ========================================================================
     /// Train the ML model
     Train {
         /// Training data path
@@ -330,9 +316,6 @@ enum Commands {
         dedup: bool,
     },
 
-    // ========================================================================
-    // Special Commands
-    // ========================================================================
     /// Open interactive dashboard
     Dashboard {
         /// Path to analyze (defaults to current directory)
@@ -376,9 +359,6 @@ enum Commands {
         detailed: bool,
     },
 
-    // ========================================================================
-    // Configuration
-    // ========================================================================
     /// Configure global settings
     Config {
         #[command(subcommand)]
@@ -396,17 +376,11 @@ enum ConfigAction {
     List,
 }
 
-// ============================================================================
-// Main
-// ============================================================================
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     match args.command {
-        // ====================================================================
         // Core Analysis
-        // ====================================================================
         Commands::Analyze {
             path,
             threshold,
@@ -465,9 +439,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?;
         }
 
-        // ====================================================================
         // Outcome Management
-        // ====================================================================
         Commands::List { path, all } => {
             let project_path = resolve_path(&path)?;
             run_list(&project_path, all)?;
@@ -494,9 +466,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_report(&project_path, &format, output, llm)?;
         }
 
-        // ====================================================================
         // Training & Model Management
-        // ====================================================================
         Commands::Train {
             data,
             val_data,
@@ -543,9 +513,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_merge(&input, &output, dedup)?;
         }
 
-        // ====================================================================
         // Special Commands
-        // ====================================================================
         Commands::Dashboard { path, model } => {
             let project_path = resolve_path(&path)?;
             run_dashboard(&project_path, model)?;
@@ -565,9 +533,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_evaluate(&model, &test_data, val_data.as_deref(), detailed)?;
         }
 
-        // ====================================================================
         // Configuration
-        // ====================================================================
         Commands::Config { action } => {
             run_config(action)?;
         }
@@ -576,9 +542,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ============================================================================
 // Config Helper Functions
-// ============================================================================
 
 fn get_config_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
@@ -695,10 +659,6 @@ fn resolve_path(path: &Path) -> Result<PathBuf, String> {
 
     Ok(resolved)
 }
-
-// ============================================================================
-// Command Implementations
-// ============================================================================
 
 fn run_analyze(
     path: &Path,
@@ -871,7 +831,6 @@ fn run_graph(
         println!("\n✅ Graph saved to: {:?}", output_file);
         if format == "svg" || format == "png" {
             println!("   Converting to {} format...", format);
-            // This would need graphviz installed: `dot -Tpng call_graph.dot -o call_graph.png`
         }
     } else {
         eprintln!("\n❌ Graph generation failed");

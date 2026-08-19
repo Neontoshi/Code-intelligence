@@ -1,10 +1,5 @@
 // src/analysis/dead_code/mod.rs
 
-//! Dead code detection module.
-//!
-//! ⚠️ DEPRECATION WARNING: The legacy `find_unused_functions_naive_debug_only` is deprecated.
-//! Use `VerdictEngine` for accurate dead code detection.
-
 mod analyzer;
 pub mod filters;
 mod modules;
@@ -14,7 +9,6 @@ mod scorer;
 mod types;
 mod whitelist;
 
-// Re-export from analyzer only (it has the most complete definitions)
 pub use analyzer::{
     AnalysisSummary, DeadCodeAnalysis, DeadCodeAnalyzer, DeadFunction, FunctionImpact, RemovalCost,
 };

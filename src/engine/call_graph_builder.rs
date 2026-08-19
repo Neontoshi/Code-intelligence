@@ -48,9 +48,7 @@ impl CallGraphBuilder {
         let mut func_by_file: HashMap<String, Vec<String>> = HashMap::new();
         let mut import_map: HashMap<String, Vec<String>> = HashMap::new();
 
-        // ============================================================
         // First pass: Build import map
-        // ============================================================
         for file in files {
             for import in &file.imports {
                 let module = &import.module;
@@ -61,9 +59,7 @@ impl CallGraphBuilder {
             }
         }
 
-        // ============================================================
         // Second pass: Add all functions and index them
-        // ============================================================
         for file in files {
             let file_path = file.path.clone();
             for func in &file.functions {
@@ -118,9 +114,7 @@ impl CallGraphBuilder {
             }
         }
 
-        // ============================================================
-        // ⭐ NEW: Build type-to-implementations index for method resolution
-        // ============================================================
+        // Build type-to-implementations index for method resolution
         let mut type_to_impls: HashMap<String, Vec<String>> = HashMap::new();
         let mut method_to_impls: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -145,9 +139,7 @@ impl CallGraphBuilder {
             }
         }
 
-        // ============================================================
-        // ⭐ NEW: Build local variable type tracking from parser info
-        // ============================================================
+        // Build local variable type tracking from parser info
         // This is a simplified approach - we track variable assignments
         // by parsing the source code for `let x = Type::new()` patterns
         let mut var_to_type: HashMap<String, String> = HashMap::new();
@@ -218,9 +210,7 @@ impl CallGraphBuilder {
             }
         }
 
-        // ============================================================
         // Trait-method index for operator-overload resolution
-        // ============================================================
         let mut trait_method_index: HashMap<(String, String), Vec<petgraph::graph::NodeIndex>> =
             HashMap::new();
         for idx in call_graph.node_indices() {
@@ -234,9 +224,7 @@ impl CallGraphBuilder {
             }
         }
 
-        // ============================================================
         // Build function name to full path mapping for internal calls
-        // ============================================================
         let mut func_name_to_paths: HashMap<String, Vec<String>> = HashMap::new();
         for (path, _) in &func_index {
             if let Some(name) = path.split("::").last() {
@@ -247,14 +235,11 @@ impl CallGraphBuilder {
             }
         }
 
-        // ============================================================
         // Build container to functions mapping for impl blocks
-        // ============================================================
         let mut container_to_functions: HashMap<String, Vec<String>> = HashMap::new();
         for (path, _) in &func_index {
             let parts: Vec<&str> = path.split("::").collect();
             if parts.len() >= 3 {
-                // Format: file::container::function
                 let container = format!("{}::{}", parts[0], parts[1]);
                 container_to_functions
                     .entry(container)
@@ -263,9 +248,7 @@ impl CallGraphBuilder {
             }
         }
 
-        // ============================================================
-        // ⭐ NEW: Build type name -> type definition index
-        // ============================================================
+        // Build type name -> type definition index
         let mut type_definition_index: HashMap<String, Vec<String>> = HashMap::new();
         for file in files {
             for type_info in &file.types {
@@ -276,9 +259,7 @@ impl CallGraphBuilder {
             }
         }
 
-        // ============================================================
         // Third pass: Build edges with import resolution and internal call detection
-        // ============================================================
         for file in files {
             let file_path = file.path.clone();
             for func in &file.functions {
@@ -290,9 +271,7 @@ impl CallGraphBuilder {
                     for called_name in &func.calls {
                         let mut found = false;
 
-                        // ============================================================
                         // TIER OP: Operator overloads (index/add/sub/mul/div/rem)
-                        // ============================================================
                         if called_name.starts_with("op::") {
                             let method = called_name.trim_start_matches("op::");
                             let expected: &[(&str, &str)] = match method {
@@ -323,9 +302,7 @@ impl CallGraphBuilder {
                             continue;
                         }
 
-                        // ============================================================
                         // TIER 0: Method call on self (self.method_name)
-                        // ============================================================
                         if !found && called_name.starts_with("self::") {
                             let method_name = called_name.trim_start_matches("self::");
                             if let Some(container) = &func.container {
@@ -345,9 +322,7 @@ impl CallGraphBuilder {
                             }
                         }
 
-                        // ============================================================
                         // TIER 1: Qualified call (Type::method)
-                        // ============================================================
                         if !found {
                             if let Some((qualifier, method)) = called_name.rsplit_once("::") {
                                 let qualified_path =
@@ -368,16 +343,14 @@ impl CallGraphBuilder {
 
                         let simple_name = called_name.rsplit("::").next().unwrap_or(called_name);
 
-                        // ============================================================
-                        // TIER 1.5: ⭐ IMPROVED Method calls (variable.method)
-                        // ============================================================
+                        // TIER 1.5: IMPROVED Method calls (variable.method)
                         if !found && called_name.contains(".") {
                             let parts: Vec<&str> = called_name.split('.').collect();
                             if parts.len() == 2 {
                                 let receiver = parts[0];
                                 let method = parts[1];
 
-                                // ⭐ STRATEGY 1: Check if receiver is a known type from variable tracking
+                                // Check if receiver is a known type from variable tracking
                                 if let Some(var_type) = var_to_type.get(receiver) {
                                     // Try to find method on this type
                                     let type_method = format!("{}::{}", var_type, method);
@@ -394,7 +367,7 @@ impl CallGraphBuilder {
                                     }
                                 }
 
-                                // ⭐ STRATEGY 2: Try to find method in the same file
+                                // Try to find method in the same file
                                 if !found {
                                     let full_path = format!("{}::{}", file_path, method);
                                     if let Some(&callee_idx) = func_index.get(&full_path) {
@@ -410,7 +383,7 @@ impl CallGraphBuilder {
                                     }
                                 }
 
-                                // ⭐ STRATEGY 3: Try to find method in the same container
+                                // Try to find method in the same container
                                 if !found {
                                     if let Some(container) = &func.container {
                                         let full_path =
@@ -429,7 +402,7 @@ impl CallGraphBuilder {
                                     }
                                 }
 
-                                // ⭐ STRATEGY 4: Try to find method by name (unambiguous)
+                                // Try to find method by name (unambiguous)
                                 if !found {
                                     if let Some(paths) = method_to_impls.get(method) {
                                         if paths.len() == 1 {
@@ -449,7 +422,7 @@ impl CallGraphBuilder {
                                     }
                                 }
 
-                                // ⭐ STRATEGY 5: Try common method patterns (heuristic)
+                                // Try common method patterns (heuristic)
                                 if !found {
                                     // Common methods like new, default, clone, etc.
                                     let common_methods = vec![
@@ -478,7 +451,7 @@ impl CallGraphBuilder {
                                     }
                                 }
 
-                                // ⭐ STRATEGY 6: Try to infer from context (if receiver is a struct literal)
+                                // Try to infer from context (if receiver is a struct literal)
                                 if !found
                                     && receiver
                                         .chars()
@@ -503,9 +476,7 @@ impl CallGraphBuilder {
                             }
                         }
 
-                        // ============================================================
                         // TIER 1.6: Handle associated function calls (Self::method)
-                        // ============================================================
                         if !found && called_name.starts_with("Self::") {
                             let method_name = called_name.trim_start_matches("Self::");
                             if let Some(container) = &func.container {
@@ -525,9 +496,7 @@ impl CallGraphBuilder {
                             }
                         }
 
-                        // ============================================================
                         // TIER 1.7: Handle Type::method calls (qualified)
-                        // ============================================================
                         if !found
                             && called_name.contains("::")
                             && !called_name.starts_with("self::")
@@ -536,9 +505,7 @@ impl CallGraphBuilder {
                             // Already handled by TIER 1
                         }
 
-                        // ============================================================
                         // TIER 1.8: ⭐ NEW Handle constructor calls
-                        // ============================================================
                         if !found && called_name.contains("::") {
                             let is_constructor = called_name.ends_with("::new")
                                 || called_name.ends_with("::default")
@@ -560,9 +527,7 @@ impl CallGraphBuilder {
                             }
                         }
 
-                        // ============================================================
                         // TIER 2: Internal calls within the same file
-                        // ============================================================
                         if !found {
                             let candidates: Vec<String> = func_by_file
                                 .get(&file_path)
@@ -617,9 +582,7 @@ impl CallGraphBuilder {
                             }
                         }
 
-                        // ============================================================
                         // TIER 3: Import resolution
-                        // ============================================================
                         if !found {
                             if let Some(imported_paths) = import_map.get(simple_name) {
                                 for imported_path in imported_paths {
@@ -639,9 +602,7 @@ impl CallGraphBuilder {
                             }
                         }
 
-                        // ============================================================
                         // TIER 4: Name match across files (only if unambiguous)
-                        // ============================================================
                         if !found {
                             if let Some(paths) = func_by_name.get(simple_name) {
                                 let candidates: Vec<_> =
@@ -662,9 +623,7 @@ impl CallGraphBuilder {
                             }
                         }
 
-                        // ============================================================
                         // TIER 5: Self reference (functions calling themselves)
-                        // ============================================================
                         if !found && simple_name == func.name {
                             if let Some(&callee_idx) = func_index.get(&caller_path) {
                                 call_graph.add_call(
@@ -679,9 +638,7 @@ impl CallGraphBuilder {
                             }
                         }
 
-                        // ============================================================
                         // TIER 6: Function calls within the same container
-                        // ============================================================
                         if !found {
                             if let Some(container) = &func.container {
                                 let full_path =
@@ -700,9 +657,7 @@ impl CallGraphBuilder {
                             }
                         }
 
-                        // ============================================================
                         // ⭐ NEW TIER 7: Try method resolution by receiver type (heuristic)
-                        // ============================================================
                         if !found && called_name.contains(".") {
                             let parts: Vec<&str> = called_name.split('.').collect();
                             if parts.len() == 2 {
@@ -730,9 +685,7 @@ impl CallGraphBuilder {
                             }
                         }
 
-                        // ============================================================
                         // TIER 8: Trait method resolution (for dynamic dispatch)
-                        // ============================================================
                         if !found && called_name.contains("::") {
                             // Check if this is a trait method call
                             // e.g., LLMProvider::model_name()
@@ -768,9 +721,7 @@ impl CallGraphBuilder {
                             }
                         }
 
-                        // ============================================================
                         // TIER 9: Higher-order function calls (unwrap_or_else, map, and_then, etc.)
-                        // ============================================================
                         if !found
                             && (called_name.contains("unwrap_or_else")
                                 || called_name.contains("unwrap_or")
@@ -784,11 +735,8 @@ impl CallGraphBuilder {
                                 || called_name.contains("expect")
                                 || called_name.contains("unwrap_or_default"))
                         {
-                            // Look for other calls in the same function that might be the closure argument
-                            // The closure argument is typically a function name being passed
                             for other_call in &func.calls {
                                 if other_call != called_name {
-                                    // Check if the other call is a simple function name (not a method call)
                                     if !other_call.contains('.') && !other_call.contains("::") {
                                         if let Some(paths) = func_by_name.get(other_call) {
                                             if paths.len() == 1 {
@@ -812,9 +760,6 @@ impl CallGraphBuilder {
                             }
                         }
 
-                        // ============================================================
-                        // Unresolved call - skip it
-                        // ============================================================
                         if !found {
                             // Unresolved call - skip it
                         }
@@ -827,7 +772,6 @@ impl CallGraphBuilder {
     }
 
     /// Normalizes a captured trait name for matching — strips generics
-    /// ("Index<usize>" → "Index") and path qualifiers ("std::ops::Add" → "Add").
     fn base_trait_name(raw: &str) -> String {
         let no_generics = raw.split('<').next().unwrap_or(raw).trim();
         no_generics

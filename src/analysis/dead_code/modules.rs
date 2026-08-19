@@ -113,11 +113,10 @@ impl ModuleDeadCodeDetector {
         file: &str,
         exports: &[String],
     ) -> f64 {
-        let mut confidence: f64 = 0.8; // Base confidence
+        let mut confidence: f64 = 0.8;
 
-        // If it has many exports, it might be a library module
         if exports.len() > 5 {
-            confidence *= 0.9; // Slightly reduce confidence - might be important
+            confidence *= 0.9;
         }
 
         // Check if it's a test file
@@ -149,8 +148,6 @@ impl ModuleDeadCodeDetector {
             }
         }
 
-        // Also check if the import itself is used (not just functions from it)
-        // This is a simplified check - we could do more here
         false
     }
 

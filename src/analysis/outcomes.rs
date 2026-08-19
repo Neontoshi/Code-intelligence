@@ -1,15 +1,6 @@
-//! Outcome tracking for dead code detection
-//!
-//! This module tracks which functions are flagged as dead and whether they
-//! are actually removed, creating a feedback loop for model improvement.
-
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-// ============================================================================
-// Outcome Types
-// ============================================================================
 
 /// Outcome of a dead code verdict
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -32,7 +23,7 @@ pub struct TrackedVerdict {
     pub line: usize,
     pub confidence: f64,
     pub project: String,
-    pub verdict_date: u64, // timestamp
+    pub verdict_date: u64,
     pub outcome: VerdictOutcome,
     pub outcome_date: Option<u64>,
     pub notes: Option<String>,
@@ -91,9 +82,7 @@ impl OutcomeStats {
     }
 }
 
-// ============================================================================
 // Outcome Tracker
-// ============================================================================
 
 pub struct OutcomeTracker {
     verdicts: Vec<TrackedVerdict>,

@@ -4,15 +4,13 @@ use crate::graph::call_graph::{CallGraph, FunctionNode};
 use crate::parser::tree_sitter::ParsedFile;
 use std::collections::HashMap;
 
-// ============================================================================
 // Dynamic Reference Types
-// ============================================================================
 
 #[derive(Debug, Clone)]
 pub struct DynamicReference {
     pub source_file: String,
     pub source_function: Option<String>,
-    pub target_function: Option<String>, // ⭐ The function being referenced
+    pub target_function: Option<String>,
     pub target_pattern: String,
     pub reference_type: DynamicRefType,
     pub confidence: f64,
@@ -30,12 +28,9 @@ pub enum DynamicRefType {
     Unknown,
 }
 
-// ============================================================================
 // Detection Engine
-// ============================================================================
 
 pub struct DynamicRefDetector {
-    // Language-specific patterns
     rust_patterns: Vec<RefPattern>,
     js_patterns: Vec<RefPattern>,
     python_patterns: Vec<RefPattern>,
@@ -170,14 +165,10 @@ impl DynamicRefDetector {
 
     /// Try to extract the target function name from source body
     fn extract_target_function(&self, source: &str) -> Option<String> {
-        // Look for function-like identifiers in the source
-        // This is a heuristic: find words that look like function calls
-
-        // Patterns that suggest a function is being called/referenced
         let pattern_strs = [
-            r"\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\(",    // method calls: .getUsers(
-            r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\(",      // function calls: getUsers(
-            r#"['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]"#, // string literals: "getUsers"
+            r"\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\(",
+            r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\(",
+            r#"['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]"#,
         ];
 
         use regex::Regex;
@@ -323,7 +314,6 @@ impl DynamicRefDetector {
         if file.path.contains("routes") || file.path.contains("handlers") {
             if func_info.doc_comment.is_some() {
                 let doc = func_info.doc_comment.as_ref().unwrap();
-                // Look for specific route decorator patterns
                 if doc.contains("@app.route")
                     || doc.contains("@router.")
                     || doc.contains("@blueprint.")
@@ -334,7 +324,7 @@ impl DynamicRefDetector {
                         target_function: None,
                         target_pattern: "RouteHandler".to_string(),
                         reference_type: DynamicRefType::Framework,
-                        confidence: 0.9, // Higher confidence for specific patterns
+                        confidence: 0.9,
                         context: format!(
                             "Route decorator found: {}",
                             doc.lines().next().unwrap_or("")
@@ -420,10 +410,6 @@ impl DynamicRefDetector {
     }
 }
 
-// ============================================================================
-// Pattern Definition
-// ============================================================================
-
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct RefPattern {
@@ -433,10 +419,6 @@ struct RefPattern {
     confidence: f64,
     language: String,
 }
-
-// ============================================================================
-// Integration with Verdict Engine
-// ============================================================================
 
 /// Check if a function is referenced dynamically
 pub fn is_dynamically_referenced(func: &FunctionNode, dynamic_refs: &[DynamicReference]) -> bool {

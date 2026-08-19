@@ -17,5 +17,4 @@ pub use llm_analysis::{LLMAnalysis, LLMAnalyzer};
 pub use pipeline::Pipeline;
 pub use stages::{AnalyzedProject, OptimizedProject, ParsedProject, RawProject};
 
-// ProjectIntelligence is now in pipeline.rs
-pub use pipeline::Pipeline as ProjectIntelligence; // Alias for backward compatibility
+pub use pipeline::Pipeline as ProjectIntelligence;

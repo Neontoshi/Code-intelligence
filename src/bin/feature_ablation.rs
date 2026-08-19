@@ -1,10 +1,5 @@
 // src/bin/feature_ablation.rs
 
-//! Feature ablation study - determine which features actually matter
-//!
-//! This tool trains models with different feature subsets to understand
-//! which features are most important for dead code detection.
-
 use clap::Parser;
 use code_intelligence::analysis::training_data::{TrainingExample, TrainingLabel};
 use code_intelligence::ml::classifier::LinearClassifier;

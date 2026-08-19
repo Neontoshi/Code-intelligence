@@ -32,7 +32,7 @@ pub fn render_by_file(
         .constraints([Constraint::Length(9), Constraint::Min(6)])
         .split(area);
 
-    // ---------- Top: function count per file, at a glance ----------
+    //  Top: function count per file, at a glance
     let chart_files: Vec<_> = files.iter().take(10).collect();
     let file_bars: Vec<Bar> = chart_files
         .iter()
@@ -54,7 +54,7 @@ pub fn render_by_file(
         .bar_gap(1);
     f.render_widget(by_file_chart, rows[0]);
 
-    // ---------- Bottom: drill-down detail ----------
+    //  Bottom: drill-down detail
     let mut lines: Vec<Line> = Vec::new();
     for (file, funcs) in files.iter() {
         let short_file = file.split('/').last().unwrap_or(file);

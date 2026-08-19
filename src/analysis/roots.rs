@@ -1,18 +1,8 @@
 // src/analysis/roots.rs
 
-//! Unified root detection for the entire system
-//!
-//! This module provides a single source of truth for what constitutes
-//! a "root" in the call graph. All other components (training, analysis,
-//! reachability) use this definition.
-
 use crate::graph::call_graph::CallGraph;
 use crate::parser::tree_sitter::ParsedFile;
 use std::collections::{HashMap, HashSet};
-
-// ============================================================================
-// Root Types
-// ============================================================================
 
 /// A unique identifier for a function
 pub type FunctionId = String;
@@ -65,9 +55,7 @@ impl RootSet {
     }
 }
 
-// ============================================================================
 // Root Detector
-// ============================================================================
 
 #[derive(Debug, Clone)]
 pub struct RootDetectionConfig {
@@ -132,9 +120,7 @@ impl RootDetector {
         roots
     }
 
-    // ========================================================================
     // Detection Methods
-    // ========================================================================
 
     /// Detect application entry points
     fn detect_application_roots(call_graph: &CallGraph) -> HashSet<FunctionId> {
@@ -185,7 +171,7 @@ impl RootDetector {
                 roots.insert(func.full_path.clone());
             }
 
-            // ⭐ NEW: Go exported functions (capitalized) are EXPORTS, not FFI
+            // Go exported functions (capitalized) are EXPORTS, not FFI
             if func.file.ends_with(".go") {
                 let is_exported = func
                     .name
@@ -338,9 +324,7 @@ impl RootDetector {
     }
 }
 
-// ============================================================================
 // Reachability Analysis
-// ============================================================================
 
 #[derive(Debug, Clone)]
 pub struct ReachabilityMap {
@@ -374,8 +358,6 @@ pub struct ReachabilityAnalyzer;
 
 impl ReachabilityAnalyzer {
     /// Compute reachability from roots
-    // src/analysis/roots.rs - Replace compute_reachability
-
     pub fn compute_reachability(call_graph: &CallGraph, roots: &RootSet) -> ReachabilityMap {
         use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -404,7 +386,7 @@ impl ReachabilityAnalyzer {
 
         // BFS traversal - safe from stack overflow
         let mut processed = HashSet::new();
-        let max_functions = 10000; // Safety limit
+        let max_functions = 10000;
 
         while let Some((current, root)) = queue.pop_front() {
             // Safety limit to prevent infinite loops

@@ -5,7 +5,6 @@ use crate::llm::CodeUnderstandingEngine;
 use crate::parser::tree_sitter::ParsedFile;
 use std::collections::HashMap;
 
-// ⭐ ADD THIS STRUCT
 #[derive(Debug, Clone, Default)]
 pub struct LLMAnalysis {
     pub has_documentation: bool,
@@ -25,8 +24,6 @@ impl LLMAnalyzer {
         files: &[ParsedFile],
     ) -> Result<LLMAnalysis, String> {
         let mut analysis = LLMAnalysis::default();
-
-        // Generate documentation
         println!("   📝 Generating documentation...");
         match engine.generate_documentation(call_graph, files).await {
             Ok(doc) => {

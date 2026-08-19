@@ -14,73 +14,35 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-// ============================================================================
-// Core Analysis Context
-// ============================================================================
-
 pub struct ProjectAnalysis {
-    // Core data
     pub root: PathBuf,
     pub files: Arc<Vec<ParsedFile>>,
-
-    // Unified Graph
     pub project_graph: Arc<ProjectGraph>,
-
-    // Individual graphs (kept for compatibility)
     pub call_graph: Arc<CallGraph>,
     pub type_graph: Arc<TypeGraph>,
     pub import_graph: Arc<ImportGraph>,
     pub dependency_graph: Arc<DependencyGraph>,
-
-    // Indexes
     pub indexes: Arc<AnalysisIndexes>,
-    pub rich_indexes: Arc<RichIndexes>, // New!
-
-    // Metrics
+    pub rich_indexes: Arc<RichIndexes>,
     pub metrics: Arc<ProjectMetrics>,
-
-    // Features
     pub features: Arc<FeatureExtractor>,
-
-    // Cache
     pub cache: Arc<FileCache>,
-
-    // LLM Analysis
     pub llm_analysis: Option<LLMAnalysis>,
-
-    // Metadata
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub version: u32,
 }
 
-// ============================================================================
-// Indexes
-// ============================================================================
-
-/// All indexes for fast lookups
 #[derive(Debug, Clone, Default)]
 pub struct AnalysisIndexes {
-    /// Function name → list of function full paths
     pub name_to_functions: HashMap<String, Vec<String>>,
-    /// File path → list of function full paths
     pub file_to_functions: HashMap<String, Vec<String>>,
-    /// Signature hash → list of function full paths
     pub signature_hash_to_functions: HashMap<String, Vec<String>>,
-    /// AST hash → list of function full paths
     pub ast_hash_to_functions: HashMap<String, Vec<String>>,
-    /// Body hash → list of function full paths
     pub body_hash_to_functions: HashMap<String, Vec<String>>,
-    /// Type name → list of type full paths
     pub type_to_definitions: HashMap<String, Vec<String>>,
-    /// Import → list of files that import it
     pub import_to_files: HashMap<String, Vec<String>>,
-    /// Symbol → list of definitions
     pub symbol_to_definitions: HashMap<String, Vec<String>>,
 }
-
-// ============================================================================
-// Metrics
-// ============================================================================
 
 /// Project-level metrics
 #[derive(Debug, Clone, Default)]
@@ -98,9 +60,7 @@ pub struct ProjectMetrics {
     pub layers: Vec<String>,
 }
 
-// ============================================================================
 // Builder
-// ============================================================================
 
 pub struct ProjectAnalysisBuilder {
     root: PathBuf,
@@ -318,9 +278,7 @@ impl ProjectAnalysisBuilder {
     }
 }
 
-// ============================================================================
 // Query Helpers
-// ============================================================================
 
 impl ProjectAnalysis {
     /// Get a function by full path
@@ -394,9 +352,7 @@ impl ProjectAnalysis {
     }
 }
 
-// ============================================================================
 // Output Methods
-// ============================================================================
 
 impl ProjectAnalysis {
     pub fn to_markdown(&self) -> String {

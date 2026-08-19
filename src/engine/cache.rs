@@ -5,10 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
-// ============================================================================
 // Cache Entry Types
-// ============================================================================
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheEntry<T> {
     pub hash: String,
@@ -133,10 +130,6 @@ impl Default for FileCache {
         Self::new()
     }
 }
-
-// ============================================================================
-// Analysis Cache - Stores full ProjectIntelligence with content hashes
-// ============================================================================
 
 /// File entry with path and content hash for validation
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -297,7 +290,7 @@ mod tests {
         assert!(hash.is_some());
 
         let hash_str = hash.unwrap();
-        assert_eq!(hash_str.len(), 64); // SHA256 hex length
+        assert_eq!(hash_str.len(), 64);
     }
 
     #[test]
