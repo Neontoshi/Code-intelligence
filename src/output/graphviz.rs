@@ -3,18 +3,10 @@ use petgraph::graph::NodeIndex;
 use std::collections::{HashMap, HashSet};
 
 /// Controls how much of the call graph actually gets rendered.
-///
-/// The old generator only filtered by `importance_score > 0.3`, which on a
-/// codebase this size still let ~1,500 nodes through. `max_nodes` puts a
-/// hard ceiling on output size no matter how big the codebase gets.
 pub struct GraphVizConfig {
-    /// Hard cap on nodes rendered — the single biggest lever for file size.
     pub max_nodes: usize,
-    /// Floor below which a node isn't even considered a candidate.
     pub min_importance: f64,
-    /// Truncate long function names so boxes stay a readable size.
     pub max_label_len: usize,
-    /// Collapse duplicate A->B edges (e.g. multiple call sites) into one.
     pub concentrate_edges: bool,
 }
 
@@ -32,10 +24,6 @@ impl Default for GraphVizConfig {
 pub struct GraphVizOutput;
 
 impl GraphVizOutput {
-    /// Rank all candidate nodes by importance and keep only the top
-    /// `max_nodes`. This is what actually bounds file size — a raw
-    /// threshold filter alone doesn't, since a big codebase can still have
-    /// thousands of nodes above any fixed cutoff.
     fn select_nodes(call_graph: &CallGraph, config: &GraphVizConfig) -> Vec<NodeIndex> {
         call_graph.top_important_nodes(config.max_nodes, config.min_importance)
     }
@@ -50,13 +38,10 @@ impl GraphVizOutput {
 
         for word in name.split_inclusive(&['_', '.', ':', '/', '-']) {
             let word_len = word.chars().count();
-
-            // If adding this word exceeds the line limit, start a new line
             if current_line_len + word_len > max_line_len && current_line_len > 0 {
                 result.push('\n');
                 current_line_len = 0;
             }
-
             result.push_str(word);
             current_line_len += word_len;
         }
@@ -66,21 +51,53 @@ impl GraphVizOutput {
 
     fn node_color(importance: f64) -> &'static str {
         if importance > 0.8 {
-            "#e74c3c" // critical
+            "#e74c3c"
         } else if importance > 0.5 {
-            "#f39c12" // important
+            "#f39c12"
         } else {
-            "#3498db" // regular
+            "#3498db"
         }
+    }
+
+    /// ⭐ NEW: Color by layer
+    fn layer_color(layer: &str) -> &'static str {
+        match layer {
+            "handler" => "#3498db",
+            "service" => "#2ecc71",
+            "repository" => "#f39c12",
+            "middleware" => "#9b59b6",
+            "config" => "#1abc9c",
+            "worker" => "#e67e22",
+            "blockchain" => "#e74c3c",
+            "observability" => "#1a1a2e",
+            "auth" => "#c0392b",
+            "utility" => "#7f8c8d",
+            "api" => "#2980b9",
+            "cli" => "#2c3e50",
+            "test" => "#8e44ad",
+            "core" => "#34495e",
+            _ => "#95a5a6",
+        }
+    }
+
+    /// ⭐ NEW: Format node label with metrics
+    fn format_node_label(
+        func: &crate::graph::call_graph::FunctionNode,
+        config: &GraphVizConfig,
+    ) -> String {
+        let mut label = Self::wrap_label(&func.name, config.max_label_len);
+        label = format!(
+            "{}\\n[fan_in: {}, complexity: {:.1}]",
+            label, func.fan_in, func.complexity
+        );
+        label
     }
 
     fn resolve(call_graph: &CallGraph, full_path: &str) -> Option<NodeIndex> {
         call_graph.name_index.get(full_path).copied()
     }
 
-    /// Default entry point: bounded, importance-colored graph. This is the
-    /// one to reach for by default — it's the direct replacement for the
-    /// old `generate()`, just capped in size.
+    /// Default entry point: bounded, importance-colored graph
     pub fn generate(call_graph: &CallGraph) -> String {
         Self::generate_with_config(call_graph, &GraphVizConfig::default())
     }
@@ -92,7 +109,7 @@ impl GraphVizOutput {
         let mut dot = String::new();
         dot.push_str("digraph CallGraph {\n");
         dot.push_str("  rankdir=TB;\n");
-        dot.push_str("  concentrate=true;\n"); // merges visually-parallel edge paths
+        dot.push_str("  concentrate=true;\n");
         dot.push_str("  ranksep=0.6; nodesep=0.4;\n");
         dot.push_str("  size=\"14,10\";\n");
         dot.push_str("  node [shape=box, style=rounded, fontname=\"Courier New\", fontsize=11, margin=\"0.25,0.12\"];\n");
@@ -117,10 +134,6 @@ impl GraphVizOutput {
         for &idx in &selected {
             for callee in call_graph.get_callees(idx) {
                 if let Some(callee_idx) = Self::resolve(call_graph, &callee.full_path) {
-                    // A callee outside the top-N no longer gets dropped —
-                    // it just doesn't get "important" styling. Otherwise a
-                    // selected node's real calls to low-importance functions
-                    // were invisible, making it look like it called nothing.
                     if !selected_set.contains(&callee_idx)
                         && extra_nodes_declared.insert(callee_idx.index())
                     {
@@ -149,10 +162,7 @@ impl GraphVizOutput {
         dot
     }
 
-    /// Focused view: only the neighborhood around one function, out to
-    /// `depth` call-hops. Use this instead of the full graph when you just
-    /// want to understand one part of the system — output stays small
-    /// regardless of overall codebase size.
+    /// Focused view: only the neighborhood around one function
     pub fn generate_focused(call_graph: &CallGraph, entry_full_path: &str, depth: usize) -> String {
         let start_idx = match Self::resolve(call_graph, entry_full_path) {
             Some(idx) => idx,
@@ -185,7 +195,7 @@ impl GraphVizOutput {
         let mut dot = String::new();
         dot.push_str("digraph CallGraph {\n");
         dot.push_str("  rankdir=LR;\n");
-        dot.push_str("  size=\"14,10\";\n"); // uniform scale-to-fit only — ratio=compress added no benefit in testing and risks uneven scaling across disconnected components
+        dot.push_str("  size=\"14,10\";\n");
         dot.push_str("  node [shape=box, style=rounded, fontname=\"Courier New\", fontsize=11, margin=\"0.25,0.12\"];\n");
         dot.push_str("  edge [fontname=\"monospace\", fontsize=9, color=\"#7f8c8d\"];\n\n");
 
@@ -224,10 +234,7 @@ impl GraphVizOutput {
         dot
     }
 
-    /// Bird's-eye view: one node per architectural layer (handler, service,
-    /// repository, etc.) instead of per-function, with edge weight = number
-    /// of cross-layer calls. Zero per-function noise — use this to sanity
-    /// check overall architecture shape before drilling into a layer.
+    /// Bird's-eye view: one node per architectural layer
     pub fn generate_layer_summary(call_graph: &CallGraph) -> String {
         let mut layer_counts: HashMap<String, usize> = HashMap::new();
         let mut layer_edges: HashMap<(String, String), usize> = HashMap::new();
@@ -256,9 +263,10 @@ impl GraphVizOutput {
         dot.push_str("  edge [fontname=\"monospace\", fontsize=10, color=\"#636e72\"];\n\n");
 
         for (layer, count) in &layer_counts {
+            let color = Self::layer_color(layer);
             dot.push_str(&format!(
-                "  \"{}\" [label=\"{}\\n({} functions)\"];\n",
-                layer, layer, count
+                "  \"{}\" [label=\"{}\\n({} functions)\", fillcolor=\"{}\", style=\"filled,rounded\"];\n",
+                layer, layer, count, color
             ));
         }
 
@@ -273,5 +281,150 @@ impl GraphVizOutput {
 
         dot.push_str("}\n");
         dot
+    }
+
+    /// ⭐ NEW: Two-phase graph - important functions + layer summaries
+    pub fn generate_two_phase(call_graph: &CallGraph, config: &GraphVizConfig) -> String {
+        let mut dot = String::new();
+        dot.push_str("digraph CallGraph {\n");
+        dot.push_str("  rankdir=TB;\n");
+        dot.push_str("  concentrate=true;\n");
+        dot.push_str("  ranksep=0.6; nodesep=0.4;\n");
+        dot.push_str("  size=\"14,10\";\n");
+        dot.push_str("  node [shape=box, style=rounded, fontname=\"Courier New\", fontsize=11, margin=\"0.25,0.12\"];\n");
+        dot.push_str("  edge [fontname=\"monospace\", fontsize=9, color=\"#7f8c8d\"];\n\n");
+
+        // Track which nodes are important
+        let mut important_nodes = HashSet::new();
+        let mut layer_groups: HashMap<String, Vec<NodeIndex>> = HashMap::new();
+
+        // First pass: categorize nodes
+        for idx in call_graph.node_indices() {
+            let func = &call_graph[idx];
+            if func.importance_score > 0.5 {
+                important_nodes.insert(idx);
+            } else {
+                let layer = if func.layer.is_empty() {
+                    "unknown".to_string()
+                } else {
+                    func.layer.clone()
+                };
+                layer_groups.entry(layer).or_default().push(idx);
+            }
+        }
+
+        // Second pass: Render important nodes
+        for &idx in &important_nodes {
+            let func = &call_graph[idx];
+            let label = Self::format_node_label(func, config);
+            let color = Self::node_color(func.importance_score);
+            dot.push_str(&format!(
+                "  \"{}\" [label=\"{}\", fillcolor=\"{}\", style=\"filled,rounded\"];\n",
+                idx.index(),
+                label,
+                color
+            ));
+        }
+
+        // Render aggregated layer nodes
+        for (layer, nodes) in &layer_groups {
+            if !nodes.is_empty() {
+                let color = Self::layer_color(layer);
+                dot.push_str(&format!(
+                    "  \"layer_{}\" [label=\"{}\\n({} functions)\", shape=box, style=dashed, fillcolor=\"{}\", color=\"#7f8c8d\"];\n",
+                    layer, layer, nodes.len(), color
+                ));
+            }
+        }
+
+        dot.push('\n');
+
+        // Edges between important nodes
+        let mut edges_seen: HashSet<(usize, usize)> = HashSet::new();
+        for &idx in &important_nodes {
+            for callee in call_graph.get_callees(idx) {
+                if let Some(callee_idx) = Self::resolve(call_graph, &callee.full_path) {
+                    if important_nodes.contains(&callee_idx) {
+                        let key = (idx.index(), callee_idx.index());
+                        if !edges_seen.contains(&key) {
+                            edges_seen.insert(key);
+                            dot.push_str(&format!(
+                                "  \"{}\" -> \"{}\";\n",
+                                idx.index(),
+                                callee_idx.index()
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Edges from important nodes to layer aggregations
+        for &idx in &important_nodes {
+            for callee in call_graph.get_callees(idx) {
+                if let Some(callee_idx) = Self::resolve(call_graph, &callee.full_path) {
+                    if !important_nodes.contains(&callee_idx) {
+                        let callee_func = &call_graph[callee_idx];
+                        let layer = if callee_func.layer.is_empty() {
+                            "unknown".to_string()
+                        } else {
+                            callee_func.layer.clone()
+                        };
+                        let layer_key = format!("layer_{}", layer);
+                        dot.push_str(&format!(
+                            "  \"{}\" -> \"{}\" [style=dashed, color=\"#95a5a6\"];\n",
+                            idx.index(),
+                            layer_key
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Edges from layer aggregations to important nodes
+        for (layer, nodes) in &layer_groups {
+            for node_idx in nodes {
+                for callee in call_graph.get_callees(*node_idx) {
+                    if let Some(callee_idx) = Self::resolve(call_graph, &callee.full_path) {
+                        if important_nodes.contains(&callee_idx) {
+                            let layer_key = format!("layer_{}", layer);
+                            dot.push_str(&format!(
+                                "  \"{}\" -> \"{}\" [style=dotted, color=\"#95a5a6\"];\n",
+                                layer_key,
+                                callee_idx.index()
+                            ));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Legend
+        dot.push_str(&Self::generate_legend());
+
+        dot.push_str("}\n");
+        dot
+    }
+
+    /// Generate legend for two-phase graph
+    fn generate_legend() -> String {
+        let mut legend = String::new();
+        legend.push_str("  subgraph cluster_legend {\n");
+        legend.push_str("    label=\"Legend\";\n");
+        legend.push_str("    style=filled;\n    fillcolor=\"#ecf0f1\";\n");
+        legend.push_str("    node [shape=box, style=rounded, fontsize=10];\n");
+        legend.push_str("    legend_important [label=\"Important function\", fillcolor=\"#f39c12\", style=\"filled\"];\n");
+        legend.push_str("    legend_normal [label=\"Normal function\", fillcolor=\"#3498db\", style=\"filled\"];\n");
+        legend.push_str("    legend_layer [label=\"Layer group\", fillcolor=\"#ecf0f1\", style=\"dashed\", color=\"#7f8c8d\"];\n");
+        legend.push_str("    legend_solid [label=\"Call edge\", color=\"#7f8c8d\"];\n");
+        legend.push_str(
+            "    legend_dashed [label=\"To layer\", style=\"dashed\", color=\"#95a5a6\"];\n",
+        );
+        legend.push_str(
+            "    legend_dotted [label=\"From layer\", style=\"dotted\", color=\"#95a5a6\"];\n",
+        );
+        legend.push_str("  }\n");
+        legend
     }
 }

@@ -24,6 +24,7 @@
 //!   ci self                         - Analyze code-intelligence itself
 
 use clap::{Parser, Subcommand};
+use code_intelligence::graph::GraphMetrics;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -127,13 +128,13 @@ enum Commands {
         /// Path to analyze (defaults to current directory)
         #[arg(default_value = ".")]
         path: PathBuf,
-        /// Output format: dot, svg, png
+        /// Output format: dot, svg, png, interactive, two-phase
         #[arg(long, default_value = "dot")]
         format: String,
         /// Output file
         #[arg(long)]
         output: Option<PathBuf>,
-        /// Max nodes to include
+        /// Max nodes to include (for dot format)
         #[arg(long, default_value = "60")]
         max_nodes: usize,
         /// Entry point for focused graph
@@ -794,19 +795,110 @@ fn run_graph(
     println!("   Max nodes: {}", max_nodes);
 
     let output_file = output.unwrap_or_else(|| {
-        if format == "dot" {
+        if format == "interactive" {
+            PathBuf::from("call_graph.html")
+        } else if format == "two-phase" {
+            PathBuf::from("call_graph_two_phase.dot")
+        } else if format == "dot" {
             PathBuf::from("call_graph.dot")
+        } else if format == "svg" {
+            PathBuf::from("call_graph.svg")
+        } else if format == "png" {
+            PathBuf::from("call_graph.png")
         } else {
             PathBuf::from(format!("call_graph.{}", format))
         }
     });
 
+    // For interactive format, run full analysis and generate HTML
+    if format == "interactive" {
+        use code_intelligence::output::InteractiveGraph;
+        use code_intelligence::Pipeline;
+
+        println!("🔍 Analyzing project for interactive graph...");
+
+        let rt = tokio::runtime::Runtime::new()?;
+        let mut pipeline = Pipeline::new();
+        let analysis = rt.block_on(pipeline.process_project(path))?;
+
+        let project_name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        println!(
+            "📊 Generating interactive HTML with {} functions...",
+            analysis.call_graph.node_count()
+        );
+
+        let html = InteractiveGraph::generate(&analysis.call_graph, &analysis.files, &project_name);
+
+        std::fs::write(&output_file, html)?;
+
+        println!("✅ Interactive HTML saved to: {:?}", output_file);
+        println!("   📊 Functions: {}", analysis.call_graph.node_count());
+        println!("   🔗 Edges: {}", analysis.call_graph.edge_count());
+        println!("   🌐 Open in your browser to explore!");
+        return Ok(());
+    }
+
+    // ⭐ NEW: For two-phase format, use the two-phase graph generator
+    if format == "two-phase" {
+        use code_intelligence::output::graphviz::{GraphVizConfig, GraphVizOutput};
+        use code_intelligence::Pipeline;
+
+        println!("🔍 Analyzing project for two-phase graph...");
+
+        let rt = tokio::runtime::Runtime::new()?;
+        let mut pipeline = Pipeline::new();
+        let analysis = rt.block_on(pipeline.process_project(path))?;
+
+        let config = GraphVizConfig {
+            max_nodes,
+            min_importance: 0.3,
+            max_label_len: 28,
+            concentrate_edges: true,
+        };
+
+        println!(
+            "📊 Generating two-phase graph with {} functions...",
+            analysis.call_graph.node_count()
+        );
+        println!("   📌 Important functions (score > 0.5) shown in detail");
+        println!("   📁 Other functions grouped by layer");
+
+        let dot = GraphVizOutput::generate_two_phase(&analysis.call_graph, &config);
+        std::fs::write(&output_file, dot)?;
+
+        println!("✅ Two-phase graph saved to: {:?}", output_file);
+        println!("   📊 Functions: {}", analysis.call_graph.node_count());
+        println!("   🔗 Edges: {}", analysis.call_graph.edge_count());
+        println!(
+            "   🎯 Important functions: {}",
+            analysis
+                .call_graph
+                .node_indices()
+                .filter(|idx| analysis.call_graph[*idx].importance_score > 0.5)
+                .count()
+        );
+        println!(
+            "   📁 Layer groups: {}",
+            analysis
+                .call_graph
+                .node_indices()
+                .filter(|idx| !analysis.call_graph[*idx].layer.is_empty())
+                .map(|idx| analysis.call_graph[idx].layer.clone())
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+        );
+        return Ok(());
+    }
+
+    // For non-interactive formats, use the existing approach
     let graph_type = if entry.is_some() {
         "graphviz-focused"
-    } else if format == "dot" {
-        "graphviz"
-    } else if format == "svg" || format == "png" {
-        // Generate dot first, then convert
+    } else if format == "dot" || format == "svg" || format == "png" {
         "graphviz"
     } else {
         "graphviz"
