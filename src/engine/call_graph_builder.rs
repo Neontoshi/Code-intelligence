@@ -1,11 +1,5 @@
 // src/engine/call_graph_builder.rs
 
-//! Call graph builder - constructs call graphs from parsed files
-//!
-//! This module handles the complex task of building call graphs from
-//! parsed source files, including resolving method calls, internal calls,
-//! and import resolution.
-
 use crate::graph::call_graph::{CallEdge, CallGraph, FunctionNode};
 use crate::parser::tree_sitter::ParsedFile;
 use std::collections::HashMap;
@@ -14,6 +8,38 @@ use std::collections::HashMap;
 pub struct CallGraphBuilder;
 
 impl CallGraphBuilder {
+    fn calculate_complexity(source: &str) -> f64 {
+        let mut complexity = 1.0;
+        let patterns = [
+            ("if", 0.5),
+            ("else", 0.3),
+            ("for", 0.5),
+            ("while", 0.5),
+            ("match", 0.5),
+            ("switch", 0.5),
+            ("case", 0.2),
+            ("&&", 0.2),
+            ("||", 0.2),
+            ("?", 0.3),
+            ("catch", 0.3),
+            ("try", 0.2),
+        ];
+
+        for (pattern, weight) in patterns {
+            let count = source.matches(pattern).count();
+            complexity += count as f64 * weight;
+        }
+
+        // Function length impact
+        let lines = source.lines().count();
+        if lines > 20 {
+            complexity += (lines - 20) as f64 * 0.05;
+        }
+
+        // Cap at reasonable maximum
+        complexity.min(50.0)
+    }
+
     /// Build a call graph from parsed files
     pub fn build(files: &[ParsedFile]) -> CallGraph {
         let mut call_graph = CallGraph::new();
@@ -32,10 +58,6 @@ impl CallGraphBuilder {
                     let full_path = format!("{}::{}", module, item);
                     import_map.entry(item.clone()).or_default().push(full_path);
                 }
-                import_map
-                    .entry(import.module.clone())
-                    .or_default()
-                    .push(module.clone());
             }
         }
 
@@ -49,16 +71,25 @@ impl CallGraphBuilder {
                     Some(c) => format!("{}::{}::{}", file_path, c, func.name),
                     None => format!("{}::{}", file_path, func.name),
                 };
+
+                // Calculate complexity from the function body
+                let body_start = func.body_range.0;
+                let body_end = func.body_range.1;
+                let body_source = &file.source[body_start..body_end];
+                let complexity = Self::calculate_complexity(body_source);
+
                 let node = FunctionNode {
                     name: func.name.clone(),
                     full_path: full_path.clone(),
                     file: file_path.clone(),
                     line: func.line,
+                    body_start_line: func.body_start_line,
+                    body_end_line: func.body_end_line,
                     is_public: func.is_public,
                     is_async: func.is_async,
                     params: func.params.iter().map(|p| p.name.clone()).collect(),
                     returns: func.return_type.clone().into_iter().collect(),
-                    complexity: 1.0,
+                    complexity,
                     importance_score: 0.0,
                     doc_comment: func.doc_comment.clone(),
                     writes_to: Vec::new(),

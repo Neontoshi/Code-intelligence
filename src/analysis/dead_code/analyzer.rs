@@ -595,10 +595,10 @@ impl DeadCodeAnalyzer {
             }
         }
 
-        let lines_of_code = if func.complexity > 0.0 {
-            (10.0 + func.complexity * 3.5) as usize
+        let lines_of_code = if func.body_end_line > func.body_start_line {
+            func.body_end_line - func.body_start_line + 1
         } else {
-            10
+            1
         };
 
         // Impact is now based on removal risk (size + complexity), not caller

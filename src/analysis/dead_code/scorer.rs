@@ -296,6 +296,8 @@ mod tests {
             full_path: format!("test::{}", name),
             file: "src/test.rs".to_string(),
             line: 10,
+            body_start_line: 1,
+            body_end_line: 1,
             is_public,
             is_async: false,
             params: vec![],

@@ -23,6 +23,8 @@ pub struct FunctionInfo {
     pub doc_comment: Option<String>,
     pub calls: Vec<String>,
     pub body_range: (usize, usize),
+    pub body_start_line: usize,
+    pub body_end_line: usize,
     pub container: Option<String>,
     pub role: FunctionRole,
     pub purpose: String,
@@ -416,6 +418,9 @@ impl TreeSitterParser {
 
         let decorators = Self::extract_decorators(node, source);
 
+        let body_start_line = node.start_position().row + 1;
+        let body_end_line = node.end_position().row + 1;
+
         Some(FunctionInfo {
             name,
             line,
@@ -426,6 +431,8 @@ impl TreeSitterParser {
             doc_comment,
             calls,
             body_range: (node.start_byte(), node.end_byte()),
+            body_start_line,
+            body_end_line,
             container: container.map(|s| s.to_string()),
             role,
             purpose,

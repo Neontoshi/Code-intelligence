@@ -10,6 +10,8 @@ pub struct FunctionNode {
     pub full_path: String,
     pub file: String,
     pub line: usize,
+    pub body_start_line: usize,
+    pub body_end_line: usize,
     pub is_public: bool,
     pub is_async: bool,
     pub params: Vec<String>,
@@ -52,7 +54,7 @@ pub struct CallGraph {
     pub async_functions: Vec<NodeIndex>,
     pub cycle_detection_skipped: bool,
     pub cycle_detection_node_count: usize,
-    pub duplicate_functions: Vec<String>, // ⭐ new
+    pub duplicate_functions: Vec<String>,
 }
 
 impl CallGraph {
