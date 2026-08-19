@@ -530,6 +530,9 @@ impl TreeSitterParser {
         Self::walk_for_calls_with_context(node, source, &mut calls, None);
         Self::walk_for_jsx_components(node, source, &mut calls);
 
+        // ⭐ NEW: Extract closures and their inner calls
+        Self::extract_closure_calls(node, source, &mut calls);
+
         // Deduplicate calls
         let mut seen = std::collections::HashSet::new();
         calls.retain(|call| {
@@ -542,6 +545,32 @@ impl TreeSitterParser {
         });
 
         calls
+    }
+
+    /// ⭐ NEW: Extract function calls inside closures
+    fn extract_closure_calls(node: &Node, source: &str, calls: &mut Vec<String>) {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "closure_expression" || child.kind() == "closure" {
+                // Extract calls inside the closure body
+                if let Some(body) = child.child_by_field_name("body") {
+                    Self::walk_for_calls_with_context(&body, source, calls, None);
+                }
+            }
+            // Also look for function names passed as arguments (not inside closures)
+            if child.kind() == "argument_list" || child.kind() == "arguments" {
+                let mut arg_cursor = child.walk();
+                for arg in child.children(&mut arg_cursor) {
+                    if arg.kind() == "identifier" || arg.kind() == "scoped_identifier" {
+                        if let Ok(name) = arg.utf8_text(source.as_bytes()) {
+                            // Add as a potential function reference
+                            calls.push(name.to_string());
+                        }
+                    }
+                }
+            }
+            Self::extract_closure_calls(&child, source, calls);
+        }
     }
 
     fn walk_for_jsx_components(node: &Node, source: &str, calls: &mut Vec<String>) {

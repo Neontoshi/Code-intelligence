@@ -769,6 +769,50 @@ impl CallGraphBuilder {
                         }
 
                         // ============================================================
+                        // TIER 9: Higher-order function calls (unwrap_or_else, map, and_then, etc.)
+                        // ============================================================
+                        if !found
+                            && (called_name.contains("unwrap_or_else")
+                                || called_name.contains("unwrap_or")
+                                || called_name.contains("map")
+                                || called_name.contains("and_then")
+                                || called_name.contains("or_else")
+                                || called_name.contains("then")
+                                || called_name.contains("map_or")
+                                || called_name.contains("map_or_else")
+                                || called_name.contains("unwrap")
+                                || called_name.contains("expect")
+                                || called_name.contains("unwrap_or_default"))
+                        {
+                            // Look for other calls in the same function that might be the closure argument
+                            // The closure argument is typically a function name being passed
+                            for other_call in &func.calls {
+                                if other_call != called_name {
+                                    // Check if the other call is a simple function name (not a method call)
+                                    if !other_call.contains('.') && !other_call.contains("::") {
+                                        if let Some(paths) = func_by_name.get(other_call) {
+                                            if paths.len() == 1 {
+                                                if let Some(&callee_idx) = func_index.get(&paths[0])
+                                                {
+                                                    call_graph.add_call(
+                                                        caller_idx,
+                                                        callee_idx,
+                                                        CallEdge {
+                                                            call_type: "higher_order".to_string(),
+                                                            line: func.line,
+                                                        },
+                                                    );
+                                                    found = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // ============================================================
                         // Unresolved call - skip it
                         // ============================================================
                         if !found {
