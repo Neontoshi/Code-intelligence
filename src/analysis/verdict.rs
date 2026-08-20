@@ -3,6 +3,7 @@
 use crate::analysis::dynamic_refs::DynamicReference;
 use crate::analysis::roots::ReachabilityMap;
 use crate::analysis::training_data::{TrainingExample, TrainingLabel};
+use crate::analysis::verdict_source::label_source::{LabelSource, VerdictState};
 use crate::graph::call_graph::{CallGraph, FunctionNode};
 use crate::graph::traits::GraphMetrics;
 use crate::ml::classifier::DeadCodeClassifier;
@@ -35,17 +36,31 @@ impl SignalDirection {
 }
 
 // Verdict Types
-
 #[derive(Debug, Clone)]
 pub struct Verdict {
     pub function_name: String,
     pub full_path: String,
     pub label: TrainingLabel,
+    pub state: VerdictState,
     pub confidence: f64,
     pub signals: Vec<Signal>,
     pub ml_probability: Option<f64>,
     pub static_score: Option<f64>,
     pub explanation: String,
+    pub evidence_sources: Vec<EvidenceSource>,
+    pub verified: bool,
+    pub verified_by: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum EvidenceSource {
+    StaticReachability,
+    CallGraph,
+    DynamicRefs,
+    MLModel(String), // model version
+    GitHistory,
+    HumanReview,
+    ProductionTelemetry,
 }
 
 impl Verdict {
@@ -59,6 +74,23 @@ impl Verdict {
 
     pub fn needs_review(&self) -> bool {
         self.label == TrainingLabel::Unknown
+    }
+
+    pub fn is_high_confidence(&self) -> bool {
+        matches!(
+            self.state,
+            VerdictState::DefinitelyAlive | VerdictState::DefinitelyDead
+        )
+    }
+
+    pub fn mark_verified(&mut self, verified_by: &str) {
+        self.verified = true;
+        self.verified_by = Some(verified_by.to_string());
+        self.evidence_sources.push(EvidenceSource::HumanReview);
+    }
+
+    pub fn format_state(&self) -> String {
+        self.state.confidence_label().to_string()
     }
 
     pub fn format_explanation(&self) -> String {
@@ -100,6 +132,7 @@ pub struct VerdictConfig {
     pub alive_threshold: f64,
     pub enable_ml: bool,
     pub enable_static: bool,
+    pub model_version: Option<String>,
 }
 
 impl Default for VerdictConfig {
@@ -109,6 +142,7 @@ impl Default for VerdictConfig {
             alive_threshold: 0.15,
             enable_ml: true,
             enable_static: true,
+            model_version: None,
         }
     }
 }
@@ -153,6 +187,11 @@ impl VerdictEngine {
         self
     }
 
+    pub fn with_model_version(mut self, version: &str) -> Self {
+        self.config.model_version = Some(version.to_string());
+        self
+    }
+
     pub fn evaluate_function(
         &self,
         func: &FunctionNode,
@@ -160,8 +199,10 @@ impl VerdictEngine {
         reachability: &ReachabilityMap,
     ) -> Verdict {
         let mut signals = Vec::new();
+        let mut evidence_sources = Vec::new(); // ⭐ FIX: Initialize here
         let mut static_score = 0.0;
 
+        // 1. Collect static signals
         let static_signals = self.collect_static_signals(func, reachability);
         for signal in &static_signals {
             if signal.direction == SignalDirection::SupportsDead {
@@ -172,6 +213,11 @@ impl VerdictEngine {
         }
         signals.extend(static_signals);
 
+        // Track evidence sources from static analysis
+        evidence_sources.push(EvidenceSource::StaticReachability);
+        evidence_sources.push(EvidenceSource::CallGraph);
+
+        // 2. Normalize static score
         let total_weight: f64 = signals.iter().map(|s| s.weight).sum();
         let normalized_static = if total_weight > 0.0 {
             (static_score / total_weight + 1.0) / 2.0
@@ -180,6 +226,7 @@ impl VerdictEngine {
         };
         let normalized_static = normalized_static.clamp(0.0, 1.0);
 
+        // 3. ML prediction (if enabled)
         let ml_probability = if self.config.enable_ml {
             if let Some(model) = &self.ml_model {
                 use crate::analysis::training_data::FunctionFeatures;
@@ -198,6 +245,10 @@ impl VerdictEngine {
                     dataset_split: None,
                     label_reason: Some("ml".to_string()),
                     label_version: Some(1),
+                    label_source: LabelSource::StaticHeuristic,
+                    generated_by_model: self.config.model_version.clone(), // ⭐ Track model version
+                    verified_by: None,
+                    created_at: Some(chrono::Utc::now().timestamp()), // ⭐ FIX: Add timestamp
                 };
                 let alive_prob = model.predict_probability(&example);
                 let dead_prob = 1.0 - alive_prob;
@@ -216,6 +267,13 @@ impl VerdictEngine {
                         dead_prob * 100.0
                     ),
                 });
+
+                evidence_sources.push(EvidenceSource::MLModel(
+                    self.config
+                        .model_version
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string()),
+                ));
                 Some(dead_prob)
             } else {
                 None
@@ -224,20 +282,54 @@ impl VerdictEngine {
             None
         };
 
+        // 4. Dynamic references (if available)
+        if let Some(dynamic_refs) = &self.dynamic_refs {
+            let is_dynamically_referenced = dynamic_refs.iter().any(|r| {
+                r.target_function
+                    .as_ref()
+                    .map(|f| f == &func.name)
+                    .unwrap_or(false)
+                    || r.target_pattern.contains(&func.name)
+            });
+
+            if is_dynamically_referenced {
+                signals.push(Signal {
+                    name: "dynamic_reference".to_string(),
+                    value: 1.0,
+                    direction: SignalDirection::SupportsAlive,
+                    weight: 0.4,
+                    explanation: "Referenced dynamically (reflection/callback)".to_string(),
+                });
+                evidence_sources.push(EvidenceSource::DynamicRefs);
+            }
+        }
+
+        // 5. Combined score
         let combined_score = if let Some(ml) = ml_probability {
             normalized_static * 0.6 + ml * 0.4
         } else {
             normalized_static
         };
 
-        let (label, confidence) = if combined_score >= self.config.dead_threshold {
-            (TrainingLabel::Dead, combined_score)
-        } else if combined_score <= self.config.alive_threshold {
-            (TrainingLabel::Alive, 1.0 - combined_score)
-        } else {
-            (TrainingLabel::Unknown, combined_score)
+        // ⭐ FIX: Compute state from combined_score
+        let state = VerdictState::from_score(
+            combined_score,
+            self.config.dead_threshold,
+            self.config.alive_threshold,
+        );
+
+        // 6. Determine label from state
+        let (label, confidence) = match state {
+            VerdictState::DefinitelyDead | VerdictState::ProbablyDead => {
+                (TrainingLabel::Dead, combined_score)
+            }
+            VerdictState::DefinitelyAlive | VerdictState::ProbablyAlive => {
+                (TrainingLabel::Alive, combined_score)
+            }
+            VerdictState::Unknown => (TrainingLabel::Unknown, 0.5),
         };
 
+        // 7. Generate explanation
         let explanation = self.generate_explanation(
             func,
             &signals,
@@ -246,15 +338,20 @@ impl VerdictEngine {
             ml_probability,
         );
 
+        // ⭐ FIX: Use all computed values
         Verdict {
             function_name: func.name.clone(),
             full_path: func.full_path.clone(),
             label,
+            state, // ⭐ FIX: Use computed state
             confidence,
             signals,
             ml_probability,
             static_score: Some(normalized_static),
             explanation,
+            evidence_sources, // ⭐ FIX: Use populated evidence_sources
+            verified: false,
+            verified_by: None,
         }
     }
 
@@ -469,6 +566,10 @@ impl VerdictEngine {
         verdicts.iter().filter(|v| v.needs_review()).collect()
     }
 
+    pub fn filter_high_confidence<'a>(&self, verdicts: &'a [Verdict]) -> Vec<&'a Verdict> {
+        verdicts.iter().filter(|v| v.is_high_confidence()).collect()
+    }
+
     pub fn default_with_threshold(threshold: f64) -> Self {
         let mut config = VerdictConfig::default();
         config.dead_threshold = threshold;
@@ -485,6 +586,7 @@ impl VerdictEngine {
         let dead = verdicts.iter().filter(|v| v.is_dead()).count();
         let alive = verdicts.iter().filter(|v| v.is_alive()).count();
         let unknown = verdicts.iter().filter(|v| v.needs_review()).count();
+        let high_confidence = verdicts.iter().filter(|v| v.is_high_confidence()).count();
 
         let avg_confidence: f64 =
             verdicts.iter().map(|v| v.confidence).sum::<f64>() / verdicts.len() as f64;
@@ -494,6 +596,7 @@ impl VerdictEngine {
             dead,
             alive,
             unknown,
+            high_confidence,
             avg_confidence,
         }
     }
@@ -505,6 +608,7 @@ pub struct VerdictStats {
     pub dead: usize,
     pub alive: usize,
     pub unknown: usize,
+    pub high_confidence: usize,
     pub avg_confidence: f64,
 }
 
@@ -716,6 +820,7 @@ mod tests {
             enable_static: true,
             dead_threshold: 0.95,
             alive_threshold: 0.40,
+            model_version: None,
         };
         let engine_high = VerdictEngine::new(config_high);
         let verdicts_high = engine_high.evaluate_all(&graph, &reachability);
@@ -729,6 +834,7 @@ mod tests {
             enable_static: true,
             dead_threshold: 0.50,
             alive_threshold: 0.40,
+            model_version: None,
         };
         let engine_low = VerdictEngine::new(config_low);
         let verdicts_low = engine_low.evaluate_all(&graph, &reachability);

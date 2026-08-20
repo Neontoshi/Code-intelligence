@@ -1,5 +1,6 @@
 // src/analysis/training_data.rs
 
+use crate::analysis::verdict_source::label_source::LabelSource;
 use crate::graph::call_graph::{CallGraph, FunctionNode};
 use crate::ml::feature_schema::FeatureVectorBuilder;
 use serde::{Deserialize, Serialize};
@@ -20,6 +21,10 @@ pub struct TrainingExample {
     pub dataset_split: Option<String>,
     pub label_reason: Option<String>,
     pub label_version: Option<u32>,
+    pub label_source: LabelSource,
+    pub generated_by_model: Option<String>,
+    pub verified_by: Option<String>,
+    pub created_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -297,6 +302,10 @@ impl TrainingExample {
             dataset_split: None,
             label_reason: Some("whitelist".to_string()),
             label_version: Some(1),
+            label_source: LabelSource::StaticHeuristic,
+            generated_by_model: None,
+            verified_by: None,
+            created_at: Some(chrono::Utc::now().timestamp()),
         }
     }
 
@@ -315,9 +324,49 @@ impl TrainingExample {
             dataset_split: None,
             label_reason: Some("analysis".to_string()),
             label_version: Some(1),
+            label_source: LabelSource::StaticHeuristic,
+            generated_by_model: None,
+            verified_by: None,
+            created_at: Some(chrono::Utc::now().timestamp()),
         }
     }
 
+    pub fn new_verified(
+        func: &FunctionNode,
+        call_graph: &CallGraph,
+        label: TrainingLabel,
+        source: LabelSource,
+        verified_by: &str,
+    ) -> Self {
+        let confidence = source.confidence_multiplier();
+        Self {
+            function_name: func.name.clone(),
+            full_path: func.full_path.clone(),
+            file: func.file.clone(),
+            language: Self::detect_language(&func.file),
+            features: FunctionFeatures::from_function(func, call_graph),
+            label,
+            confidence,
+            source: format!("verified_{}", verified_by),
+            repository_id: None,
+            commit_hash: None,
+            dataset_split: None,
+            label_reason: Some(format!("verified_by_{}", verified_by)),
+            label_version: Some(1),
+            label_source: source,
+            generated_by_model: None,
+            verified_by: Some(verified_by.to_string()),
+            created_at: Some(chrono::Utc::now().timestamp()),
+        }
+    }
+
+    pub fn is_verified(&self) -> bool {
+        self.label_source.is_verified()
+    }
+
+    pub fn is_heuristic(&self) -> bool {
+        self.label_source.is_heuristic()
+    }
     pub fn detect_language(file: &str) -> String {
         if file.ends_with(".rs") {
             "rust".to_string()
@@ -408,6 +457,10 @@ impl TrainingDataCollector {
                 dataset_split: None,
                 label_reason: Some(label_reason),
                 label_version: Some(1),
+                label_source: LabelSource::StaticHeuristic,
+                generated_by_model: None,
+                verified_by: None,
+                created_at: Some(chrono::Utc::now().timestamp()),
             };
 
             self.examples.push(example.clone());
@@ -437,6 +490,10 @@ impl TrainingDataCollector {
             dataset_split: None,
             label_reason: Some(source_label.to_string()),
             label_version: Some(1),
+            label_source: LabelSource::StaticHeuristic,
+            generated_by_model: None,
+            verified_by: None,
+            created_at: Some(chrono::Utc::now().timestamp()),
         };
 
         self.examples.push(example.clone());

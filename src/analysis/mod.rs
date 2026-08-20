@@ -9,6 +9,7 @@ pub mod outcomes;
 pub mod roots;
 pub mod training_data;
 pub mod verdict;
+pub mod verdict_source;
 
 pub use context::AnalysisIndexes;
 pub use context::AnalysisMetadata;

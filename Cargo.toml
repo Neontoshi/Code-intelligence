@@ -170,3 +170,35 @@ path = "src/bin/update_outcome.rs"
 [[bin]]
 name = "ci"
 path = "src/bin/ci.rs"
+
+[[bin]]
+name = "verify_ground_truth"
+path = "src/bin/verify_ground_truth.rs"
+
+[[bin]]
+name = "split_repositories"
+path = "src/bin/split_repositories.rs"
+
+[[bin]]
+name = "temporal_evaluation"
+path = "src/bin/temporal_evaluation.rs"
+
+[[bin]]
+name = "hard_negative_dataset"
+path = "src/bin/hard_negative_dataset.rs"
+
+[[bin]]
+name = "evaluate_metrics"
+path = "src/bin/evaluate_metrics.rs"
+
+[[bin]]
+name = "evaluate_per_language_detailed"
+path = "src/bin/evaluate_per_language_detailed.rs"
+
+[[bin]]
+name = "calibration_analysis"
+path = "src/bin/calibration_analysis.rs"
+
+[[bin]]
+name = "calibration_analysis"
+path = "src/bin/calibration_analysis.rs"

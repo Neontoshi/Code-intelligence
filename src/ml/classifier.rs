@@ -373,6 +373,7 @@ impl Default for DeadCodeClassifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::verdict_source::label_source::LabelSource;
     use crate::graph::call_graph::FunctionNode;
 
     fn create_test_function(name: &str, fan_in: usize, is_public: bool) -> FunctionNode {
@@ -442,6 +443,10 @@ mod tests {
                 dataset_split: None,
                 label_reason: None,
                 label_version: Some(1),
+                label_source: LabelSource::StaticHeuristic,
+                generated_by_model: None,
+                verified_by: None,
+                created_at: Some(chrono::Utc::now().timestamp()),
             });
         }
 
@@ -466,6 +471,10 @@ mod tests {
                 dataset_split: None,
                 label_reason: None,
                 label_version: Some(1),
+                label_source: LabelSource::StaticHeuristic,
+                generated_by_model: None,
+                verified_by: None,
+                created_at: Some(chrono::Utc::now().timestamp()),
             });
         }
 

@@ -348,7 +348,7 @@ jobs:
 
       - name: Install Code Intelligence
         run: |
-          git clone https://github.com/yourusername/code-intelligence.git /tmp/ci
+          git clone https://github.com/neontoshi/code-intelligence.git /tmp/ci
           cd /tmp/ci && cargo install --path .
 
       - name: Run Dead Code Analysis
