@@ -57,7 +57,7 @@
 To install the `ci` binary and all supporting evaluation and training tools to `~/.cargo/bin`:
 
 ```bash
-git clone https://github.com/yourusername/code-intelligence
+git clone https://github.com/neontoshi/Code-intelligence
 cd code-intelligence
 cargo install --path .
 
