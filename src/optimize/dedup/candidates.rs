@@ -1,46 +1,38 @@
-//! Candidate generation - first-class phase before comparison
+// src/optimize/dedup/candidates.rs
 
 use crate::graph::call_graph::FunctionNode;
-use crate::optimize::dedup::core::compute_signature_hash;
+use crate::optimize::dedup::core::{compute_ast_hash, compute_signature_hash, SourceIndex};
+use crate::optimize::dedup::filters::threshold::is_actionable_duplicate_candidate;
+use crate::optimize::dedup::minhash::LshIndex;
 use crate::optimize::dedup::types::DedupConfig;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-// ============================================================================
-// Candidate Types
-// ============================================================================
-
-/// A candidate pair for duplicate detection
 #[derive(Debug, Clone)]
 pub struct CandidatePair {
     pub idx_a: usize,
     pub idx_b: usize,
-    pub score: f64,
-    pub strategy: CandidateStrategy,
+    pub func_a: FunctionNode,
+    pub func_b: FunctionNode,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CandidateResult {
+    pub pairs: Vec<CandidatePair>,
+    pub candidate_pairs: Vec<CandidatePair>,
+    pub total_comparisons: usize,
+    pub filtered_comparisons: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CandidateStrategy {
     ExactHash,
-    AstHash,
-    SignatureHash,
-    ParamCount,
-    LSH,
+    MinHashLsh,
+    SignatureBucket,
+    AllPairs,
 }
-
-/// Result of candidate generation
-#[derive(Debug, Clone)]
-pub struct CandidateResult {
-    pub pairs: Vec<CandidatePair>,
-    pub total_functions: usize,
-    pub total_candidates: usize,
-    pub strategies_used: Vec<CandidateStrategy>,
-}
-
-// ============================================================================
-// Candidate Generator
-// ============================================================================
 
 pub struct CandidateGenerator {
+    #[allow(dead_code)]
     config: DedupConfig,
 }
 
@@ -49,226 +41,120 @@ impl CandidateGenerator {
         Self { config }
     }
 
-    pub fn generate(
-        &self,
-        functions: &[FunctionNode],
-        sources: &crate::optimize::dedup::core::SourceIndex,
-    ) -> CandidateResult {
-        let mut all_pairs = Vec::new();
-        let mut used = std::collections::HashSet::new();
-        let mut strategies_used = Vec::new();
+    pub fn generate(&self, functions: &[FunctionNode], sources: &SourceIndex) -> CandidateResult {
+        let mut pairs = Vec::new();
+        let mut seen_pairs = HashSet::new();
 
-        // Signature hash: fast, coarse — catches identical param/return shape.
-        let sig_pairs = self.generate_signature_candidates(functions);
-        let count = self.add_pairs(
-            &mut all_pairs,
-            &mut used,
-            sig_pairs,
-            CandidateStrategy::SignatureHash,
-        );
-        if count > 0 {
-            strategies_used.push(CandidateStrategy::SignatureHash);
-        }
+        // 1. Collect actionable functions along with their original indices
+        let indexed_actionable: Vec<(usize, &FunctionNode)> = functions
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| is_actionable_duplicate_candidate(f))
+            .collect();
 
-        // LSH over body content: catches near-duplicates regardless of
-        // signature shape (different param counts, different return types).
-        // This is the strategy that actually finds "same logic, different
-        // wrapper" duplicates that signature/param bucketing structurally
-        // cannot see.
-        if self.config.enable_lsh_candidates
-            && all_pairs.len() < self.config.max_functions_to_compare
-        {
-            let lsh_pairs = self.generate_lsh_candidates(functions, sources);
-            let count =
-                self.add_pairs(&mut all_pairs, &mut used, lsh_pairs, CandidateStrategy::LSH);
-            if count > 0 {
-                strategies_used.push(CandidateStrategy::LSH);
+        // 2. Exact Hash Bucketing
+        let mut ast_hash_buckets: HashMap<String, Vec<(usize, &FunctionNode)>> = HashMap::new();
+        let mut sig_hash_buckets: HashMap<String, Vec<(usize, &FunctionNode)>> = HashMap::new();
+
+        for (idx, func) in &indexed_actionable {
+            if let Some(source) = sources.get(&func.full_path) {
+                let ast_hash = compute_ast_hash(func, source);
+                if !ast_hash.is_empty() {
+                    ast_hash_buckets
+                        .entry(ast_hash)
+                        .or_default()
+                        .push((*idx, func));
+                }
+            }
+            let sig_hash = compute_signature_hash(func);
+            if !sig_hash.is_empty() {
+                sig_hash_buckets
+                    .entry(sig_hash)
+                    .or_default()
+                    .push((*idx, func));
             }
         }
 
-        // Param count: last-resort fallback for anything still uncovered.
-        if all_pairs.len() < self.config.max_functions_to_compare {
-            let param_pairs = self.generate_param_candidates(functions, &used);
-            let count2 = self.add_pairs(
-                &mut all_pairs,
-                &mut used,
-                param_pairs,
-                CandidateStrategy::ParamCount,
-            );
-            if count2 > 0 {
-                strategies_used.push(CandidateStrategy::ParamCount);
+        for bucket in ast_hash_buckets.values() {
+            if bucket.len() > 1 {
+                for i in 0..bucket.len() {
+                    for j in (i + 1)..bucket.len() {
+                        let (idx_1, func_1) = bucket[i];
+                        let (idx_2, func_2) = bucket[j];
+
+                        let pair_key = if idx_1 < idx_2 {
+                            (idx_1, idx_2)
+                        } else {
+                            (idx_2, idx_1)
+                        };
+
+                        if seen_pairs.insert(pair_key) {
+                            pairs.push(CandidatePair {
+                                idx_a: pair_key.0,
+                                idx_b: pair_key.1,
+                                func_a: func_1.clone(),
+                                func_b: func_2.clone(),
+                            });
+                        }
+                    }
+                }
             }
         }
 
-        // Limit total pairs
-        if all_pairs.len() > self.config.max_functions_to_compare {
-            all_pairs.truncate(self.config.max_functions_to_compare);
+        // 3. MinHash LSH Indexing
+        let mut lsh = LshIndex::new();
+        for (orig_idx, func) in &indexed_actionable {
+            if let Some(source) = sources.get(&func.full_path) {
+                if !source.trim().is_empty() {
+                    lsh.insert(*orig_idx, source);
+                }
+            }
         }
 
-        let total_candidates = all_pairs.len();
+        let lsh_pairs = lsh.candidate_pairs(10000);
+        for (idx_a, idx_b) in lsh_pairs {
+            if idx_a < functions.len() && idx_b < functions.len() {
+                let func_a = &functions[idx_a];
+                let func_b = &functions[idx_b];
+
+                if is_actionable_duplicate_candidate(func_a)
+                    && is_actionable_duplicate_candidate(func_b)
+                {
+                    let pair_key = if idx_a < idx_b {
+                        (idx_a, idx_b)
+                    } else {
+                        (idx_b, idx_a)
+                    };
+
+                    if seen_pairs.insert(pair_key) {
+                        pairs.push(CandidatePair {
+                            idx_a: pair_key.0,
+                            idx_b: pair_key.1,
+                            func_a: func_a.clone(),
+                            func_b: func_b.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        let total_possible = if functions.len() > 1 {
+            (functions.len() * (functions.len() - 1)) / 2
+        } else {
+            0
+        };
 
         CandidateResult {
-            pairs: all_pairs,
-            total_functions: functions.len(),
-            total_candidates,
-            strategies_used,
+            candidate_pairs: pairs.clone(),
+            pairs,
+            total_comparisons: total_possible,
+            filtered_comparisons: seen_pairs.len(),
         }
-    }
-
-    /// Body-content candidates via MinHash/LSH. Assigns a moderate prior
-    /// score (0.6) — LSH only proves shingle-bucket collision, not actual
-    /// similarity, so downstream comparators (structural/semantic/ML) still
-    /// do the real scoring. This is strictly a recall mechanism.
-    fn generate_lsh_candidates(
-        &self,
-        functions: &[FunctionNode],
-        sources: &crate::optimize::dedup::core::SourceIndex,
-    ) -> Vec<(usize, usize, f64)> {
-        let mut index = crate::optimize::dedup::minhash::LshIndex::new();
-
-        for (i, func) in functions.iter().enumerate() {
-            if let Some(src) = sources.get(&func.full_path) {
-                index.insert(i, src);
-            }
-        }
-
-        index
-            .candidate_pairs(self.config.max_functions_to_compare)
-            .into_iter()
-            .map(|(a, b)| (a, b, 0.6))
-            .collect()
-    }
-
-    // ================================================================
-    // ⭐ KEEP THESE TWO FUNCTIONS (they're used as fallbacks)
-    // ================================================================
-
-    fn generate_signature_candidates(
-        &self,
-        functions: &[FunctionNode],
-    ) -> Vec<(usize, usize, f64)> {
-        let mut buckets: HashMap<String, Vec<usize>> = HashMap::new();
-
-        for (i, func) in functions.iter().enumerate() {
-            let hash = compute_signature_hash(func);
-            buckets.entry(hash).or_default().push(i);
-        }
-
-        self.pairs_from_buckets(buckets, 0.85)
-    }
-
-    fn generate_param_candidates(
-        &self,
-        functions: &[FunctionNode],
-        used: &std::collections::HashSet<(usize, usize)>,
-    ) -> Vec<(usize, usize, f64)> {
-        let mut buckets: HashMap<usize, Vec<usize>> = HashMap::new();
-
-        for (i, func) in functions.iter().enumerate() {
-            buckets.entry(func.params.len()).or_default().push(i);
-        }
-
-        let mut pairs = Vec::new();
-        for (_, indices) in buckets {
-            for a in 0..indices.len() {
-                for b in (a + 1)..indices.len() {
-                    let key = (indices[a], indices[b]);
-                    if !used.contains(&key) {
-                        pairs.push((indices[a], indices[b], 0.7));
-                    }
-                    if pairs.len() >= self.config.max_functions_to_compare {
-                        return pairs;
-                    }
-                }
-            }
-        }
-        pairs
-    }
-
-    // ================================================================
-    // Helper Functions
-    // ================================================================
-
-    fn pairs_from_buckets(
-        &self,
-        buckets: HashMap<String, Vec<usize>>,
-        score: f64,
-    ) -> Vec<(usize, usize, f64)> {
-        let mut pairs = Vec::new();
-
-        // Sort keys so results are reproducible across runs on the same input.
-        let mut keys: Vec<&String> = buckets.keys().collect();
-        keys.sort();
-
-        for key in keys {
-            let indices = &buckets[key];
-            if indices.len() < 2 {
-                continue;
-            }
-
-            // Cap pairs generated from any single oversized bucket so one
-            // "shape" (e.g. common param/return signature) can't crowd out
-            // every other candidate before the global limit is hit.
-            let per_bucket_cap =
-                self.config.max_functions_to_compare / Self::buckets_len_hint(indices.len());
-            let mut emitted_this_bucket = 0;
-
-            for a in 0..indices.len() {
-                for b in (a + 1)..indices.len() {
-                    pairs.push((indices[a], indices[b], score));
-                    emitted_this_bucket += 1;
-                    if pairs.len() >= self.config.max_functions_to_compare {
-                        return pairs;
-                    }
-                    if emitted_this_bucket >= per_bucket_cap.max(50) {
-                        break;
-                    }
-                }
-            }
-        }
-
-        pairs
-    }
-
-    fn add_pairs(
-        &self,
-        all_pairs: &mut Vec<CandidatePair>,
-        used: &mut std::collections::HashSet<(usize, usize)>,
-        new_pairs: Vec<(usize, usize, f64)>,
-        strategy: CandidateStrategy,
-    ) -> usize {
-        let mut count = 0;
-        for (a, b, score) in new_pairs {
-            let key = if a < b { (a, b) } else { (b, a) };
-            if !used.contains(&key) {
-                used.insert(key);
-                all_pairs.push(CandidatePair {
-                    idx_a: a,
-                    idx_b: b,
-                    score,
-                    strategy: strategy.clone(),
-                });
-                count += 1;
-            }
-        }
-        count
     }
 }
-
-impl CandidateGenerator {
-    // Simple heuristic: don't let any one bucket eat the whole global budget.
-    fn buckets_len_hint(_bucket_size: usize) -> usize {
-        20
-    }
-}
-// ============================================================================
-// Default Config
-// ============================================================================
 
 impl Default for CandidateGenerator {
     fn default() -> Self {
-        Self {
-            config: DedupConfig::default(),
-        }
+        Self::new(DedupConfig::default())
     }
 }

@@ -75,12 +75,9 @@ impl TypeDeadCodeDetector {
         }
     }
 
-    /// Collect all types that are actually used in the codebase.
-    /// Language-agnostic - works for Rust, TypeScript, Python, Java, Go, etc.
     fn collect_used_types(type_graph: &TypeGraph, call_graph: &CallGraph) -> HashSet<String> {
         let mut used_types = HashSet::new();
 
-        // 1. Check function signatures (params and returns)
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
 
@@ -97,14 +94,11 @@ impl TypeDeadCodeDetector {
             }
         }
 
-        // 2. Check type graph for relationships (language-agnostic)
         for node in type_graph.iter_nodes() {
-            // Check if this type is a supertype of another type
             if type_graph.has_subtypes(&node.name) {
                 used_types.insert(node.name.clone());
             }
 
-            // Check fields for structs/enums/classes/interfaces
             if matches!(
                 node.kind,
                 TypeKind::Struct | TypeKind::Enum | TypeKind::Class | TypeKind::Interface
@@ -114,12 +108,10 @@ impl TypeDeadCodeDetector {
                 }
             }
 
-            // Check generic parameters
             for generic in &node.generics {
                 Self::extract_type_names(generic, &mut used_types);
             }
 
-            // Check implementors (trait impls, interface impls)
             let implementors = type_graph.get_subtypes(&node.name);
             if !implementors.is_empty() {
                 used_types.insert(node.name.clone());
@@ -129,7 +121,6 @@ impl TypeDeadCodeDetector {
             }
         }
 
-        // 3. Check impl blocks
         for node in type_graph.iter_nodes() {
             if let TypeKind::Impl = node.kind {
                 Self::extract_type_names(&node.name, &mut used_types);
@@ -139,242 +130,104 @@ impl TypeDeadCodeDetector {
         used_types
     }
 
-    /// Extract type names from a type string - language-agnostic.
-    /// Handles:
-    /// - Generics: `Type<T>`, `Type<T, U>`, `Type<T extends Base>`
-    /// - Arrays: `Type[]`, `[T]`, `Array<T>`
-    /// - Unions: `Type1 | Type2`, `Type1 & Type2`
-    /// - Nullable: `Type?`, `?Type`, `optional Type`
-    /// - Module paths: `module.Type`, `namespace.Type`
-    /// - Type annotations: `: Type`, `-> Type`, `as Type`
-    /// - Implements: `implements Type`, `extends Type`
+    /// Single-pass zero-allocation lexical scanner to extract identifiers from type signatures
     fn extract_type_names(type_str: &str, used_types: &mut HashSet<String>) {
-        const MAX_ITERATIONS: usize = 5000; // hard safety cap
+        let primitives: HashSet<&'static str> = [
+            "u8",
+            "u16",
+            "u32",
+            "u64",
+            "u128",
+            "usize",
+            "i8",
+            "i16",
+            "i32",
+            "i64",
+            "i128",
+            "isize",
+            "f32",
+            "f64",
+            "bool",
+            "char",
+            "str",
+            "string",
+            "number",
+            "boolean",
+            "symbol",
+            "bigint",
+            "undefined",
+            "null",
+            "any",
+            "unknown",
+            "never",
+            "void",
+            "int",
+            "float",
+            "complex",
+            "bytes",
+            "list",
+            "tuple",
+            "dict",
+            "set",
+            "frozenset",
+            "byte",
+            "short",
+            "long",
+            "double",
+            "rune",
+            "error",
+            "size_t",
+            "ssize_t",
+            "intptr_t",
+            "uintptr_t",
+            "String",
+            "Number",
+            "Boolean",
+            "Object",
+            "Array",
+            "Function",
+            "Promise",
+            "Error",
+            "Date",
+            "RegExp",
+            "mut",
+            "const",
+            "readonly",
+            "self",
+            "Self",
+            "dyn",
+            "impl",
+            "typeof",
+            "keyof",
+            "extends",
+            "implements",
+        ]
+        .into_iter()
+        .collect();
 
-        let mut queue: std::collections::VecDeque<String> = std::collections::VecDeque::new();
-        let mut seen: HashSet<String> = HashSet::new();
-        queue.push_back(type_str.to_string());
+        let mut token_start = None;
+        let bytes = type_str.as_bytes();
 
-        let mut iterations = 0;
-        while let Some(type_str) = queue.pop_front() {
-            iterations += 1;
-            if iterations > MAX_ITERATIONS {
-                eprintln!(
-                        "⚠️ extract_type_names: hit iteration cap, likely malformed type string: {:.80}",
-                        type_str
-                    );
-                break;
+        for (i, &b) in bytes.iter().enumerate() {
+            let is_ident_char = b.is_ascii_alphanumeric() || b == b'_';
+
+            if is_ident_char {
+                if token_start.is_none() {
+                    token_start = Some(i);
+                }
+            } else if let Some(start) = token_start {
+                let token = &type_str[start..i];
+                if !token.chars().all(|c| c.is_ascii_digit()) && !primitives.contains(token) {
+                    used_types.insert(token.to_string());
+                }
+                token_start = None;
             }
+        }
 
-            if type_str.is_empty() || !seen.insert(type_str.clone()) {
-                continue; // empty, or we've already processed this exact string
-            }
-
-            let clean = type_str
-                .trim()
-                .trim_start_matches('?')
-                .trim_start_matches('&')
-                .trim_start_matches('*')
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-                .trim_start_matches("mut ")
-                .trim_start_matches("const ")
-                .trim_start_matches("readonly ")
-                .trim_start_matches("optional ")
-                .trim_start_matches("async ")
-                .trim_start_matches("await ")
-                .trim_start_matches("typeof ")
-                .trim_start_matches("keyof ")
-                .trim_start_matches("readonly ");
-
-            let primitives = [
-                "u8",
-                "u16",
-                "u32",
-                "u64",
-                "u128",
-                "i8",
-                "i16",
-                "i32",
-                "i64",
-                "i128",
-                "f32",
-                "f64",
-                "bool",
-                "char",
-                "str",
-                "string",
-                "number",
-                "boolean",
-                "symbol",
-                "bigint",
-                "undefined",
-                "null",
-                "any",
-                "unknown",
-                "never",
-                "void",
-                "int",
-                "float",
-                "complex",
-                "bytes",
-                "list",
-                "tuple",
-                "dict",
-                "set",
-                "frozenset",
-                "byte",
-                "short",
-                "long",
-                "double",
-                "rune",
-                "error",
-                "size_t",
-                "ssize_t",
-                "intptr_t",
-                "uintptr_t",
-                "String",
-                "Number",
-                "Boolean",
-                "Object",
-                "Array",
-                "Function",
-                "Promise",
-                "Error",
-                "Date",
-                "RegExp",
-            ];
-
-            if let Some(open_bracket) = clean.find('<') {
-                let base = &clean[..open_bracket];
-                if let Some(base_clean) = base.split("::").last().or_else(|| base.split('.').last())
-                {
-                    let base_clean = base_clean.trim();
-                    if !primitives.contains(&base_clean) && !base_clean.is_empty() {
-                        used_types.insert(base_clean.to_string());
-                    }
-                }
-
-                if let Some(close_bracket) = clean.rfind('>') {
-                    if close_bracket > open_bracket {
-                        let generics = &clean[open_bracket + 1..close_bracket];
-                        let mut depth = 0;
-                        let mut current = String::new();
-
-                        for ch in generics.chars() {
-                            match ch {
-                                '<' => depth += 1,
-                                '>' => depth -= 1,
-                                ',' | '|' | '&' if depth == 0 => {
-                                    if !current.is_empty() {
-                                        queue.push_back(std::mem::take(&mut current));
-                                    }
-                                    continue;
-                                }
-                                _ => {}
-                            }
-                            if depth >= 0 || ch != ',' {
-                                current.push(ch);
-                            }
-                        }
-                        if !current.is_empty() {
-                            queue.push_back(current);
-                        }
-                    }
-                }
-            } else {
-                let last = if clean.contains('.') {
-                    clean.split('.').last()
-                } else if clean.contains("::") {
-                    clean.split("::").last()
-                } else if clean.contains('/') {
-                    clean.split('/').last()
-                } else {
-                    Some(clean)
-                };
-
-                if let Some(last) = last {
-                    let last = last
-                        .trim()
-                        .trim_start_matches('"')
-                        .trim_end_matches('"')
-                        .trim_start_matches('\'')
-                        .trim_end_matches('\'')
-                        .trim_start_matches('`')
-                        .trim_end_matches('`');
-
-                    if !primitives.contains(&last)
-                        && !last.is_empty()
-                        && !last.chars().all(|c| c.is_ascii_digit())
-                    {
-                        used_types.insert(last.to_string());
-                    }
-                }
-            }
-
-            let patterns = [
-                ":",
-                "->",
-                "=>",
-                "as",
-                "implements",
-                "extends",
-                "typeof",
-                "keyof",
-            ];
-            for pattern in patterns {
-                if let Some(pos) = type_str.find(pattern) {
-                    let after = type_str[pos + pattern.len()..].to_string();
-                    if after != type_str {
-                        queue.push_back(after);
-                    }
-                }
-            }
-
-            if let Some(start) = type_str.find('{') {
-                if let Some(end) = type_str.rfind('}') {
-                    if end > start {
-                        let inner = &type_str[start + 1..end];
-                        for part in inner.split(',') {
-                            if let Some(colon) = part.find(':') {
-                                queue.push_back(part[colon + 1..].to_string());
-                            }
-                        }
-                    }
-                }
-            }
-
-            if type_str.contains("[]") || type_str.starts_with('[') {
-                let inner = type_str
-                    .trim_start_matches('[')
-                    .trim_end_matches(']')
-                    .to_string();
-                if inner != type_str {
-                    queue.push_back(inner);
-                }
-            }
-
-            if let Some(arrow) = type_str.find("=>") {
-                let return_type = type_str[arrow + 2..].to_string();
-                if return_type != type_str {
-                    queue.push_back(return_type);
-                }
-            }
-
-            if type_str.contains('|') {
-                for part in type_str.split('|') {
-                    if part != type_str {
-                        queue.push_back(part.to_string());
-                    }
-                }
-            }
-
-            if type_str.contains('&') {
-                for part in type_str.split('&') {
-                    if part != type_str {
-                        queue.push_back(part.to_string());
-                    }
-                }
+        if let Some(start) = token_start {
+            let token = &type_str[start..];
+            if !token.chars().all(|c| c.is_ascii_digit()) && !primitives.contains(token) {
+                used_types.insert(token.to_string());
             }
         }
     }
@@ -382,23 +235,19 @@ impl TypeDeadCodeDetector {
     fn calculate_type_confidence(type_graph: &TypeGraph, type_name: &str) -> f64 {
         let mut confidence: f64 = 0.7;
 
-        // Check if type is in test directory
-        if type_name.contains("test") || type_name.contains("Test") || type_name.contains("Test") {
+        if type_name.contains("test") || type_name.contains("Test") {
             confidence -= 0.2;
         }
 
-        // Check if type has generics (may be used more widely)
         if type_name.contains('<') || type_name.contains('[') {
             confidence += 0.1;
         }
 
-        // Check inheritance depth
         let depth = type_graph.get_inheritance_depth(type_name);
         if depth > 0 {
             confidence -= 0.2;
         }
 
-        // Check if type has subtypes
         if type_graph.has_subtypes(type_name) {
             confidence -= 0.2;
         }

@@ -5,8 +5,6 @@ use crate::parser::tree_sitter::ParsedFile;
 use sha2::Digest;
 use std::collections::HashMap;
 
-/// Resolves function bodies to source text when available, so hashing and
-/// ML feature extraction can look at actual code instead of only metadata.
 pub struct SourceIndex {
     by_path: HashMap<String, String>,
 }
@@ -22,42 +20,37 @@ impl SourceIndex {
                 by_path.insert(func.full_path.clone(), body);
             }
         }
-        #[cfg(debug_assertions)]
-        {
-            let total = functions.len();
-            let found = by_path.len();
-            if found < total {
-                eprintln!(
-                    "⚠️ SourceIndex: Found bodies for {}/{} functions ({} missing)",
-                    found,
-                    total,
-                    total - found
-                );
-            } else {
-                eprintln!("✅ SourceIndex: Found bodies for all {} functions", total);
-            }
-        }
-
         Self { by_path }
+    }
+
+    pub fn build_from_graph(
+        call_graph: &crate::graph::call_graph::CallGraph,
+        files: &[crate::parser::tree_sitter::ParsedFile],
+    ) -> Self {
+        let functions: Vec<crate::graph::call_graph::FunctionNode> = call_graph
+            .node_indices()
+            .map(|idx| call_graph[idx].clone())
+            .collect();
+        Self::build(&functions, files)
     }
 
     pub fn get(&self, full_path: &str) -> Option<&str> {
         self.by_path.get(full_path).map(|s| s.as_str())
     }
 
-    /// Extracts the source code of a function body.
-    ///
-    /// Matches by comparing the `full_path` (which includes container info)
-    /// against the constructed path from the parsed file.
     fn extract_body(
         func: &FunctionNode,
         file_by_path: &HashMap<&str, &ParsedFile>,
     ) -> Option<String> {
         let file = *file_by_path.get(func.file.as_str())?;
-        // 2. Find the function info in the parsed file.
-        //    We construct the full path from the parsed info and compare it
-        //    to the func's full_path.
+
         let info = file.functions.iter().find(|fi| {
+            if fi.name != func.name {
+                return false;
+            }
+            if fi.line == func.line {
+                return true;
+            }
             let fi_full_path = match &fi.container {
                 Some(c) => format!("{}::{}::{}", file.path, c, fi.name),
                 None => format!("{}::{}", file.path, fi.name),
@@ -65,24 +58,20 @@ impl SourceIndex {
             fi_full_path == func.full_path
         })?;
 
-        // 3. Slice the source code using the body_range.
         let (start, end) = info.body_range;
-
-        // Ensure bounds are valid
         if start >= end || end > file.source.len() {
             return None;
         }
 
-        // 4. Return the sliced string
         file.source.get(start..end).map(|s| s.to_string())
     }
 }
 
-/// Used as a fast first-pass filter before more expensive comparisons.
 pub fn compute_signature_hash(func: &FunctionNode) -> String {
     let mut hasher = sha2::Sha256::new();
     let sig = format!(
-        "sig:{}|{}|{}|{}",
+        "sig:{}|{}|{}|{}|{}",
+        func.name,
         func.params.len(),
         func.returns.len(),
         func.is_public,
@@ -96,23 +85,24 @@ pub fn compute_ast_hash(_func: &FunctionNode, source: &str) -> String {
     use regex::Regex;
     use std::collections::HashMap;
 
+    if source.trim().len() < 20 || source.lines().count() < 4 {
+        return String::new();
+    }
+
     let mut hasher = sha2::Sha256::new();
     let mut var_map = HashMap::new();
     let mut var_counter = 0;
 
-    // Split into lines and process
     let mut normalized = String::new();
     for line in source.lines() {
         let mut processed_line = line.to_string();
 
-        // Replace identifiers with VAR1, VAR2, etc.
         let id_regex = Regex::new(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b").unwrap();
         let mut replacements = Vec::new();
 
         for cap in id_regex.captures_iter(line) {
             let word = cap.get(1).unwrap().as_str();
 
-            // Skip keywords and common literals
             let skip_words = [
                 "if", "else", "for", "while", "match", "fn", "pub", "async", "await", "return",
                 "let", "mut", "struct", "enum", "trait", "impl", "use", "mod", "true", "false",
@@ -123,24 +113,28 @@ pub fn compute_ast_hash(_func: &FunctionNode, source: &str) -> String {
                 continue;
             }
 
-            // Skip if it's a type annotation or method call
             let start = cap.get(0).unwrap().start();
+            let end = cap.get(0).unwrap().end();
             let prev_char = line[..start].chars().last().unwrap_or(' ');
             if prev_char == '.' || prev_char == ':' || prev_char == '<' {
                 continue;
             }
+            // Preserve call targets — two functions calling different
+            // helpers are not the same function, even with an identical
+            // surrounding skeleton (e.g. `compute_a(x)` vs `compute_b(x)`).
+            let next_char = line[end..].chars().next().unwrap_or(' ');
+            if next_char == '(' {
+                continue;
+            }
 
-            // Get or assign a variable number
             let var_id = var_map.entry(word.to_string()).or_insert_with(|| {
                 var_counter += 1;
                 var_counter
             });
 
-            let end = cap.get(0).unwrap().end();
             replacements.push((start, end, format!("VAR{}", var_id)));
         }
 
-        // Apply replacements (in reverse order to keep indices valid)
         for (start, end, replacement) in replacements.iter().rev() {
             processed_line.replace_range(*start..*end, replacement);
         }
@@ -149,7 +143,6 @@ pub fn compute_ast_hash(_func: &FunctionNode, source: &str) -> String {
         normalized.push('\n');
     }
 
-    // Normalize whitespace and hash
     let normalized_body: String = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
     hasher.update(b"ast:");
     hasher.update(normalized_body.as_bytes());
@@ -157,30 +150,21 @@ pub fn compute_ast_hash(_func: &FunctionNode, source: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// Exact-match hash. Uses real body text when `SourceIndex` can resolve it;
-/// falls back to a metadata signature otherwise.
 pub fn compute_exact_hash(func: &FunctionNode, source: Option<&str>) -> String {
     let mut hasher = sha2::Sha256::new();
 
     match source {
-        Some(body) => {
-            // Normalize whitespace so reformatted-but-identical code still matches.
+        Some(body) if body.trim().len() >= 25 && body.lines().count() >= 4 => {
             let normalized: String = body.split_whitespace().collect::<Vec<_>>().join(" ");
             hasher.update(b"body:");
             hasher.update(normalized.as_bytes());
+            format!("{:x}", hasher.finalize())
         }
-        None => {
-            let sig = format!(
-                "meta:{}|{}|{}|{}|{}",
-                func.params.len(),
-                func.returns.len(),
-                func.is_public,
-                func.is_async,
-                func.complexity
-            );
-            hasher.update(sig.as_bytes());
+        _ => {
+            // Never allow fallback metadata to produce collisions across different functions
+            let unique = format!("unique:{}:{}", func.file, func.full_path);
+            hasher.update(unique.as_bytes());
+            format!("{:x}", hasher.finalize())
         }
     }
-
-    format!("{:x}", hasher.finalize())
 }

@@ -105,7 +105,7 @@ impl Default for DedupConfig {
             min_similarity_threshold: 0.85,
             enable_call_graph_analysis: true,
             enable_semantic_analysis: true,
-            enable_ml_features: false,
+            enable_ml_features: true,
             enable_lsh_candidates: true,
             max_functions_to_compare: 10000,
             adaptive_threshold: true,
@@ -160,9 +160,17 @@ impl SignalVerdict {
             }
         }
 
-        available >= min_agreement && hits >= min_agreement
-    }
+        // `structural` and `semantic` both weight function naming heavily
+        // (40% and 60% of their respective scores), so they aren't
+        // independent evidence — two same-shaped, similarly-named
+        // functions can clear both without sharing any real logic.
+        // Require at least one signal that actually looks at behavior
+        // (call graph or ML features) before counting agreement.
+        let content_aware_hit = self.call_graph.is_some_and(|s| s >= per_signal_bar)
+            || self.ml.is_some_and(|s| s >= per_signal_bar);
 
+        available >= min_agreement && hits >= min_agreement && content_aware_hit
+    }
     /// Returns how many signals were actually computed for this pair
     pub fn signal_count(&self) -> usize {
         [self.structural, self.semantic, self.call_graph, self.ml]

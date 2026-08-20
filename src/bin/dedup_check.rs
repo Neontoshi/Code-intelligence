@@ -10,21 +10,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
-        eprintln!("Usage: dedup_check <project_path> [--duplicate-model <model.bin>]");
+        eprintln!("Usage: dedup_check <project_path> [--threshold <0.0-1.0>] [--duplicate-model <model.bin>]");
         eprintln!("");
         eprintln!("Examples:");
         eprintln!("  dedup_check ~/Documents/Kyma");
-        eprintln!("  dedup_check ~/Documents/Kyma --duplicate-model models/duplicate_model.bin");
+        eprintln!("  dedup_check . --threshold 0.80");
+        eprintln!("  dedup_check . --duplicate-model models/duplicate_model.bin");
         std::process::exit(1);
     }
 
     let project_path = PathBuf::from(&args[1]);
 
-    // Parse optional model flag
     let mut model_path = None;
+    let mut threshold = 0.85;
     let mut i = 2;
+
     while i < args.len() {
         match args[i].as_str() {
+            "--threshold" | "-t" => {
+                if i + 1 < args.len() {
+                    threshold = args[i + 1].parse().unwrap_or(0.85);
+                    i += 2;
+                } else {
+                    eprintln!("Error: --threshold requires a float value between 0.0 and 1.0");
+                    std::process::exit(1);
+                }
+            }
             "--duplicate-model" | "-m" => {
                 if i + 1 < args.len() {
                     model_path = Some(PathBuf::from(&args[i + 1]));
@@ -48,7 +59,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("🔍 Analyzing project: {:?}\n", project_path);
 
-    // Load duplicate model if provided
     let duplicate_model = if let Some(path) = model_path {
         if path.exists() {
             match DuplicateClassifier::load(&path.to_string_lossy()) {
@@ -71,20 +81,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    // Process project
     let mut pipeline = Pipeline::new();
     let analysis = pipeline.process_project(&project_path).await?;
 
-    // Create deduplicator with optional ML model
-    let dedup = if let Some(model) = duplicate_model {
+    let mut dedup = if let Some(model) = duplicate_model {
         Deduplicator::new_with_ml(Some(model))
     } else {
         Deduplicator::new()
     };
+    dedup = dedup.with_threshold(threshold);
 
     let result = dedup.find_duplicates(&analysis.call_graph, &analysis.files);
 
-    // Print report
     println!("📊 Deduplication Report");
     println!("=======================\n");
     println!("Duplicate groups found: {}", result.duplicate_groups.len());

@@ -19,48 +19,48 @@ impl StructuralComparator {
             context: 0.0,
         };
 
+        // Don't score trivial empty/trivial-line functions
+        if a.complexity <= 1.0 && b.complexity <= 1.0 && a.params.is_empty() && b.params.is_empty()
+        {
+            scores.context = Self::file_context_similarity(a, b);
+            return scores;
+        }
+
         // Parameter similarity (20%)
-        if a.params.len() == b.params.len() {
-            scores.structural += 0.20;
-        } else {
-            let diff = (a.params.len() as i32 - b.params.len() as i32).abs();
-            scores.structural += (1.0 - (diff as f64 / 10.0)).max(0.0) * 0.20;
+        if !a.params.is_empty() || !b.params.is_empty() {
+            if a.params.len() == b.params.len() {
+                scores.structural += 0.20;
+            } else {
+                let diff = (a.params.len() as i32 - b.params.len() as i32).abs();
+                scores.structural += (1.0 - (diff as f64 / 10.0)).max(0.0) * 0.20;
+            }
         }
 
         // Return type similarity (15%)
-        if a.returns == b.returns {
-            scores.structural += 0.15;
-        } else if a.returns.is_empty() && b.returns.is_empty() {
-            scores.structural += 0.15;
-        } else if !a.returns.is_empty() && !b.returns.is_empty() {
+        if !a.returns.is_empty() && !b.returns.is_empty() {
             let common = a.returns.iter().filter(|r| b.returns.contains(r)).count();
             scores.structural +=
                 (common as f64 / a.returns.len().max(b.returns.len()) as f64) * 0.15;
         }
 
-        // Complexity similarity (10%)
+        // Complexity similarity (20%)
         let comp_diff = (a.complexity - b.complexity).abs();
-        if comp_diff <= 1.0 {
+        if comp_diff <= 1.0 && a.complexity > 1.0 {
+            scores.structural += 0.20;
+        } else if comp_diff <= 3.0 && a.complexity > 1.0 {
             scores.structural += 0.10;
-        } else if comp_diff <= 3.0 {
-            scores.structural += 0.07;
-        } else if comp_diff <= 5.0 {
-            scores.structural += 0.03;
         }
 
-        // Public/Async signature (10%)
-        if a.is_public == b.is_public {
-            scores.structural += 0.05;
-        }
-        if a.is_async == b.is_async {
+        // Public/Async signature (5%)
+        if a.is_public == b.is_public && a.is_async == b.is_async {
             scores.structural += 0.05;
         }
 
-        // Name similarity (45%) — heavily penalize different names
+        // Name similarity (40%)
         let name_sim = levenshtein_ratio(&a.name, &b.name);
-        scores.structural += name_sim * 0.45;
+        scores.structural += name_sim * 0.40;
 
-        // Context similarity (bonus)
+        // Context similarity
         scores.context = Self::file_context_similarity(a, b);
 
         scores

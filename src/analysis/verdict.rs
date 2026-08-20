@@ -263,26 +263,14 @@ impl VerdictEngine {
         call_graph: &CallGraph,
         reachability: &ReachabilityMap,
     ) -> Vec<Verdict> {
-        let mut verdicts = Vec::new();
-        let total_nodes = call_graph.node_count();
+        let mut verdicts = Vec::with_capacity(call_graph.node_count());
 
-        let max_nodes = 2000;
-        if total_nodes > max_nodes {
-            eprintln!(
-                "⚠️ Large call graph ({} nodes). Limiting evaluation to {} nodes for safety.",
-                total_nodes, max_nodes
-            );
-        }
-
-        let indices: Vec<_> = call_graph.node_indices().take(max_nodes).collect();
-
-        for idx in indices {
+        for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
             let verdict = self.evaluate_function(func, call_graph, reachability);
             verdicts.push(verdict);
         }
 
-        // Use total_cmp - never panics on NaN
         verdicts.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
         verdicts
     }

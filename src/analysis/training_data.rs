@@ -1,7 +1,7 @@
 // src/analysis/training_data.rs
 
 use crate::graph::call_graph::{CallGraph, FunctionNode};
-use crate::ml::feature_schema::{FeatureVectorBuilder, FEATURE_SCHEMA};
+use crate::ml::feature_schema::FeatureVectorBuilder;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -31,7 +31,6 @@ pub enum TrainingLabel {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionFeatures {
-    // Static features
     pub param_count: usize,
     pub return_count: usize,
     pub is_public: bool,
@@ -43,18 +42,15 @@ pub struct FunctionFeatures {
     pub ends_with_test: bool,
     pub contains_trait_impl: bool,
 
-    // HASH FIELDS (for deduplication)
     pub signature_hash: String,
     pub body_hash: String,
 
-    // Dynamic features
     pub fan_in: usize,
     pub fan_out: usize,
     pub complexity: f64,
     pub call_depth: usize,
     pub is_cycle: bool,
 
-    // Context features
     pub file_extension: String,
     pub is_in_test_file: bool,
     pub is_in_benches: bool,
@@ -62,7 +58,6 @@ pub struct FunctionFeatures {
     pub is_in_examples: bool,
     pub is_generated: bool,
 
-    // Name patterns
     pub name_contains_use: bool,
     pub name_contains_test: bool,
     pub name_contains_init: bool,
@@ -85,7 +80,6 @@ pub struct FunctionFeatures {
     pub name_contains_verify: bool,
     pub name_contains_audit: bool,
 
-    // Type context features
     pub type_name: Option<String>,
     pub type_path: Option<String>,
     pub is_method: bool,
@@ -117,7 +111,6 @@ impl FunctionFeatures {
         let type_info = Self::extract_type_info(func);
 
         use crate::optimize::dedup::core::compute_signature_hash;
-
         let sig_hash = compute_signature_hash(func);
 
         Self {
@@ -133,7 +126,7 @@ impl FunctionFeatures {
             ends_with_test: func.name.ends_with("_test"),
             contains_trait_impl,
             signature_hash: sig_hash.clone(),
-            body_hash: sig_hash.clone(),
+            body_hash: sig_hash,
             fan_in: func.fan_in,
             fan_out: func.fan_out,
             complexity: func.complexity,
@@ -211,28 +204,24 @@ impl FunctionFeatures {
             is_associated,
         }
     }
-    /// Convert features to a numeric vector using the schema
+
     pub fn to_feature_vector(&self) -> Vec<f64> {
         let mut builder = FeatureVectorBuilder::new();
 
-        // Graph features (4)
         builder
             .push_normalized(self.fan_in as f64, 50.0)
             .push_normalized(self.fan_out as f64, 50.0)
             .push_normalized(self.call_depth as f64, 10.0)
             .push_bool(self.is_cycle);
 
-        // Signature features (4)
         builder
             .push_normalized(self.param_count as f64, 10.0)
             .push_normalized(self.return_count as f64, 5.0)
             .push_bool(self.is_public)
             .push_bool(self.is_async);
 
-        // Complexity (1)
         builder.push_normalized(self.complexity, 50.0);
 
-        // Name contains (21)
         builder
             .push_bool(self.name_contains_use)
             .push_bool(self.name_contains_test)
@@ -256,7 +245,6 @@ impl FunctionFeatures {
             .push_bool(self.name_contains_verify)
             .push_bool(self.name_contains_audit);
 
-        // Name starts/ends (5)
         builder
             .push_bool(self.starts_with_use)
             .push_bool(self.starts_with_test)
@@ -264,7 +252,6 @@ impl FunctionFeatures {
             .push_bool(self.ends_with_test)
             .push_normalized(self.name_length as f64, 50.0);
 
-        // File context (5)
         builder
             .push_bool(self.is_in_test_file)
             .push_bool(self.is_in_benches)
@@ -272,7 +259,6 @@ impl FunctionFeatures {
             .push_bool(self.is_in_examples)
             .push_bool(self.is_generated);
 
-        // Type context (6)
         builder
             .push_bool(self.is_method)
             .push_bool(self.is_trait_impl)
@@ -281,19 +267,7 @@ impl FunctionFeatures {
             .push_opt(self.trait_name.as_ref().map(|s| s.len() as f64 / 20.0), 0.0)
             .push_bool(self.type_name == self.trait_name);
 
-        let features = builder.build();
-
-        // Validate against schema in debug mode - log error instead of panic
-        #[cfg(debug_assertions)]
-        {
-            if let Err(e) = FEATURE_SCHEMA.validate_vector(&features) {
-                eprintln!("⚠️ Feature vector validation failed: {}", e);
-                eprintln!("   Feature count: {}", features.len());
-                eprintln!("   Expected: {}", FEATURE_SCHEMA.feature_count());
-            }
-        }
-
-        features
+        builder.build()
     }
 }
 
@@ -410,7 +384,6 @@ impl TrainingDataCollector {
                 (TrainingLabel::Unknown, 0.0)
             };
 
-            // Determine the label reason based on how we classified it
             let label_reason = if is_test_function {
                 "test_function".to_string()
             } else if is_whitelisted_fn(func) {
@@ -427,7 +400,7 @@ impl TrainingDataCollector {
                 file: func.file.clone(),
                 language: TrainingExample::detect_language(&func.file),
                 features: FunctionFeatures::from_function(func, call_graph),
-                label: label.clone(),
+                label,
                 confidence,
                 source: label_reason.clone(),
                 repository_id: None,
@@ -442,7 +415,6 @@ impl TrainingDataCollector {
         }
     }
 
-    /// Add a high-confidence labeled example
     pub fn add_high_confidence_example(
         &mut self,
         func: &FunctionNode,
@@ -457,7 +429,7 @@ impl TrainingDataCollector {
             file: func.file.clone(),
             language: TrainingExample::detect_language(&func.file),
             features: FunctionFeatures::from_function(func, call_graph),
-            label: label.clone(),
+            label,
             confidence,
             source: source_label.to_string(),
             repository_id: None,

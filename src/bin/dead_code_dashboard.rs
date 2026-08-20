@@ -270,7 +270,8 @@ impl App {
                 let dead_verdicts: Vec<_> = verdict_engine.filter_dead(&verdicts);
 
                 // 7. Convert to DeadFunction with impact info
-                let mut impact_analyzer = DeadCodeAnalyzer::new_for_impact_only();
+                let mut impact_analyzer = DeadCodeAnalyzer::new();
+
                 let dead_functions =
                     impact_analyzer.import_verdicts(&dead_verdicts, &analysis.call_graph);
 

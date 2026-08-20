@@ -21,7 +21,6 @@ pub use types::{
 
 // Internal imports
 use crate::graph::call_graph::{CallGraph, FunctionNode};
-// ⭐ REMOVED unused import: GraphMetrics
 use crate::optimize::dedup::analyzers::MLAnalyzer;
 use crate::optimize::dedup::comparators::{
     CallGraphComparator, SemanticComparator, StructuralComparator,
@@ -105,9 +104,6 @@ impl Deduplicator {
 
     pub fn new_with_ml(model: Option<DuplicateClassifier>) -> Self {
         let mut config = DedupConfig::default();
-        // A model was explicitly supplied — actually use it as a signal,
-        // otherwise verdict.ml starts as None and gets diluted with a
-        // meaningless 0.5 placeholder below.
         config.enable_ml_features = model.is_some();
 
         Self {
@@ -132,9 +128,15 @@ impl Deduplicator {
         call_graph: &CallGraph,
         files: &[ParsedFile],
     ) -> DeduplicationResult {
+        let sources = SourceIndex::build_from_graph(call_graph, files);
+
+        // Filter out boilerplate and trivial methods early
         let functions: Vec<FunctionNode> = call_graph
             .node_indices()
             .map(|idx| call_graph[idx].clone())
+            .filter(|f| {
+                !FalsePositiveFilter::is_likely_false_positive(f, sources.get(&f.full_path))
+            })
             .collect();
 
         let mut metrics = AccuracyMetrics {
@@ -155,7 +157,6 @@ impl Deduplicator {
             };
         }
 
-        let sources = SourceIndex::build(&functions, files);
         let candidate_pairs = self.build_candidate_pairs(&functions, &sources);
         metrics.total_comparisons = candidate_pairs.len();
 
@@ -183,9 +184,6 @@ impl Deduplicator {
         );
 
         // Phase 2: Consensus pass with ML
-        // Collect ALL consensus pairs first, then run ONE union-find pass so that
-        // A~B and B~C correctly merge into a single 3-element cluster instead of
-        // two disconnected 2-element groups.
         let consensus_groups = self.find_consensus_duplicates(
             &functions,
             call_graph,
@@ -194,8 +192,6 @@ impl Deduplicator {
             &sources,
         );
 
-        // Bucket pairs by their dominant type so metrics/labels stay meaningful,
-        // but each bucket still gets ONE process_groups call (one union-find).
         let mut by_type: HashMap<DuplicateType, Vec<Vec<FunctionNode>>> = HashMap::new();
         for (group, verdict) in consensus_groups {
             by_type
@@ -248,16 +244,14 @@ impl Deduplicator {
         }
     }
 
-    // ML refinement phase
     fn refine_with_ml(
         &self,
         groups: &mut Vec<DuplicateGroup>,
-        _functions: &[FunctionNode], // ⭐ Added underscore
+        _functions: &[FunctionNode],
         call_graph: &CallGraph,
         metrics: &mut AccuracyMetrics,
     ) {
-        if let Some(_model) = &self.duplicate_model {
-            // ⭐ Added underscore
+        if let Some(model) = &self.duplicate_model {
             for group in groups.iter_mut() {
                 let mut ml_scores = Vec::new();
 
@@ -266,24 +260,18 @@ impl Deduplicator {
                         let a = &group.functions[i];
                         let b = &group.functions[j];
 
-                        // Extract features for ML
                         let features_a = FunctionFeatures::from_function(a, call_graph);
                         let features_b = FunctionFeatures::from_function(b, call_graph);
 
-                        // Get ML prediction
-                        let ml_score = _model.predict(&features_a, &features_b);
+                        let ml_score = model.predict(&features_a, &features_b);
                         ml_scores.push(ml_score);
                     }
                 }
 
                 if !ml_scores.is_empty() {
-                    // Average ML score
                     let avg_ml_score: f64 = ml_scores.iter().sum::<f64>() / ml_scores.len() as f64;
-
-                    // Store ML confidence in the group
                     group.confidence_score = avg_ml_score;
 
-                    // Adjust similarity score by blending with ML
                     if avg_ml_score > 0.8 {
                         group.similarity_score = group.similarity_score.max(avg_ml_score);
                         if group.duplicate_type == DuplicateType::Partial {
@@ -304,7 +292,12 @@ impl Deduplicator {
         let mut hash_map: HashMap<String, Vec<FunctionNode>> = HashMap::new();
 
         for func in functions {
-            let hash = compute_exact_hash(func, sources.get(&func.full_path));
+            let src = sources.get(&func.full_path);
+            if FalsePositiveFilter::is_likely_false_positive(func, src) {
+                continue;
+            }
+
+            let hash = compute_exact_hash(func, src);
             hash_map
                 .entry(hash)
                 .or_insert_with(Vec::new)
@@ -344,13 +337,13 @@ impl Deduplicator {
         let mut groups = Vec::new();
 
         for &(i, j) in candidate_pairs {
+            if i >= functions.len() || j >= functions.len() {
+                continue;
+            }
+
             let func_a = &functions[i];
             let func_b = &functions[j];
 
-            // Only skip pairs already resolved by an earlier phase (e.g.
-            // exact-hash matches). Don't self-exclude on pairs found in
-            // this same phase — union-find in process_groups is what
-            // merges transitive matches (A~B, B~C -> {A,B,C}).
             if processed.contains(&func_a.full_path) || processed.contains(&func_b.full_path) {
                 continue;
             }
@@ -384,15 +377,11 @@ impl Deduplicator {
                 }
             }
 
-            // Use ML model if available
             if let Some(model) = &self.duplicate_model {
                 let features_a = FunctionFeatures::from_function(func_a, call_graph);
                 let features_b = FunctionFeatures::from_function(func_b, call_graph);
                 let ml_score = model.predict(&features_a, &features_b);
 
-                // If cosine-similarity ML features already produced a score, average
-                // the two real signals. Otherwise use the model score standalone —
-                // don't blend against an arbitrary 0.5 that has no basis in the data.
                 verdict.ml = Some(match verdict.ml {
                     Some(existing) => (existing + ml_score) / 2.0,
                     None => ml_score,
@@ -445,9 +434,6 @@ impl Deduplicator {
                 continue;
             }
 
-            // Exact-hash groups already matched on normalized body text — that IS
-            // the confidence signal. Re-scoring with the fuzzy structural/name
-            // comparator can only ever discard true positives here, never add value.
             if duplicate_type != DuplicateType::Exact {
                 let similarity = self.calculate_group_similarity(group);
                 if similarity < threshold {
