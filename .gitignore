@@ -1,6 +1,4 @@
-# ============================================================
 # Rust Build Artifacts
-# ============================================================
 /target/
 **/*.rs.bk
 *.prof
@@ -13,17 +11,13 @@
 *.pdb
 *.ilk
 
-# ============================================================
 # Cargo Files
-# ============================================================
 Cargo.lock
 # Note: Uncomment the next line if you want to commit Cargo.lock
 # (usually recommended for binaries, optional for libraries)
 # Cargo.lock
 
-# ============================================================
 # IDE / Editor Files
-# ============================================================
 # VS Code
 .vscode/
 !.vscode/settings.json
@@ -32,74 +26,7 @@ Cargo.lock
 !.vscode/extensions.json
 *.code-workspace
 
-# IntelliJ / CLion / RustRover
-.idea/
-*.iml
-*.iws
-*.ipr
-.idea/workspace.xml
-.idea/tasks.xml
-.idea/dictionaries/
-.idea/vcs.xml
-.idea/jsLibraryMappings.xml
-
-# Sublime Text
-*.sublime-project
-*.sublime-workspace
-
-# Vim
-*.swp
-*.swo
-*~
-*.un~
-*.orig
-
-# Emacs
-*~
-\#*\#
-/.emacs.desktop
-/.emacs.desktop.lock
-*.elc
-auto-save-list
-tramp
-.\#*
-
-# ============================================================
-# OS Generated Files
-# ============================================================
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-*.tmp
-*.log
-*.pid
-*.seed
-*.pid.lock
-
-# Linux
-*~
-.directory
-*.swp
-
-# Windows
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-$RECYCLE.BIN/
-*.cab
-*.msi
-*.msm
-*.msp
-
-# ============================================================
 # Code-Intelligence Specific Outputs
-# ============================================================
 # Analysis outputs (generated files)
 *.json
 *.jsonl
@@ -107,6 +34,8 @@ $RECYCLE.BIN/
 *.png
 *.svg
 *.pdf
+*.html
+*.bin
 
 # Cache directories
 .code-intelligence-cache/
@@ -129,125 +58,3 @@ full_report.md
 # Dead code reports
 dead_code_report.md
 dead_code_report.json
-
-# ============================================================
-# Documentation / Build Outputs
-# ============================================================
-/docs/book/
-/docs/html/
-/target/doc/
-/target/package/
-/out/
-/output/
-
-# ============================================================
-# Coverage Reports
-# ============================================================
-/target/coverage/
-/target/tarpaulin/
-*.lcov
-*.info
-*.gcov
-
-# ============================================================
-# Benchmark Results
-# ============================================================
-/target/criterion/
-*.bench
-
-# ============================================================
-# Environment / Secrets
-# ============================================================
-.env
-.env.local
-.env.*.local
-*.pem
-*.key
-*.crt
-*.p12
-*.pfx
-*.jks
-*.keystore
-*.truststore
-secrets/
-credentials/
-*.secret
-
-# ============================================================
-# Dependency Directories
-# ============================================================
-node_modules/
-vendor/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# ============================================================
-# LLM Cache / Data
-# ============================================================
-.llm_cache/
-.ollama/
-*.gguf
-*.bin
-*.safetensors
-*.pt
-*.pth
-
-# ============================================================
-# Test / Fixture Generated Files
-# ============================================================
-tests/fixtures/generated/
-tests/out/
-*.test
-*.bench
-*.snap
-*.snap.new
-
-# ============================================================
-# Docker
-# ============================================================
-.dockerignore
-Dockerfile.*
-*.dockerignore
-docker-compose.override.yml
-docker-compose.override.yaml
-.docker/
-
-# ============================================================
-# Debug / Profiling
-# ============================================================
-perf.data
-perf.data.old
-*.perf
-*.flamegraph
-*.svg
-callgrind.out.*
-cachegrind.out.*
-massif.out.*
-
-# ============================================================
-# Misc
-# ============================================================
-*.bak
-*.backup
-*.old
-*.orig
-*.rej
-*.patch
-*.diff
-*.swo
-*.swp
-*.tmp
-*.temp
-*.log
-*.out
-*.err
-*.stderr
-*.stdout

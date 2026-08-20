@@ -1,3 +1,5 @@
+// src/bin/ci.rs - Extended version with all features
+
 //! Code Intelligence CLI - Complete Dead Code Detection Tool
 //!
 //! Usage:
@@ -22,6 +24,12 @@
 //!   ci export [path] [--output]    - Export training data
 //!   ci merge [--input] [--output]  - Merge training data
 //!   ci self                         - Analyze code-intelligence itself
+//!   ci collect                      - Collect training data from repos
+//!   ci train-duplicate              - Train duplicate detection model
+//!   ci ablation                     - Feature ablation study
+//!   ci verify                       - Verify dead candidates
+//!   ci evaluate-lang                - Evaluate per language
+//!   ci update                       - Update outcome by ID
 
 use clap::{Parser, Subcommand};
 use code_intelligence::graph::GraphMetrics;
@@ -73,7 +81,7 @@ pub struct ProjectConfig {
 #[command(
     name = "ci",
     author = "Code Intelligence Team",
-    version = "0.1.0",
+    version = "0.2.0",
     about = "Code Intelligence - Complete dead code detection toolkit",
     long_about = "A comprehensive CLI tool for detecting, managing, and removing dead code across any project."
 )]
@@ -84,7 +92,9 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    // ========================================================================
     // Core Analysis
+    // ========================================================================
     /// Analyze a project for dead code
     Analyze {
         /// Path to analyze (defaults to current directory)
@@ -122,6 +132,7 @@ enum Commands {
         #[arg(long)]
         ml: bool,
     },
+
     /// Generate call graph visualization (HTML)
     Graph {
         /// Path to analyze (defaults to current directory)
@@ -157,6 +168,9 @@ enum Commands {
         max_tokens: usize,
     },
 
+    // ========================================================================
+    // Outcome Management
+    // ========================================================================
     /// List dead functions found in a project
     List {
         /// Path to list (defaults to current directory)
@@ -190,6 +204,17 @@ enum Commands {
         path: PathBuf,
     },
 
+    /// Update outcome by verdict ID
+    Update {
+        /// Project directory
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// The verdict ID
+        id: String,
+        #[command(subcommand)]
+        action: UpdateAction,
+    },
+
     /// Show outcome statistics for a project
     Stats {
         /// Path (defaults to current directory)
@@ -216,6 +241,9 @@ enum Commands {
         llm: bool,
     },
 
+    // ========================================================================
+    // Training & Model Management
+    // ========================================================================
     /// Train the ML model
     Train {
         /// Training data path
@@ -232,6 +260,15 @@ enum Commands {
         precision: f64,
     },
 
+    /// Train duplicate detection model
+    TrainDuplicate {
+        /// Project path or JSON file
+        input: PathBuf,
+        /// Output model path
+        #[arg(long, default_value = "duplicate_model.bin")]
+        output: PathBuf,
+    },
+
     /// Calibrate a trained model
     Calibrate {
         /// Model file path
@@ -243,7 +280,7 @@ enum Commands {
         /// Output model path
         #[arg(long, default_value = "model_calibrated.bin")]
         output: PathBuf,
-        /// Calibration method: temperature, histogram, isotonic
+        /// Calibration method: temperature, histogram, isotonic, none
         #[arg(long, default_value = "temperature")]
         method: String,
     },
@@ -284,6 +321,38 @@ enum Commands {
         data: PathBuf,
     },
 
+    /// Feature ablation study - determine which features matter most
+    Ablation {
+        /// Training data file
+        #[arg(long, default_value = "data/train.json")]
+        train_data: PathBuf,
+        /// Validation data file
+        #[arg(long, default_value = "data/val.json")]
+        val_data: PathBuf,
+        /// Output directory
+        #[arg(long, default_value = "ablation_results")]
+        output: PathBuf,
+    },
+
+    /// Evaluate model per language
+    EvaluateLang {
+        /// Model file path
+        #[arg(long, default_value = "model.bin")]
+        model: PathBuf,
+        /// Test data file
+        #[arg(long, default_value = "data/test.json")]
+        test_data: PathBuf,
+        /// Validation data file (optional)
+        #[arg(long)]
+        val_data: Option<PathBuf>,
+        /// Show detailed metrics
+        #[arg(long)]
+        detailed: bool,
+    },
+
+    // ========================================================================
+    // Data Management
+    // ========================================================================
     /// Export training data from a project
     Export {
         /// Path to analyze
@@ -307,6 +376,31 @@ enum Commands {
         dedup: bool,
     },
 
+    /// Collect training data from multiple repositories
+    Collect {
+        /// Optional: list of repository URLs (space-separated)
+        repos: Vec<String>,
+        /// Output directory
+        #[arg(long, default_value = "training_data")]
+        output: PathBuf,
+        /// Max repos to process
+        #[arg(long, default_value = "50")]
+        max_repos: usize,
+    },
+
+    /// Verify dead candidates - generate review checklist
+    Verify {
+        /// Training data file
+        #[arg(long, default_value = "data/val.json")]
+        data: PathBuf,
+        /// Output markdown file
+        #[arg(long, default_value = "review_checklist.md")]
+        output: PathBuf,
+    },
+
+    // ========================================================================
+    // Special Commands
+    // ========================================================================
     /// Open interactive dashboard
     Dashboard {
         /// Path to analyze (defaults to current directory)
@@ -327,29 +421,6 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
-    /// Analyze features per language
-    AnalyzeFeatures {
-        /// Training data file
-        #[arg(long, default_value = "combined_training.json")]
-        data: PathBuf,
-    },
-
-    /// Evaluate model per language
-    Evaluate {
-        /// Model file path
-        #[arg(long, default_value = "model.bin")]
-        model: PathBuf,
-        /// Test data file
-        #[arg(long, default_value = "data/test.json")]
-        test_data: PathBuf,
-        /// Validation data file (optional)
-        #[arg(long)]
-        val_data: Option<PathBuf>,
-        /// Show detailed metrics
-        #[arg(long)]
-        detailed: bool,
-    },
-
     /// Configure global settings
     Config {
         #[command(subcommand)]
@@ -367,11 +438,28 @@ enum ConfigAction {
     List,
 }
 
+#[derive(Subcommand, Debug)]
+enum UpdateAction {
+    /// Mark as removed
+    Removed {
+        /// Git commit hash (optional)
+        #[arg(long)]
+        commit: Option<String>,
+    },
+    /// Mark as false positive
+    FalsePositive {
+        /// Reason for false positive
+        reason: String,
+    },
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     match args.command {
+        // ====================================================================
         // Core Analysis
+        // ====================================================================
         Commands::Analyze {
             path,
             threshold,
@@ -392,6 +480,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 cache_dir,
             )?;
         }
+
         Commands::Dedup {
             path,
             threshold,
@@ -400,6 +489,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let project_path = resolve_path(&path)?;
             run_dedup(&project_path, threshold, ml)?;
         }
+
         Commands::Graph { path, output, mode } => {
             let project_path = resolve_path(&path)?;
             run_graph(&project_path, output, &mode)?;
@@ -424,23 +514,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?;
         }
 
+        // ====================================================================
         // Outcome Management
+        // ====================================================================
         Commands::List { path, all } => {
             let project_path = resolve_path(&path)?;
             run_list(&project_path, all)?;
         }
+
         Commands::Remove { name, commit, path } => {
             let project_path = resolve_path(&path)?;
             run_remove(&project_path, &name, commit)?;
         }
+
         Commands::Keep { name, reason, path } => {
             let project_path = resolve_path(&path)?;
             run_keep(&project_path, &name, &reason)?;
         }
+
+        Commands::Update { path, id, action } => {
+            let project_path = resolve_path(&path)?;
+            run_update(&project_path, &id, action)?;
+        }
+
         Commands::Stats { path, detailed } => {
             let project_path = resolve_path(&path)?;
             run_stats(&project_path, detailed)?;
         }
+
         Commands::Report {
             path,
             format,
@@ -451,7 +552,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_report(&project_path, &format, output, llm)?;
         }
 
+        // ====================================================================
         // Training & Model Management
+        // ====================================================================
         Commands::Train {
             data,
             val_data,
@@ -460,6 +563,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             run_train(&data, val_data.as_deref(), &output, precision)?;
         }
+
+        Commands::TrainDuplicate { input, output } => {
+            run_train_duplicate(&input, &output)?;
+        }
+
         Commands::Calibrate {
             model,
             data,
@@ -468,6 +576,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             run_calibrate(&model, &data, &output, &method)?;
         }
+
         Commands::Tune {
             model,
             data,
@@ -475,6 +584,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             run_tune(&model, &data, precision)?;
         }
+
         Commands::Compare {
             train_data,
             val_data,
@@ -483,13 +593,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             run_compare(&train_data, &val_data, &test_data, &output)?;
         }
+
         Commands::Features { data } => {
             run_features(&data)?;
         }
+
+        Commands::Ablation {
+            train_data,
+            val_data,
+            output,
+        } => {
+            run_ablation(&train_data, &val_data, &output)?;
+        }
+
+        Commands::EvaluateLang {
+            model,
+            test_data,
+            val_data,
+            detailed,
+        } => {
+            run_evaluate_lang(&model, &test_data, val_data.as_deref(), detailed)?;
+        }
+
+        // ====================================================================
+        // Data Management
+        // ====================================================================
         Commands::Export { path, output } => {
             let project_path = resolve_path(&path)?;
             run_export(&project_path, &output)?;
         }
+
         Commands::Merge {
             input,
             output,
@@ -498,27 +631,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_merge(&input, &output, dedup)?;
         }
 
+        Commands::Collect {
+            repos,
+            output,
+            max_repos,
+        } => {
+            run_collect(&repos, &output, max_repos)?;
+        }
+
+        Commands::Verify { data, output } => {
+            run_verify(&data, &output)?;
+        }
+
+        // ====================================================================
         // Special Commands
+        // ====================================================================
         Commands::Dashboard { path, model } => {
             let project_path = resolve_path(&path)?;
             run_dashboard(&project_path, model)?;
         }
+
         Commands::SelfAnalyze { format, output } => {
             run_self_analyze(&format, output)?;
         }
-        Commands::AnalyzeFeatures { data } => {
-            run_analyze_features(&data)?;
-        }
-        Commands::Evaluate {
-            model,
-            test_data,
-            val_data,
-            detailed,
-        } => {
-            run_evaluate(&model, &test_data, val_data.as_deref(), detailed)?;
-        }
 
-        // Configuration
         Commands::Config { action } => {
             run_config(action)?;
         }
@@ -527,7 +663,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+// ============================================================================
 // Config Helper Functions
+// ============================================================================
 
 fn get_config_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
@@ -645,6 +783,10 @@ fn resolve_path(path: &Path) -> Result<PathBuf, String> {
     Ok(resolved)
 }
 
+// ============================================================================
+// Command Implementations
+// ============================================================================
+
 fn run_analyze(
     path: &Path,
     threshold: Option<f64>,
@@ -690,7 +832,6 @@ fn run_analyze(
     }
     println!("");
 
-    // Find the dead_code_check binary
     let binary_path = find_binary("dead_code_check");
 
     let status = if let Some(bin_path) = binary_path {
@@ -858,6 +999,10 @@ fn run_llm(
     Ok(())
 }
 
+// ============================================================================
+// Outcome Management
+// ============================================================================
+
 fn run_list(path: &Path, all: bool) -> Result<(), Box<dyn std::error::Error>> {
     println!("📋 Listing dead functions in: {:?}", path);
 
@@ -933,6 +1078,7 @@ fn run_list(path: &Path, all: bool) -> Result<(), Box<dyn std::error::Error>> {
 
     if !all {
         println!("\n💡 To manage: ci remove <name> or ci keep <name> \"reason\"");
+        println!("   For precise control: ci update <id> removed|false-positive");
     }
 
     Ok(())
@@ -1043,6 +1189,39 @@ fn run_keep(path: &Path, name: &str, reason: &str) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+fn run_update(
+    path: &Path,
+    id: &str,
+    action: UpdateAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("📝 Updating verdict '{}' in: {:?}", id, path);
+
+    let mut cmd = Command::new("update_outcome");
+    cmd.arg(path).arg(&id);
+
+    match action {
+        UpdateAction::Removed { commit } => {
+            cmd.arg("removed");
+            if let Some(c) = commit {
+                cmd.args(["--commit", &c]);
+            }
+        }
+        UpdateAction::FalsePositive { reason } => {
+            cmd.arg("false-positive").arg(&reason);
+        }
+    }
+
+    let status = cmd.status()?;
+
+    if status.success() {
+        println!("✅ Updated verdict '{}'", id);
+    } else {
+        eprintln!("❌ Update failed");
+    }
+
+    Ok(())
+}
+
 fn run_stats(path: &Path, detailed: bool) -> Result<(), Box<dyn std::error::Error>> {
     println!("📊 Outcome Statistics for: {:?}", path);
     println!("");
@@ -1095,6 +1274,24 @@ fn run_stats(path: &Path, detailed: bool) -> Result<(), Box<dyn std::error::Erro
             if let Some(la) = project_config.last_analyzed {
                 println!("   Last Analyzed: {}", la);
             }
+        }
+
+        // Show per-function breakdown
+        println!("\n📋 Per-Function Breakdown:");
+        for v in outcomes.iter().take(20) {
+            let name = v
+                .get("function_name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("unknown");
+            let status = v
+                .get("outcome")
+                .and_then(|o| o.as_str())
+                .unwrap_or("unknown");
+            let confidence = v.get("confidence").and_then(|c| c.as_f64()).unwrap_or(0.0) * 100.0;
+            println!("   {}: {} ({:.1}%)", name, status, confidence);
+        }
+        if outcomes.len() > 20 {
+            println!("   ... and {} more", outcomes.len() - 20);
         }
     }
 
@@ -1153,6 +1350,10 @@ fn run_report(
     Ok(())
 }
 
+// ============================================================================
+// Training & Model Management
+// ============================================================================
+
 fn run_train(
     data: &Path,
     val_data: Option<&Path>,
@@ -1182,6 +1383,26 @@ fn run_train(
     if status.success() {
         println!("\n✅ Model trained and saved to: {:?}", output);
         println!("   Run `ci calibrate` to calibrate the model.");
+    } else {
+        eprintln!("\n❌ Training failed");
+    }
+
+    Ok(())
+}
+
+fn run_train_duplicate(input: &Path, output: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    println!("🧠 Training duplicate detection model...");
+    println!("   Input: {:?}", input);
+    println!("   Output: {:?}", output);
+    println!("");
+
+    let mut cmd = Command::new("train_duplicate_model");
+    cmd.arg(input).arg(output);
+
+    let status = cmd.status()?;
+
+    if status.success() {
+        println!("\n✅ Duplicate model trained and saved to: {:?}", output);
     } else {
         eprintln!("\n❌ Training failed");
     }
@@ -1291,6 +1512,77 @@ fn run_features(data: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn run_ablation(
+    train_data: &Path,
+    val_data: &Path,
+    output: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("🔬 Running feature ablation study...");
+    println!("   Training data: {:?}", train_data);
+    println!("   Validation data: {:?}", val_data);
+    println!("   Output: {:?}", output);
+    println!("");
+
+    let mut cmd = Command::new("feature_ablation");
+    cmd.args(["--train-data", &train_data.to_string_lossy()])
+        .args(["--val-data", &val_data.to_string_lossy()])
+        .args(["--output-dir", &output.to_string_lossy()]);
+
+    let status = cmd.status()?;
+
+    if status.success() {
+        println!("\n✅ Ablation results saved to: {:?}", output);
+        println!("   Check ablation_results.csv and ablation_results.json");
+    } else {
+        eprintln!("\n❌ Ablation failed");
+    }
+
+    Ok(())
+}
+
+fn run_evaluate_lang(
+    model: &Path,
+    test_data: &Path,
+    val_data: Option<&Path>,
+    detailed: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("📊 Evaluating model per language...");
+    println!("   Model: {:?}", model);
+    println!("   Test data: {:?}", test_data);
+    if let Some(vd) = val_data {
+        println!("   Validation data: {:?}", vd);
+    }
+    if detailed {
+        println!("   Detailed metrics: enabled");
+    }
+    println!("");
+
+    let mut cmd = Command::new("evaluate_per_language");
+    cmd.args(["--model", &model.to_string_lossy()])
+        .args(["--test-data", &test_data.to_string_lossy()]);
+
+    if let Some(vd) = val_data {
+        cmd.args(["--val-data", &vd.to_string_lossy()]);
+    }
+    if detailed {
+        cmd.arg("--detailed");
+    }
+
+    let status = cmd.status()?;
+
+    if status.success() {
+        println!("\n✅ Evaluation complete!");
+    } else {
+        eprintln!("\n❌ Evaluation failed");
+    }
+
+    Ok(())
+}
+
+// ============================================================================
+// Data Management
+// ============================================================================
+
 fn run_export(path: &Path, output: &Path) -> Result<(), Box<dyn std::error::Error>> {
     println!("📊 Exporting training data from: {:?}", path);
     println!("   Output: {:?}", output);
@@ -1337,6 +1629,66 @@ fn run_merge(input: &str, output: &Path, dedup: bool) -> Result<(), Box<dyn std:
     Ok(())
 }
 
+fn run_collect(
+    repos: &[String],
+    output: &Path,
+    max_repos: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("📊 Collecting training data from repositories...");
+    println!("   Output directory: {:?}", output);
+    println!("   Max repos: {}", max_repos);
+
+    if repos.is_empty() {
+        println!("   Using default repository list");
+    } else {
+        println!("   Repositories: {}", repos.join(", "));
+    }
+    println!("");
+
+    let mut cmd = Command::new("collect_training_data");
+    for repo in repos {
+        cmd.arg(repo);
+    }
+    cmd.arg("--output").arg(output);
+    cmd.arg("--max-repos").arg(max_repos.to_string());
+
+    let status = cmd.status()?;
+
+    if status.success() {
+        println!("\n✅ Training data collected to: {:?}", output);
+    } else {
+        eprintln!("\n❌ Collection failed");
+    }
+
+    Ok(())
+}
+
+fn run_verify(data: &Path, output: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    println!("🔍 Generating review checklist...");
+    println!("   Data: {:?}", data);
+    println!("   Output: {:?}", output);
+    println!("");
+
+    let mut cmd = Command::new("verify_dead_candidates");
+    cmd.args(["--data", &data.to_string_lossy()])
+        .args(["--output", &output.to_string_lossy()]);
+
+    let status = cmd.status()?;
+
+    if status.success() {
+        println!("\n✅ Review checklist saved to: {:?}", output);
+        println!("   Review each candidate and mark ✅ or ❌");
+    } else {
+        eprintln!("\n❌ Verification failed");
+    }
+
+    Ok(())
+}
+
+// ============================================================================
+// Special Commands
+// ============================================================================
+
 fn run_dashboard(path: &Path, model: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     println!("📊 Opening dashboard for: {:?}", path);
     println!("   Press 'q' to quit");
@@ -1368,7 +1720,6 @@ fn run_self_analyze(
     println!("   Format: {}", format);
     println!("");
 
-    // Find the current directory (should be code-intelligence)
     let current_dir = std::env::current_dir()?;
 
     let output_file = output.unwrap_or_else(|| {
@@ -1397,107 +1748,9 @@ fn run_self_analyze(
     Ok(())
 }
 
-fn run_analyze_features(data: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    println!("🔬 Analyzing features per language...");
-    println!("   Data: {:?}", data);
-    println!("");
-
-    let mut cmd = Command::new("analyze_features_per_language");
-    cmd.arg(data);
-
-    let status = cmd.status()?;
-
-    if status.success() {
-        println!("\n✅ Feature analysis complete!");
-    } else {
-        eprintln!("\n❌ Feature analysis failed");
-    }
-
-    Ok(())
-}
-
-fn run_evaluate(
-    model: &Path,
-    test_data: &Path,
-    val_data: Option<&Path>,
-    detailed: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    println!("📊 Evaluating model...");
-    println!("   Model: {:?}", model);
-    println!("   Test data: {:?}", test_data);
-    if let Some(vd) = val_data {
-        println!("   Validation data: {:?}", vd);
-    }
-    if detailed {
-        println!("   Detailed metrics: enabled");
-    }
-    println!("");
-
-    let mut cmd = Command::new("evaluate_per_language");
-    cmd.args(["--model", &model.to_string_lossy()])
-        .args(["--test-data", &test_data.to_string_lossy()]);
-
-    if let Some(vd) = val_data {
-        cmd.args(["--val-data", &vd.to_string_lossy()]);
-    }
-    if detailed {
-        cmd.arg("--detailed");
-    }
-
-    let status = cmd.status()?;
-
-    if status.success() {
-        println!("\n✅ Evaluation complete!");
-    } else {
-        eprintln!("\n❌ Evaluation failed");
-    }
-
-    Ok(())
-}
-
-/// Find a binary in the PATH or standard cargo install locations
-fn find_binary(name: &str) -> Option<PathBuf> {
-    // Check current directory
-    if let Ok(cwd) = std::env::current_dir() {
-        let local_path = cwd.join(name);
-        if local_path.exists() {
-            return Some(local_path);
-        }
-    }
-
-    // Check ~/.cargo/bin/ (standard cargo install location)
-    if let Ok(home) = std::env::var("HOME") {
-        let cargo_bin = PathBuf::from(home).join(".cargo/bin").join(name);
-        if cargo_bin.exists() {
-            return Some(cargo_bin);
-        }
-    }
-
-    // Check PATH
-    if let Ok(path_var) = std::env::var("PATH") {
-        for dir in path_var.split(':') {
-            if dir.is_empty() {
-                continue;
-            }
-            let full_path = PathBuf::from(dir).join(name);
-            if full_path.exists() {
-                return Some(full_path);
-            }
-        }
-    }
-
-    // Check where ci binary is installed
-    if let Ok(exe) = std::env::current_exe() {
-        let fallback = PathBuf::from(".");
-        let exe_dir = exe.parent().unwrap_or(&fallback);
-        let local_path = exe_dir.join(name);
-        if local_path.exists() {
-            return Some(local_path);
-        }
-    }
-
-    None
-}
+// ============================================================================
+// Configuration
+// ============================================================================
 
 fn run_config(action: ConfigAction) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = load_config();
@@ -1610,4 +1863,51 @@ fn run_config(action: ConfigAction) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+fn find_binary(name: &str) -> Option<PathBuf> {
+    // Check current directory
+    if let Ok(cwd) = std::env::current_dir() {
+        let local_path = cwd.join(name);
+        if local_path.exists() {
+            return Some(local_path);
+        }
+    }
+
+    // Check ~/.cargo/bin/
+    if let Ok(home) = std::env::var("HOME") {
+        let cargo_bin = PathBuf::from(home).join(".cargo/bin").join(name);
+        if cargo_bin.exists() {
+            return Some(cargo_bin);
+        }
+    }
+
+    // Check PATH
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in path_var.split(':') {
+            if dir.is_empty() {
+                continue;
+            }
+            let full_path = PathBuf::from(dir).join(name);
+            if full_path.exists() {
+                return Some(full_path);
+            }
+        }
+    }
+
+    // Check where ci binary is installed
+    if let Ok(exe) = std::env::current_exe() {
+        let fallback = PathBuf::from(".");
+        let exe_dir = exe.parent().unwrap_or(&fallback);
+        let local_path = exe_dir.join(name);
+        if local_path.exists() {
+            return Some(local_path);
+        }
+    }
+
+    None
 }
