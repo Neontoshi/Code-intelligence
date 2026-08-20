@@ -122,27 +122,17 @@ enum Commands {
         #[arg(long)]
         ml: bool,
     },
-
-    /// Generate call graph visualization
+    /// Generate call graph visualization (HTML)
     Graph {
         /// Path to analyze (defaults to current directory)
         #[arg(default_value = ".")]
         path: PathBuf,
-        /// Output format: dot, svg, png, interactive, two-phase
-        #[arg(long, default_value = "dot")]
-        format: String,
         /// Output file
         #[arg(long)]
         output: Option<PathBuf>,
-        /// Max nodes to include (for dot format)
-        #[arg(long, default_value = "60")]
-        max_nodes: usize,
-        /// Entry point for focused graph
-        #[arg(long)]
-        entry: Option<String>,
-        /// Depth for focused graph
-        #[arg(long, default_value = "2")]
-        depth: usize,
+        /// View: "interactive" (full detail, for engineers) or "overview" (simplified layer map, for non-technical audiences)
+        #[arg(long, default_value = "interactive")]
+        mode: String,
     },
 
     /// Analyze with LLM integration
@@ -410,17 +400,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let project_path = resolve_path(&path)?;
             run_dedup(&project_path, threshold, ml)?;
         }
-        Commands::Graph {
-            path,
-            format,
-            output,
-            max_nodes,
-            entry,
-            depth,
-        } => {
+        Commands::Graph { path, output, mode } => {
             let project_path = resolve_path(&path)?;
-            run_graph(&project_path, &format, output, max_nodes, entry, depth)?;
+            run_graph(&project_path, output, &mode)?;
         }
+
         Commands::Llm {
             path,
             provider,
@@ -784,150 +768,50 @@ fn run_dedup(path: &Path, threshold: f64, ml: bool) -> Result<(), Box<dyn std::e
 
 fn run_graph(
     path: &Path,
-    format: &str,
     output: Option<PathBuf>,
-    max_nodes: usize,
-    entry: Option<String>,
-    depth: usize,
+    mode: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("📊 Generating call graph for: {:?}", path);
-    println!("   Format: {}", format);
-    println!("   Max nodes: {}", max_nodes);
+    use code_intelligence::output::{InteractiveGraph, OverviewGraph};
+    use code_intelligence::Pipeline;
 
     let output_file = output.unwrap_or_else(|| {
-        if format == "interactive" {
-            PathBuf::from("call_graph.html")
-        } else if format == "two-phase" {
-            PathBuf::from("call_graph_two_phase.dot")
-        } else if format == "dot" {
-            PathBuf::from("call_graph.dot")
-        } else if format == "svg" {
-            PathBuf::from("call_graph.svg")
-        } else if format == "png" {
-            PathBuf::from("call_graph.png")
+        if mode == "overview" {
+            PathBuf::from("call_graph_overview.html")
         } else {
-            PathBuf::from(format!("call_graph.{}", format))
+            PathBuf::from("call_graph.html")
         }
     });
 
-    // For interactive format, run full analysis and generate HTML
-    if format == "interactive" {
-        use code_intelligence::output::InteractiveGraph;
-        use code_intelligence::Pipeline;
+    println!("📊 Generating {} call graph for: {:?}", mode, path);
+    println!("🔍 Analyzing project...");
 
-        println!("🔍 Analyzing project for interactive graph...");
+    let rt = tokio::runtime::Runtime::new()?;
+    let mut pipeline = Pipeline::new();
+    let analysis = rt.block_on(pipeline.process_project(path))?;
 
-        let rt = tokio::runtime::Runtime::new()?;
-        let mut pipeline = Pipeline::new();
-        let analysis = rt.block_on(pipeline.process_project(path))?;
+    let project_name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
 
-        let project_name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-
+    let html = if mode == "overview" {
+        println!("📊 Generating layer overview...");
+        OverviewGraph::generate(&analysis.call_graph, &project_name)
+    } else {
         println!(
             "📊 Generating interactive HTML with {} functions...",
             analysis.call_graph.node_count()
         );
-
-        let html = InteractiveGraph::generate(&analysis.call_graph, &analysis.files, &project_name);
-
-        std::fs::write(&output_file, html)?;
-
-        println!("✅ Interactive HTML saved to: {:?}", output_file);
-        println!("   📊 Functions: {}", analysis.call_graph.node_count());
-        println!("   🔗 Edges: {}", analysis.call_graph.edge_count());
-        println!("   🌐 Open in your browser to explore!");
-        return Ok(());
-    }
-
-    // ⭐ NEW: For two-phase format, use the two-phase graph generator
-    if format == "two-phase" {
-        use code_intelligence::output::graphviz::{GraphVizConfig, GraphVizOutput};
-        use code_intelligence::Pipeline;
-
-        println!("🔍 Analyzing project for two-phase graph...");
-
-        let rt = tokio::runtime::Runtime::new()?;
-        let mut pipeline = Pipeline::new();
-        let analysis = rt.block_on(pipeline.process_project(path))?;
-
-        let config = GraphVizConfig {
-            max_nodes,
-            min_importance: 0.3,
-            max_label_len: 28,
-            concentrate_edges: true,
-        };
-
-        println!(
-            "📊 Generating two-phase graph with {} functions...",
-            analysis.call_graph.node_count()
-        );
-        println!("   📌 Important functions (score > 0.5) shown in detail");
-        println!("   📁 Other functions grouped by layer");
-
-        let dot = GraphVizOutput::generate_two_phase(&analysis.call_graph, &config);
-        std::fs::write(&output_file, dot)?;
-
-        println!("✅ Two-phase graph saved to: {:?}", output_file);
-        println!("   📊 Functions: {}", analysis.call_graph.node_count());
-        println!("   🔗 Edges: {}", analysis.call_graph.edge_count());
-        println!(
-            "   🎯 Important functions: {}",
-            analysis
-                .call_graph
-                .node_indices()
-                .filter(|idx| analysis.call_graph[*idx].importance_score > 0.5)
-                .count()
-        );
-        println!(
-            "   📁 Layer groups: {}",
-            analysis
-                .call_graph
-                .node_indices()
-                .filter(|idx| !analysis.call_graph[*idx].layer.is_empty())
-                .map(|idx| analysis.call_graph[idx].layer.clone())
-                .collect::<std::collections::HashSet<_>>()
-                .len()
-        );
-        return Ok(());
-    }
-
-    // For non-interactive formats, use the existing approach
-    let graph_type = if entry.is_some() {
-        "graphviz-focused"
-    } else if format == "dot" || format == "svg" || format == "png" {
-        "graphviz"
-    } else {
-        "graphviz"
+        InteractiveGraph::generate(&analysis.call_graph, &analysis.files, &project_name)
     };
 
-    // Use the main binary for graph generation
-    let mut cmd = Command::new("cargo");
-    cmd.args(["run", "--release", "--"]);
-    cmd.arg(path)
-        .args(["--format", graph_type])
-        .args(["--graph-max-nodes", &max_nodes.to_string()])
-        .args(["--output", &output_file.to_string_lossy()]);
+    std::fs::write(&output_file, html)?;
 
-    if let Some(entry_point) = entry {
-        cmd.args(["--graph-entry", &entry_point]);
-        cmd.args(["--graph-depth", &depth.to_string()]);
-    }
-
-    let status = cmd.status()?;
-
-    if status.success() {
-        println!("\n✅ Graph saved to: {:?}", output_file);
-        if format == "svg" || format == "png" {
-            println!("   Converting to {} format...", format);
-        }
-    } else {
-        eprintln!("\n❌ Graph generation failed");
-    }
-
+    println!("✅ HTML saved to: {:?}", output_file);
+    println!("   📊 Functions: {}", analysis.call_graph.node_count());
+    println!("   🔗 Edges: {}", analysis.call_graph.edge_count());
+    println!("   🌐 Open in your browser to explore!");
     Ok(())
 }
 

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>code-intelligence - Architecture Overview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+    :root {
+        --bg: #090a0f;
+        --panel: rgba(13, 16, 27, 0.85);
+        --border: rgba(255, 255, 255, 0.08);
+        --text: #f8fafc;
+        --muted: #94a3b8;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+        font-family: 'Plus Jakarta Sans', sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        height: 100vh; width: 100vw;
+        overflow: hidden;
+    }
+    #title {
+        position: absolute; top: 24px; left: 24px; z-index: 10;
+    }
+    #title h1 { font-size: 20px; font-weight: 800; }
+    #title p { font-size: 13px; color: var(--muted); margin-top: 4px; }
+    #viewport { width: 100vw; height: 100vh; }
+    .layer-box { cursor: pointer; }
+    .layer-box rect {
+        stroke-width: 2px;
+        rx: 14px;
+    }
+    .layer-box:hover rect { filter: brightness(1.25); }
+    .layer-label {
+        font-weight: 700; font-size: 14px; fill: #fff;
+        text-anchor: middle; pointer-events: none;
+    }
+    .layer-count {
+        font-size: 11px; fill: rgba(255,255,255,0.75);
+        text-anchor: middle; pointer-events: none;
+    }
+    .edge-path { fill: none; stroke: rgba(148,163,184,0.35); }
+    #tooltip {
+        position: absolute; z-index: 1000; padding: 10px 14px;
+        border-radius: 10px; background: rgba(9,10,15,0.96);
+        border: 1px solid var(--border); font-size: 12px;
+        pointer-events: none; display: none; max-width: 260px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.6);
+    }
+    #tooltip .t-title { font-weight: 700; margin-bottom: 4px; }
+    #tooltip .t-desc { color: var(--muted); margin-bottom: 6px; }
+    #tooltip .t-fn { font-size: 11px; color: var(--muted); }
+</style>
+</head>
+<body>
+    <div id="title">
+        <h1>⚡ code-intelligence</h1>
+        <p>Architecture overview — hover a block to see what it does</p>
+    </div>
+    <div id="viewport"></div>
+    <div id="tooltip"></div>
+
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script>
+        const layers = [{"color":"#34495e","count":854,"description":"Core application code","name":"core","top_functions":["collect","index","name"]},{"color":"#7f8c8d","count":41,"description":"Shared helper functions","name":"utility","top_functions":["new","evaluate","process"]},{"color":"#8e44ad","count":4,"description":"Test code","name":"test","top_functions":["test_compression","test_duplicate_detection","test_self_analysis"]}];
+        const edges = [{"from":"core","to":"utility","weight":5},{"from":"utility","to":"core","weight":9},{"from":"test","to":"core","weight":8}];
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        const svg = d3.select("#viewport").append("svg")
+            .attr("width", width).attr("height", height);
+        const g = svg.append("g");
+
+        svg.call(d3.zoom().scaleExtent([0.4, 2.5]).on("zoom", (e) => {
+            g.attr("transform", e.transform);
+        }));
+
+        // Fixed circular layout — deterministic, no jitter, easy to read
+        const cx = width / 2, cy = height / 2 + 20;
+        const radius = Math.min(width, height) * 0.32;
+        const maxCount = Math.max(...layers.map(l => l.count));
+
+        layers.forEach((l, i) => {
+            const angle = (i / layers.length) * 2 * Math.PI - Math.PI / 2;
+            l.x = cx + radius * Math.cos(angle);
+            l.y = cy + radius * Math.sin(angle);
+            l.w = 90 + (l.count / maxCount) * 90;
+            l.h = 56;
+        });
+        const byName = new Map(layers.map(l => [l.name, l]));
+
+        const maxWeight = Math.max(1, ...edges.map(e => e.weight));
+
+        g.selectAll(".edge-path")
+            .data(edges.filter(e => byName.has(e.from) && byName.has(e.to)))
+            .enter().append("path")
+            .attr("class", "edge-path")
+            .attr("stroke-width", e => 1 + (e.weight / maxWeight) * 5)
+            .attr("d", e => {
+                const a = byName.get(e.from), b = byName.get(e.to);
+                const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2 - 40;
+                return `M${a.x},${a.y} Q${mx},${my} ${b.x},${b.y}`;
+            });
+
+        const node = g.selectAll(".layer-box")
+            .data(layers)
+            .enter().append("g")
+            .attr("class", "layer-box")
+            .attr("transform", l => `translate(${l.x - l.w/2},${l.y - l.h/2})`);
+
+        node.append("rect")
+            .attr("width", l => l.w).attr("height", l => l.h)
+            .attr("fill", l => l.color)
+            .attr("stroke", l => d3.rgb(l.color).darker(0.8));
+
+        node.append("text").attr("class", "layer-label")
+            .attr("x", l => l.w/2).attr("y", l => l.h/2 - 4)
+            .text(l => l.name);
+        node.append("text").attr("class", "layer-count")
+            .attr("x", l => l.w/2).attr("y", l => l.h/2 + 14)
+            .text(l => `${l.count} functions`);
+
+        const tooltip = document.getElementById("tooltip");
+        node.on("mousemove", (event, l) => {
+            tooltip.style.display = "block";
+            tooltip.style.left = (event.pageX + 16) + "px";
+            tooltip.style.top = (event.pageY - 10) + "px";
+            tooltip.innerHTML = `
+                <div class="t-title">${l.name}</div>
+                <div class="t-desc">${l.description}</div>
+                ${l.top_functions.map(f => `<div class="t-fn">• ${f}</div>`).join('')}
+            `;
+        }).on("mouseout", () => { tooltip.style.display = "none"; });
+    </script>
+</body>
+</html>

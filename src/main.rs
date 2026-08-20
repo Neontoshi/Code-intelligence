@@ -180,35 +180,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             use code_intelligence::output::JsonOutput;
             JsonOutput::generate_training_pairs(&analysis.call_graph, &analysis.files)
         }
-        "graphviz" => {
-            use code_intelligence::output::graphviz::{GraphVizConfig, GraphVizOutput};
-            let cfg = GraphVizConfig {
-                max_nodes: args.graph_max_nodes,
-                min_importance: 0.0, // Show all nodes regardless of importance
-                ..GraphVizConfig::default()
-            };
-            GraphVizOutput::generate_with_config(&analysis.call_graph, &cfg)
-        }
-        "graphviz-focused" => {
-            use code_intelligence::output::graphviz::GraphVizOutput;
-            match &args.graph_entry {
-                Some(entry) => {
-                    GraphVizOutput::generate_focused(&analysis.call_graph, entry, args.graph_depth)
-                }
-                None => {
-                    eprintln!("⚠️ graphviz-focused requires --graph-entry <full_path>; falling back to bounded default graph.");
-                    GraphVizOutput::generate(&analysis.call_graph)
-                }
-            }
-        }
-
         "rag" => {
             use code_intelligence::output::rag::RAGGenerator;
             RAGGenerator::generate_rag_markdown(&analysis.call_graph, &analysis.files)
-        }
-        "graphviz-summary" => {
-            use code_intelligence::output::graphviz::GraphVizOutput;
-            GraphVizOutput::generate_layer_summary(&analysis.call_graph)
         }
         "full" => analysis.to_full_report(),
         _ => analysis.to_markdown(),
@@ -220,7 +194,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "json" => "json",
             "training" => "json",
             "pairs" => "jsonl",
-            "graphviz" | "graphviz-focused" | "graphviz-summary" => "dot",
             _ => "md",
         };
         PathBuf::from(format!("code_analysis.{}", ext))
