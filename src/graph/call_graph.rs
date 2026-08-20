@@ -376,26 +376,41 @@ impl CallGraph {
 
             let layer = if parts.len() >= 2 {
                 match parts[parts.len() - 2] {
-                    "handlers" | "controllers" | "routes" => "handler",
-                    "services" | "domain" | "business" => "service",
-                    "db" | "repository" | "repositories" | "models" | "dao" => "repository",
-                    "middleware" => "middleware",
-                    "config" | "configuration" => "config",
-                    "workers" | "jobs" | "tasks" => "worker",
-                    "solana" | "blockchain" | "chain" => "blockchain",
-                    "telemetry" | "metrics" | "tracing" | "observability" => "observability",
-                    "auth" | "authentication" | "authorization" => "auth",
-                    "utils" | "util" | "helpers" | "common" => "utility",
-                    "api" | "rest" | "graphql" => "api",
-                    "cli" | "cmd" => "cli",
-                    "tests" | "test" | "integration" => "test",
-                    _ => "core",
+                    "handlers" | "controllers" | "routes" => "handler".to_string(),
+                    "services" | "domain" | "business" => "service".to_string(),
+                    "db" | "repository" | "repositories" | "models" | "dao" => {
+                        "repository".to_string()
+                    }
+                    "middleware" => "middleware".to_string(),
+                    "config" | "configuration" => "config".to_string(),
+                    "workers" | "jobs" | "tasks" => "worker".to_string(),
+                    "solana" | "blockchain" | "chain" => "blockchain".to_string(),
+                    "telemetry" | "metrics" | "tracing" | "observability" => {
+                        "observability".to_string()
+                    }
+                    "auth" | "authentication" | "authorization" => "auth".to_string(),
+                    "utils" | "util" | "helpers" | "common" => "utility".to_string(),
+                    "api" | "rest" | "graphql" => "api".to_string(),
+                    "cli" | "cmd" | "bin" => "cli".to_string(),
+                    "tests" | "test" | "integration" => "test".to_string(),
+                    _ => {
+                        // No recognized convention for the immediate parent dir.
+                        // Fall back to the top-level module under src/ (e.g.
+                        // "analysis", "graph", "ml") so nested submodules still
+                        // group under their owning module instead of everything
+                        // collapsing into "core".
+                        match parts.iter().position(|&p| p == "src") {
+                            Some(i) if i + 1 < parts.len() - 1 => parts[i + 1].to_string(),
+                            Some(_) => "root".to_string(),
+                            None => "core".to_string(),
+                        }
+                    }
                 }
             } else {
-                "root"
+                "root".to_string()
             };
 
-            self.graph[idx].layer = layer.to_string();
+            self.graph[idx].layer = layer;
         }
     }
 
