@@ -6,9 +6,15 @@ pub mod dependency_graph;
 pub mod graph_traits;
 pub mod import_graph;
 pub mod project_graph;
+pub mod resolution;
+pub mod resolver;
 pub mod traits;
 pub mod type_graph;
+pub mod unresolved_handler;
 
+// Re-export
+pub use resolution::{ResolutionConfidence, ResolutionMethod, ResolutionStats, ResolvedCall};
+pub use resolver::CallResolver;
 // Re-export macros
 pub use crate::impl_graph_index;
 pub use crate::impl_graph_metrics;

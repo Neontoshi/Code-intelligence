@@ -1,3 +1,5 @@
+use super::resolution::{ResolutionConfidence, ResolutionStats};
+use crate::graph::traits::GraphMetrics;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use serde::{Deserialize, Serialize};
@@ -58,6 +60,8 @@ pub struct CallGraph {
     pub cycle_detection_skipped: bool,
     pub cycle_detection_node_count: usize,
     pub duplicate_functions: Vec<String>,
+    pub resolution_cache: HashMap<String, ResolutionConfidence>,
+    pub unresolved_calls: HashMap<String, Vec<String>>,
 }
 
 impl CallGraph {
@@ -72,6 +76,8 @@ impl CallGraph {
             cycle_detection_skipped: false,
             cycle_detection_node_count: 0,
             duplicate_functions: Vec::new(),
+            resolution_cache: HashMap::new(),
+            unresolved_calls: HashMap::new(),
         }
     }
 
@@ -166,6 +172,102 @@ impl CallGraph {
         } else {
             None
         }
+    }
+    pub fn get_resolution_confidence(&self, caller: &str, callee: &str) -> ResolutionConfidence {
+        let key = format!("{}->{}", caller, callee);
+        self.resolution_cache
+            .get(&key)
+            .copied()
+            .unwrap_or(ResolutionConfidence::Unresolved)
+    }
+
+    /// Set resolution confidence for a call
+    pub fn set_resolution_confidence(
+        &mut self,
+        caller: &str,
+        callee: &str,
+        confidence: ResolutionConfidence,
+    ) {
+        let key = format!("{}->{}", caller, callee);
+        self.resolution_cache.insert(key, confidence);
+    }
+
+    /// Get all unresolved calls for a function
+    pub fn get_unresolved_calls(&self, full_path: &str) -> Vec<&str> {
+        self.unresolved_calls
+            .get(full_path)
+            .map(|v| v.iter().map(|s| s.as_str()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Get resolution statistics
+    pub fn resolution_stats(&self) -> ResolutionStats {
+        let total_calls = self.edge_count();
+        let mut exact = 0;
+        let mut inferred = 0;
+        let mut heuristic = 0;
+        let mut ambiguous = 0;
+        let mut unresolved = 0;
+        let mut by_method = std::collections::HashMap::new();
+
+        for (_, &conf) in &self.resolution_cache {
+            match conf {
+                ResolutionConfidence::Exact => exact += 1,
+                ResolutionConfidence::Inferred => inferred += 1,
+                ResolutionConfidence::Heuristic => heuristic += 1,
+                ResolutionConfidence::Ambiguous => ambiguous += 1,
+                ResolutionConfidence::Unresolved => unresolved += 1,
+            }
+
+            // Count by method (simplified)
+            let method = match conf {
+                ResolutionConfidence::Exact => "exact",
+                ResolutionConfidence::Inferred => "inferred",
+                ResolutionConfidence::Heuristic => "heuristic",
+                ResolutionConfidence::Ambiguous => "ambiguous",
+                ResolutionConfidence::Unresolved => "unresolved",
+            };
+            *by_method.entry(method.to_string()).or_insert(0) += 1;
+        }
+
+        let resolved = exact + inferred + heuristic;
+        let avg_conf = if total_calls > 0 {
+            let sum: f64 = self
+                .resolution_cache
+                .values()
+                .map(|c| c.confidence_score())
+                .sum();
+            sum / total_calls as f64
+        } else {
+            0.0
+        };
+
+        ResolutionStats {
+            total_calls,
+            resolved_calls: resolved,
+            unresolved_calls: unresolved,
+            exact_count: exact,
+            inferred_count: inferred,
+            heuristic_count: heuristic,
+            ambiguous_count: ambiguous,
+            by_method,
+            average_confidence: avg_conf,
+            resolution_rate: if total_calls > 0 {
+                resolved as f64 / total_calls as f64
+            } else {
+                1.0
+            },
+        }
+    }
+
+    /// Mark a call as unresolved
+    pub fn mark_unresolved(&mut self, caller: &str, callee: &str) {
+        self.unresolved_calls
+            .entry(caller.to_string())
+            .or_default()
+            .push(callee.to_string());
+
+        self.set_resolution_confidence(caller, callee, ResolutionConfidence::Unresolved);
     }
 
     pub fn node_indices(&self) -> impl Iterator<Item = NodeIndex> {

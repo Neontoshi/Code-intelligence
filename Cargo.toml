@@ -198,7 +198,3 @@ path = "src/bin/evaluate_per_language_detailed.rs"
 [[bin]]
 name = "calibration_analysis"
 path = "src/bin/calibration_analysis.rs"
-
-[[bin]]
-name = "calibration_analysis"
-path = "src/bin/calibration_analysis.rs"

@@ -160,11 +160,29 @@ impl RootDetector {
         roots
     }
 
+    // src/analysis/roots.rs
+
+    // Update the detect_export_roots function
     fn detect_export_roots(call_graph: &CallGraph) -> HashSet<FunctionId> {
         let mut roots = HashSet::new();
 
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
+
+            // ⭐ NEW: React components are roots (even if not public)
+            if func.file.ends_with(".tsx") || func.file.ends_with(".jsx") {
+                let is_component = func
+                    .name
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false);
+                let is_hook = func.name.starts_with("use");
+                if is_component || is_hook {
+                    roots.insert(func.full_path.clone());
+                    continue;
+                }
+            }
 
             // Public functions with no callers are likely API exports
             if func.is_public && func.fan_in == 0 {
@@ -188,109 +206,7 @@ impl RootDetector {
         roots
     }
 
-    /// Detect framework-specific roots
-    fn detect_framework_roots(call_graph: &CallGraph, files: &[ParsedFile]) -> HashSet<FunctionId> {
-        let mut roots = HashSet::new();
-
-        for idx in call_graph.node_indices() {
-            let func = &call_graph[idx];
-
-            // React components (TSX/JSX) - function-level detection
-            if func.file.ends_with(".tsx") || func.file.ends_with(".jsx") {
-                let is_component = func
-                    .name
-                    .chars()
-                    .next()
-                    .map(|c| c.is_uppercase())
-                    .unwrap_or(false);
-                let is_hook = func.name.starts_with("use");
-                let is_export = func.is_public;
-
-                if is_component || is_hook || is_export {
-                    roots.insert(func.full_path.clone());
-                }
-            }
-
-            // Go init functions
-            if func.name == "init" && func.file.ends_with(".go") {
-                roots.insert(func.full_path.clone());
-            }
-
-            // Java/Spring - check function annotations, not just file path
-            if func.file.contains("/controllers/")
-                || func.file.contains("/handlers/")
-                || func.file.contains("/services/")
-            {
-                let is_spring_handler = func.name.contains("handle")
-                    || func.name.contains("get")
-                    || func.name.contains("post")
-                    || func.name.contains("put")
-                    || func.name.contains("delete");
-
-                let has_spring_annotation = func
-                    .doc_comment
-                    .as_ref()
-                    .map(|d| {
-                        d.contains("@GetMapping")
-                            || d.contains("@PostMapping")
-                            || d.contains("@RequestMapping")
-                            || d.contains("@RestController")
-                    })
-                    .unwrap_or(false);
-
-                if func.is_public && (is_spring_handler || has_spring_annotation) {
-                    roots.insert(func.full_path.clone());
-                }
-            }
-
-            // Python decorators - use the stored decorators from parser
-            if let Some(file) = files.iter().find(|f| f.path == func.file) {
-                if let Some(func_info) = file.functions.iter().find(|fi| fi.name == func.name) {
-                    for decorator in &func_info.decorators {
-                        if decorator.contains("app.route")
-                            || decorator.contains("router.")
-                            || decorator.contains("blueprint.")
-                            || decorator.contains("click.command")
-                            || decorator.contains("pytest")
-                            || decorator.contains("app.get")
-                            || decorator.contains("app.post")
-                            || decorator.contains("app.put")
-                            || decorator.contains("app.delete")
-                        {
-                            roots.insert(func.full_path.clone());
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // ⭐ Java Spring annotations - use decorators from parser
-            if func.file.ends_with(".java") {
-                if let Some(file) = files.iter().find(|f| f.path == func.file) {
-                    if let Some(func_info) = file.functions.iter().find(|fi| fi.name == func.name) {
-                        for decorator in &func_info.decorators {
-                            if decorator.contains("GetMapping")
-                                || decorator.contains("PostMapping")
-                                || decorator.contains("PutMapping")
-                                || decorator.contains("DeleteMapping")
-                                || decorator.contains("RequestMapping")
-                                || decorator.contains("RestController")
-                                || decorator.contains("Service")
-                                || decorator.contains("Repository")
-                                || decorator.contains("Component")
-                            {
-                                roots.insert(func.full_path.clone());
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        roots
-    }
-
+    // Update the detect_ffi_roots function
     fn detect_ffi_roots(call_graph: &CallGraph) -> HashSet<FunctionId> {
         let mut roots = HashSet::new();
 
@@ -307,14 +223,99 @@ impl RootDetector {
                 roots.insert(func.full_path.clone());
             }
 
-            // 3. Check for extern "C" in the doc comment (not reliable but better than nothing)
+            // 3. ⭐ NEW: Check for extern "C" in doc comment
             if let Some(doc) = &func.doc_comment {
                 if doc.contains("extern \"C\"")
                     || doc.contains("#[no_mangle]")
                     || doc.contains("#[export_name]")
+                    || doc.contains("#[link_name]")
                 {
-                    if func.name.contains("extern") || func.file.contains("/ffi/") {
-                        roots.insert(func.full_path.clone());
+                    roots.insert(func.full_path.clone());
+                }
+            }
+
+            // 4. ⭐ NEW: Check for #[no_mangle] attribute via function name pattern
+            if func.name.starts_with("_") && func.name.contains("c_") {
+                roots.insert(func.full_path.clone());
+            }
+        }
+
+        roots
+    }
+
+    // Update the detect_framework_roots function
+    fn detect_framework_roots(call_graph: &CallGraph, files: &[ParsedFile]) -> HashSet<FunctionId> {
+        let mut roots = HashSet::new();
+
+        for idx in call_graph.node_indices() {
+            let func = &call_graph[idx];
+
+            // ⭐ React components (TSX/JSX) - function-level detection
+            if func.file.ends_with(".tsx") || func.file.ends_with(".jsx") {
+                let is_component = func
+                    .name
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false);
+                let is_hook = func.name.starts_with("use");
+                let is_export = func.is_public;
+
+                if is_component || is_hook || is_export {
+                    roots.insert(func.full_path.clone());
+                    continue;
+                }
+            }
+
+            // ⭐ Go init functions
+            if func.name == "init" && func.file.ends_with(".go") {
+                roots.insert(func.full_path.clone());
+                continue;
+            }
+
+            // ⭐ Java/Spring - check function annotations
+            if func.file.ends_with(".java") {
+                if let Some(file) = files.iter().find(|f| f.path == func.file) {
+                    if let Some(func_info) = file.functions.iter().find(|fi| fi.name == func.name) {
+                        for decorator in &func_info.decorators {
+                            let decorator_lower = decorator.to_lowercase();
+                            if decorator_lower.contains("getmapping")
+                                || decorator_lower.contains("postmapping")
+                                || decorator_lower.contains("putmapping")
+                                || decorator_lower.contains("deletemapping")
+                                || decorator_lower.contains("requestmapping")
+                                || decorator_lower.contains("restcontroller")
+                                || decorator_lower.contains("controller")
+                                || decorator_lower.contains("service")
+                                || decorator_lower.contains("repository")
+                                || decorator_lower.contains("component")
+                            {
+                                roots.insert(func.full_path.clone());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ⭐ Python Flask/FastAPI - check decorators
+            if let Some(file) = files.iter().find(|f| f.path == func.file) {
+                if let Some(func_info) = file.functions.iter().find(|fi| fi.name == func.name) {
+                    for decorator in &func_info.decorators {
+                        let decorator_lower = decorator.to_lowercase();
+                        if decorator_lower.contains("app.route")
+                            || decorator_lower.contains("router.")
+                            || decorator_lower.contains("blueprint.")
+                            || decorator_lower.contains("click.command")
+                            || decorator_lower.contains("pytest")
+                            || decorator_lower.contains("app.get")
+                            || decorator_lower.contains("app.post")
+                            || decorator_lower.contains("app.put")
+                            || decorator_lower.contains("app.delete")
+                        {
+                            roots.insert(func.full_path.clone());
+                            break;
+                        }
                     }
                 }
             }

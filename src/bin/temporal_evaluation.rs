@@ -262,6 +262,7 @@ fn format_timestamp(ts: i64) -> String {
 }
 
 /// Evaluation metrics
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct EvaluationMetrics {
     total: usize,

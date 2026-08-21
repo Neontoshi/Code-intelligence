@@ -98,6 +98,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let analysis = pipeline.process_project(&args.project_dir).await?;
 
+    println!("\n📊 Call Resolution Statistics:");
+    let stats = analysis.call_graph.resolution_stats();
+    println!("   Resolution rate: {:.1}%", stats.resolution_rate * 100.0);
+    println!("   Exact matches: {}", stats.exact_count);
+    println!("   Inferred: {}", stats.inferred_count);
+    println!("   Heuristic: {}", stats.heuristic_count);
+    println!("   Ambiguous: {}", stats.ambiguous_count);
+    println!("   Unresolved: {}", stats.unresolved_calls);
+
+    if stats.unresolved_calls > 0 {
+        println!(
+            "\n⚠️ {} unresolved calls detected - may affect accuracy",
+            stats.unresolved_calls
+        );
+    }
+
     let _git_analysis = GitAnalyzer::analyze(&args.project_dir).ok();
 
     let ml_model = if let Some(model_path) = &args.model {

@@ -41,6 +41,10 @@ impl DynamicRefDetector {
         let mut refs = Vec::new();
 
         for file in files {
+            // Check file path for framework indicators
+            let is_flask = file.path.contains(".py") && file.source.contains("flask");
+            let is_go_reflect = file.path.contains(".go") && file.source.contains("reflect");
+
             for func_info in &file.functions {
                 // 1. AST Decorators / Attributes
                 for decorator in &func_info.decorators {
@@ -53,6 +57,8 @@ impl DynamicRefDetector {
                         || d_lower.contains("mapping")
                         || d_lower.contains("controller")
                         || d_lower.contains("injectable")
+                        || d_lower.contains("app.route")
+                        || d_lower.contains("blueprint")
                     {
                         refs.push(DynamicReference {
                             source_file: file.path.clone(),
@@ -64,9 +70,31 @@ impl DynamicRefDetector {
                             context: format!("Decorated endpoint: {}", decorator),
                         });
                     }
+
+                    // Spring annotations
+                    if d_lower.contains("getmapping")
+                        || d_lower.contains("postmapping")
+                        || d_lower.contains("putmapping")
+                        || d_lower.contains("deletemapping")
+                        || d_lower.contains("requestmapping")
+                        || d_lower.contains("restcontroller")
+                        || d_lower.contains("service")
+                        || d_lower.contains("repository")
+                        || d_lower.contains("component")
+                    {
+                        refs.push(DynamicReference {
+                            source_file: file.path.clone(),
+                            source_function: Some(func_info.name.clone()),
+                            target_function: Some(func_info.name.clone()),
+                            target_pattern: decorator.clone(),
+                            reference_type: DynamicRefType::Framework,
+                            confidence: 0.95,
+                            context: format!("Spring annotation: {}", decorator),
+                        });
+                    }
                 }
 
-                // 2. React JSX / Component AST checks
+                // 2. React JSX / Component detection
                 if (file.path.ends_with(".tsx") || file.path.ends_with(".jsx"))
                     && func_info
                         .name
@@ -86,13 +114,27 @@ impl DynamicRefDetector {
                     });
                 }
 
-                // 3. String-based function dispatcher patterns in AST
+                // React hooks
+                if func_info.name.starts_with("use")
+                    && (file.path.ends_with(".tsx") || file.path.ends_with(".jsx"))
+                {
+                    refs.push(DynamicReference {
+                        source_file: file.path.clone(),
+                        source_function: Some(func_info.name.clone()),
+                        target_function: Some(func_info.name.clone()),
+                        target_pattern: "ReactHook".to_string(),
+                        reference_type: DynamicRefType::Framework,
+                        confidence: 0.85,
+                        context: "React Hook".to_string(),
+                    });
+                }
+
+                // 3. String-based function dispatcher patterns
                 if func_info.body_range.1 > func_info.body_range.0 {
                     let body = &file.source[func_info.body_range.0..func_info.body_range.1];
-                    if body.contains("getattr(")
-                        || body.contains("Reflect.get")
-                        || body.contains("TypeId::of")
-                    {
+
+                    // Python reflection
+                    if body.contains("getattr(") || body.contains("importlib") {
                         refs.push(DynamicReference {
                             source_file: file.path.clone(),
                             source_function: Some(func_info.name.clone()),
@@ -104,14 +146,41 @@ impl DynamicRefDetector {
                                 .to_string(),
                         });
                     }
+
+                    // Go reflection
+                    if body.contains("reflect.") || body.contains("reflect.ValueOf") {
+                        refs.push(DynamicReference {
+                            source_file: file.path.clone(),
+                            source_function: Some(func_info.name.clone()),
+                            target_function: None,
+                            target_pattern: "GoReflection".to_string(),
+                            reference_type: DynamicRefType::Reflection,
+                            confidence: 0.85,
+                            context: "Go reflection usage".to_string(),
+                        });
+                    }
+
+                    // Dynamic imports (JavaScript/TypeScript)
+                    if body.contains("import(") || body.contains("require(") {
+                        refs.push(DynamicReference {
+                            source_file: file.path.clone(),
+                            source_function: Some(func_info.name.clone()),
+                            target_function: None,
+                            target_pattern: "DynamicImport".to_string(),
+                            reference_type: DynamicRefType::DynamicImport,
+                            confidence: 0.80,
+                            context: "Dynamic import or require statement".to_string(),
+                        });
+                    }
                 }
             }
 
-            // 4. Dynamic Import Imports
+            // 4. Dynamic Import Imports (file-level)
             for import in &file.imports {
                 if import.module.contains("dynamic")
                     || import.module.contains("lazy")
                     || import.module.contains("plugin")
+                    || import.module.contains("importlib")
                 {
                     refs.push(DynamicReference {
                         source_file: file.path.clone(),
@@ -122,6 +191,43 @@ impl DynamicRefDetector {
                         confidence: 0.80,
                         context: format!("Dynamic import statement: {}", import.module),
                     });
+                }
+            }
+
+            // 5. Flask route detection at file level
+            if is_flask {
+                for func_info in &file.functions {
+                    if func_info.decorators.iter().any(|d| d.contains("route")) {
+                        refs.push(DynamicReference {
+                            source_file: file.path.clone(),
+                            source_function: Some(func_info.name.clone()),
+                            target_function: Some(func_info.name.clone()),
+                            target_pattern: "FlaskRoute".to_string(),
+                            reference_type: DynamicRefType::Framework,
+                            confidence: 0.95,
+                            context: "Flask route decorator".to_string(),
+                        });
+                    }
+                }
+            }
+
+            // 6. Go reflection at file level
+            if is_go_reflect {
+                for func_info in &file.functions {
+                    if func_info.body_range.1 > func_info.body_range.0 {
+                        let body = &file.source[func_info.body_range.0..func_info.body_range.1];
+                        if body.contains("reflect.") {
+                            refs.push(DynamicReference {
+                                source_file: file.path.clone(),
+                                source_function: Some(func_info.name.clone()),
+                                target_function: None,
+                                target_pattern: "GoReflection".to_string(),
+                                reference_type: DynamicRefType::Reflection,
+                                confidence: 0.85,
+                                context: "Go reflection usage".to_string(),
+                            });
+                        }
+                    }
                 }
             }
         }
