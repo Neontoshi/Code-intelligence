@@ -93,7 +93,6 @@ impl ParallelUtils {
         paths.into_par_iter().map(process).collect()
     }
 
-    /// Parallel map with a thread pool
     pub fn with_thread_pool<F, R>(num_threads: usize, f: F) -> R
     where
         F: FnOnce(&rayon::ThreadPool) -> R + Send + Sync,
@@ -101,10 +100,77 @@ impl ParallelUtils {
     {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
+            .stack_size(8 * 1024 * 1024) // 8MB stack for deep recursion
             .build()
             .unwrap();
 
         pool.install(|| f(&pool))
+    }
+
+    /// Adaptive chunk size based on data size and thread count
+    pub fn adaptive_chunk_size(total_items: usize, thread_count: usize) -> usize {
+        if total_items == 0 {
+            return 1;
+        }
+
+        // Aim for at least 2 chunks per thread for load balancing
+        let chunks_per_thread = 2;
+        let target_chunks = thread_count * chunks_per_thread;
+        let chunk_size = (total_items / target_chunks).max(1);
+
+        // Cap at reasonable size
+        chunk_size.min(1000)
+    }
+
+    /// Parallel map with adaptive chunking
+    pub fn parallel_map_adaptive<T, R, F>(items: Vec<T>, f: F) -> Vec<R>
+    where
+        T: Send + Sync + Clone,
+        R: Send + Sync,
+        F: Fn(T) -> R + Send + Sync,
+    {
+        let thread_count = rayon::current_num_threads();
+        let chunk_size = Self::adaptive_chunk_size(items.len(), thread_count);
+
+        items
+            .par_chunks(chunk_size)
+            .flat_map(|chunk| chunk.iter().map(|item| f(item.clone())).collect::<Vec<R>>())
+            .collect()
+    }
+
+    /// Parallel with progress and cancellation support
+    pub fn parallel_with_progress<T, R, F, P>(
+        items: Vec<T>,
+        f: F,
+        progress: P,
+    ) -> Vec<Result<R, String>>
+    where
+        T: Send + Sync + Clone,
+        R: Send + Sync,
+        F: Fn(T) -> Result<R, String> + Send + Sync,
+        P: Fn(usize, usize) + Send + Sync,
+    {
+        let total = items.len();
+        let chunk_size = Self::adaptive_chunk_size(total, rayon::current_num_threads());
+
+        let results: Vec<Result<R, String>> = items
+            .par_chunks(chunk_size)
+            .enumerate()
+            .flat_map(|(chunk_idx, chunk)| {
+                chunk
+                    .iter()
+                    .enumerate()
+                    .map(|(i, item)| {
+                        let global_idx = chunk_idx * chunk_size + i;
+                        let result = f(item.clone());
+                        progress(global_idx + 1, total);
+                        result
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        results
     }
 
     /// Parallel execution with context

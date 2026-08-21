@@ -1,5 +1,7 @@
 // src/bin/dead_code_check.rs
 
+// src/bin/dead_code_check.rs
+
 use clap::Parser;
 use code_intelligence::analysis::dead_code::DeadCodeAnalyzer;
 use code_intelligence::analysis::dynamic_refs::DynamicRefDetector;
@@ -7,12 +9,19 @@ use code_intelligence::analysis::git_analysis::GitAnalyzer;
 use code_intelligence::analysis::roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector};
 use code_intelligence::analysis::verdict::{Verdict, VerdictConfig, VerdictEngine};
 use code_intelligence::analysis::AnalysisMetadata;
+use code_intelligence::bin::common::cleanup::ResourceManager;
+use code_intelligence::bin::common::error_handler::{ErrorHandler, ErrorSeverity};
+use code_intelligence::bin::common::exit_codes::ExitCode;
+use code_intelligence::bin::common::monitor::MetricsCollector;
+use code_intelligence::bin::common::reporter::Reporter;
 use code_intelligence::graph::GraphMetrics;
 use code_intelligence::ml::classifier::DeadCodeClassifier;
 use code_intelligence::Pipeline;
 use serde_json;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
+use std::time::Instant;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Dead Code Analyzer with ML Support")]
@@ -51,6 +60,17 @@ struct Args {
     /// Cache directory (default: <project>/.code-intelligence-cache)
     #[arg(long)]
     cache_dir: Option<PathBuf>,
+
+    /// Output report file
+    #[arg(long)]
+    output_report: Option<PathBuf>,
+
+    /// Enable metrics collection
+    #[arg(long)]
+    metrics: bool,
+
+    #[arg(long)]
+    cleanup: bool,
 }
 
 fn get_current_commit(project_dir: &Path) -> String {
@@ -68,6 +88,35 @@ fn get_current_commit(project_dir: &Path) -> String {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    let handler = ErrorHandler::new(args.verbose, false);
+
+    if let Err(e) = run(&args).await {
+        handler.handle_error(e.as_ref(), ErrorSeverity::User);
+    }
+    Ok(())
+}
+
+// src/bin/dead_code_check.rs
+
+async fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    // ⭐ NEW: Initialize metrics collector
+    let metrics = if args.metrics {
+        Some(Arc::new(MetricsCollector::new()))
+    } else {
+        None
+    };
+
+    // ⭐ NEW: Initialize resource manager
+    let resource_manager = if args.cleanup {
+        Some(ResourceManager::new(true))
+    } else {
+        None
+    };
+
+    // Install signal handlers for cleanup
+    if let Some(rm) = &resource_manager {
+        rm.install_signal_handlers();
+    }
 
     let file_count = std::fs::read_dir(&args.project_dir)
         .map(|d| d.filter_map(|e| e.ok()).count())
@@ -83,6 +132,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("🔍 Analyzing dead code in: {:?}\n", args.project_dir);
 
+    // ⭐ NEW: Record start time
+    let start_time = Instant::now();
+    if let Some(metrics) = &metrics {
+        metrics.record_now("analysis_started", 1.0).await;
+    }
+
     let mut pipeline = Pipeline::new();
 
     if args.cache {
@@ -97,6 +152,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let analysis = pipeline.process_project(&args.project_dir).await?;
+
+    // ⭐ NEW: Record after analysis
+    if let Some(metrics) = &metrics {
+        let duration = start_time.elapsed().as_secs_f64();
+        metrics
+            .record_now("analysis_duration_seconds", duration)
+            .await;
+        metrics
+            .record_now(
+                "functions_analyzed",
+                analysis.call_graph.node_count() as f64,
+            )
+            .await;
+        metrics
+            .record_now("files_analyzed", analysis.files.len() as f64)
+            .await;
+    }
 
     println!("\n📊 Call Resolution Statistics:");
     let stats = analysis.call_graph.resolution_stats();
@@ -487,7 +559,67 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("      Impact: {}", func.impact.estimated_removal_impact);
         }
     }
-    use code_intelligence::bin::common::exit_codes::ExitCode;
+
+    // ⭐ INTEGRATE REPORTER
+    let mut reporter = Reporter::new("dead_code_check", env!("CARGO_PKG_VERSION"), "production");
+
+    // Record metrics
+    reporter.set_metric(
+        "functions_analyzed",
+        &analysis.call_graph.node_count().to_string(),
+    );
+    reporter.set_metric(
+        "dead_functions_found",
+        &filtered_analysis.functions.len().to_string(),
+    );
+    reporter.set_metric(
+        "avg_confidence",
+        &format!("{:.2}", filtered_analysis.summary.avg_confidence),
+    );
+    reporter.set_metric(
+        "loc_removable",
+        &filtered_analysis
+            .summary
+            .estimated_loc_removable
+            .to_string(),
+    );
+    reporter.set_metric("threshold", &format!("{:.2}", threshold));
+    reporter.set_metric(
+        "ml_enabled",
+        &format!("{}", args.model.is_some() && !args.no_ml),
+    );
+
+    // ⭐ NEW: Add metrics from collector
+    if let Some(metrics) = &metrics {
+        if let Some(duration) = metrics.get_latest("analysis_duration_seconds").await {
+            reporter.set_metric("duration_seconds", &format!("{:.2}", duration));
+        }
+        if let Some(functions) = metrics.get_latest("functions_analyzed").await {
+            reporter.set_metric("functions", &functions.to_string());
+        }
+    }
+
+    // Print report if verbose
+    if args.verbose {
+        reporter.print_report();
+    }
+
+    // Save report if output specified
+    if let Some(output_path) = &args.output_report {
+        let json = reporter.to_json()?;
+        std::fs::write(output_path, json)?;
+        println!("📄 Report saved to: {:?}", output_path);
+    }
+
+    // ⭐ NEW: Generate metrics report if metrics enabled
+    if args.metrics {
+        if let Some(metrics) = &metrics {
+            let metrics_report = metrics.generate_report().await;
+            let metrics_path = args.project_dir.join(".code-intelligence-metrics.txt");
+            std::fs::write(&metrics_path, metrics_report)?;
+            println!("📈 Metrics report saved to: {:?}", metrics_path);
+        }
+    }
 
     // Exit with proper code based on results
     if filtered_analysis.functions.len() > 0 {

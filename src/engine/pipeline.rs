@@ -587,15 +587,31 @@ impl Pipeline {
         }
         Ok(())
     }
+
     pub fn check_memory(&self) -> Result<(), String> {
         if let Some(limit_mb) = self.config.max_memory_mb {
             let current = self.get_current_memory_usage_mb();
-            if current > limit_mb as f64 * 0.9 {
+
+            // Log warning at 85%
+            if current > limit_mb as f64 * 0.85 {
+                eprintln!(
+                    "⚠️ Memory usage {:.1}MB is approaching limit {}MB ({}%)",
+                    current,
+                    limit_mb,
+                    (current / limit_mb as f64 * 100.0) as u8
+                );
+            }
+
+            // Error at 95%
+            if current > limit_mb as f64 * 0.95 {
                 return Err(format!(
-                    "Memory usage {:.1}MB approaching limit {}MB",
-                    current, limit_mb
+                    "Memory limit {}MB nearly exceeded (current: {:.1}MB). \
+                     Try reducing --max-files or --max-file-size",
+                    limit_mb, current
                 ));
             }
+
+            // Hard limit
             if current > limit_mb as f64 {
                 return Err(format!(
                     "Memory limit {}MB exceeded (current: {:.1}MB)",
@@ -604,6 +620,28 @@ impl Pipeline {
             }
         }
         Ok(())
+    }
+
+    /// Gracefully degrade parallelism based on memory pressure
+    pub fn adjust_parallelism(&self) -> usize {
+        let default_threads = rayon::current_num_threads();
+
+        if let Some(limit_mb) = self.config.max_memory_mb {
+            let current = self.get_current_memory_usage_mb();
+            let usage_ratio = current / limit_mb as f64;
+
+            if usage_ratio > 0.8 {
+                // Reduce threads to half
+                let reduced = (default_threads / 2).max(1);
+                eprintln!(
+                    "🔽 Reducing parallelism from {} to {} threads (memory pressure)",
+                    default_threads, reduced
+                );
+                return reduced;
+            }
+        }
+
+        default_threads
     }
 
     fn get_current_memory_usage_mb(&self) -> f64 {

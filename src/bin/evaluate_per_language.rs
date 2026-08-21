@@ -1,11 +1,9 @@
 // src/bin/evaluate_per_language.rs
 
-mod common;
-
 use clap::Parser;
 use code_intelligence::analysis::training_data::TrainingExample;
+use code_intelligence::bin::common::metrics::evaluate;
 use code_intelligence::DeadCodeClassifier;
-use common::metrics::evaluate;
 use std::collections::HashMap;
 use std::path::PathBuf;
 

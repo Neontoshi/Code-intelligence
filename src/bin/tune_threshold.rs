@@ -2,12 +2,10 @@
 
 //! Find optimal threshold on validation set
 
-mod common;
-
 use clap::Parser;
 use code_intelligence::analysis::training_data::{TrainingExample, TrainingLabel};
+use code_intelligence::bin::common::metrics::EvaluationMetrics;
 use code_intelligence::ml::classifier::DeadCodeClassifier;
-use common::metrics::EvaluationMetrics;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]

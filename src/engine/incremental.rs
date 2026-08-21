@@ -3,6 +3,7 @@
 use crate::graph::call_graph::CallGraph;
 use crate::parser::tree_sitter::ParsedFile;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -29,6 +30,7 @@ pub struct IncrementalFunction {
     pub trait_impl: Option<String>,
     pub calls: Vec<String>,
     pub callers: Vec<String>,
+    pub dirty: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -49,29 +51,45 @@ impl FileTracker {
         }
     }
 
-    /// Check which files have changed
     pub fn detect_changes(&mut self, files: &[ParsedFile]) -> Vec<PathBuf> {
         let mut changed = Vec::new();
-
         for file in files {
             let path = PathBuf::from(&file.path);
             let hash = self.hash_file(&file.source);
-
             if let Some((_, old_hash)) = self.files.get(&path) {
                 if old_hash != &hash {
                     changed.push(path.clone());
+                    // Track that this file changed for dependency invalidation
+                    self.track_dependency_change(&path);
                 }
             } else {
                 changed.push(path.clone());
+                self.track_dependency_change(&path);
             }
-
             self.files.insert(path, (SystemTime::now(), hash));
         }
-
         changed
     }
 
-    /// Get functions affected by file changes
+    /// Track dependency changes - invalidate callers of changed functions
+    fn track_dependency_change(&mut self, changed_file: &Path) {
+        // Find all functions in this file
+        let changed_funcs: Vec<String> = self
+            .function_cache
+            .iter()
+            .filter(|(_, f)| PathBuf::from(&f.file) == changed_file)
+            .map(|(path, _)| path.clone())
+            .collect();
+
+        // Mark them as dirty
+        for func_path in changed_funcs {
+            if let Some(cached) = self.function_cache.get_mut(&func_path) {
+                cached.dirty = true;
+            }
+        }
+    }
+
+    /// Get affected functions (callers of changed functions)
     pub fn get_affected_functions(
         &self,
         call_graph: &CallGraph,
@@ -79,20 +97,32 @@ impl FileTracker {
     ) -> HashSet<String> {
         let mut affected = HashSet::new();
 
-        // Get all functions in changed files
+        // Direct changes
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
             let file_path = PathBuf::from(&func.file);
-
             if changed_files.contains(&file_path) {
                 affected.insert(func.full_path.clone());
+            }
+        }
 
-                // Also add callers and callees
-                for caller in call_graph.get_callers(idx) {
-                    affected.insert(caller.full_path.clone());
-                }
-                for callee in call_graph.get_callees(idx) {
-                    affected.insert(callee.full_path.clone());
+        // Propagate to callers
+        let mut to_process: Vec<String> = affected.iter().cloned().collect();
+        let mut processed = HashSet::new();
+
+        while let Some(path) = to_process.pop() {
+            if processed.contains(&path) {
+                continue;
+            }
+            processed.insert(path.clone());
+
+            // Find callers of this function
+            if let Some(idx) = call_graph.name_index.get(&path) {
+                for caller in call_graph.get_callers(*idx) {
+                    if !affected.contains(&caller.full_path) {
+                        affected.insert(caller.full_path.clone());
+                        to_process.push(caller.full_path.clone());
+                    }
                 }
             }
         }

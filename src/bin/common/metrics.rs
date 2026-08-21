@@ -1,9 +1,8 @@
 // src/bin/common/metrics.rs
 
-use code_intelligence::analysis::training_data::{TrainingExample, TrainingLabel};
-use code_intelligence::ml::classifier::DeadCodeClassifier;
+use crate::analysis::training_data::{TrainingExample, TrainingLabel};
+use crate::ml::classifier::DeadCodeClassifier;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct EvaluationMetrics {
     pub total: usize,
@@ -16,12 +15,11 @@ pub struct EvaluationMetrics {
     pub precision: f64,
     pub recall: f64,
     pub f1: f64,
-    pub fpr: f64, // False Positive Rate
-    pub fnr: f64, // False Negative Rate
+    pub fpr: f64,
+    pub fnr: f64,
     pub specificity: f64,
 }
 
-#[allow(dead_code)]
 impl EvaluationMetrics {
     pub fn print(&self) {
         println!("   Total: {}", self.total);
@@ -48,7 +46,6 @@ impl EvaluationMetrics {
     }
 }
 
-#[allow(dead_code)]
 pub fn evaluate(
     classifier: &DeadCodeClassifier,
     examples: &[TrainingExample],
@@ -62,15 +59,10 @@ pub fn evaluate(
         let prediction = classifier.predict(example);
         let actual = &example.label;
 
-        // DEAD is the positive class
         match (prediction, actual) {
-            // True Positive: predicted Dead, actually Dead
             (TrainingLabel::Dead, TrainingLabel::Dead) => tp += 1,
-            // True Negative: predicted Alive, actually Alive
             (TrainingLabel::Alive, TrainingLabel::Alive) => tn += 1,
-            // False Negative: predicted Alive, actually Dead
             (TrainingLabel::Alive, TrainingLabel::Dead) => fn_ += 1,
-            // False Positive: predicted Dead, actually Alive
             (TrainingLabel::Dead, TrainingLabel::Alive) => fp += 1,
             _ => {}
         }
@@ -84,9 +76,6 @@ pub fn evaluate(
     } else {
         0.0
     };
-    // DEAD is positive class, so:
-    // Precision = TP / (TP + FP) - of all DEAD predictions, how many were actually DEAD?
-    // Recall = TP / (TP + FN) - of all actual DEAD, how many did we find?
     let precision = if tp + fp > 0 {
         tp as f64 / (tp + fp) as f64
     } else {

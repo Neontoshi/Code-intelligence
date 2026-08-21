@@ -1,3 +1,5 @@
+// src/lib.rs
+
 pub mod analysis;
 pub mod engine;
 pub mod error;
@@ -9,6 +11,19 @@ pub mod optimize;
 pub mod output;
 pub mod parser;
 pub mod utils;
+
+// ⭐ Add bin module for CLI tools
+pub mod bin {
+    pub mod common {
+        pub mod cleanup;
+        pub mod error_handler;
+        pub mod exit_codes;
+        pub mod graceful;
+        pub mod metrics;
+        pub mod monitor;
+        pub mod reporter;
+    }
+}
 
 // Re-export main types
 pub use analysis::complexity::ComplexityAnalyzer;
@@ -50,9 +65,3 @@ pub use parser::comments::CommentAnalyzer;
 pub use parser::semantic::SemanticAnalyzer;
 pub use utils::hashing::HashUtils;
 pub use utils::parallel::ParallelUtils;
-
-pub mod bin {
-    pub mod common {
-        pub mod exit_codes;
-    }
-}

@@ -1,5 +1,3 @@
-// src/bin/dashboard_ui/mod.rs
-
 pub mod layout;
 pub mod render_by_file;
 pub mod render_charts;

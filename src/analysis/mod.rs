@@ -2,6 +2,7 @@ pub mod complexity;
 pub mod context;
 pub mod dead_code;
 pub mod dynamic_refs;
+pub mod explainability;
 pub mod features;
 pub mod git_analysis;
 pub mod importance;

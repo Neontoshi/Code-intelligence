@@ -32,7 +32,10 @@
 //!   ci update                       - Update outcome by ID
 
 use clap::{Parser, Subcommand};
+use code_intelligence::analysis::dead_code::DeadCodeDetector;
+use code_intelligence::engine::config::PipelineConfig;
 use code_intelligence::graph::GraphMetrics;
+use code_intelligence::Pipeline;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -92,9 +95,7 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    // ========================================================================
     // Core Analysis
-    // ========================================================================
     /// Analyze a project for dead code
     Analyze {
         /// Path to analyze (defaults to current directory)
@@ -168,9 +169,7 @@ enum Commands {
         max_tokens: usize,
     },
 
-    // ========================================================================
     // Outcome Management
-    // ========================================================================
     /// List dead functions found in a project
     List {
         /// Path to list (defaults to current directory)
@@ -241,9 +240,7 @@ enum Commands {
         llm: bool,
     },
 
-    // ========================================================================
     // Training & Model Management
-    // ========================================================================
     /// Train the ML model
     Train {
         /// Training data path
@@ -350,9 +347,7 @@ enum Commands {
         detailed: bool,
     },
 
-    // ========================================================================
     // Data Management
-    // ========================================================================
     /// Export training data from a project
     Export {
         /// Path to analyze
@@ -398,9 +393,7 @@ enum Commands {
         output: PathBuf,
     },
 
-    // ========================================================================
     // Special Commands
-    // ========================================================================
     /// Open interactive dashboard
     Dashboard {
         /// Path to analyze (defaults to current directory)
@@ -419,6 +412,108 @@ enum Commands {
         /// Output file
         #[arg(long)]
         output: Option<PathBuf>,
+    },
+
+    Ci {
+        /// Path to analyze (defaults to current directory)
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Fail if dead code count exceeds this number
+        #[arg(long)]
+        max_dead: Option<usize>,
+
+        /// Fail if dead code ratio exceeds this (0.0-1.0)
+        #[arg(long)]
+        max_ratio: Option<f64>,
+
+        /// Output format: json, markdown, summary
+        #[arg(long, default_value = "json")]
+        format: String,
+
+        /// Output file
+        #[arg(long)]
+        output: Option<PathBuf>,
+
+        /// Fail on any dead code (default: true)
+        #[arg(long, default_value = "true")]
+        fail_on_dead: bool,
+
+        /// Threshold for dead code confidence
+        #[arg(long, default_value = "0.92")]
+        threshold: f64,
+
+        /// Disable memory limits (for CI with ample memory)
+        #[arg(long)]
+        no_memory_limit: bool,
+
+        /// Use conservative mode (higher threshold)
+        #[arg(long)]
+        conservative: bool,
+    },
+
+    /// Split repositories
+    Split {
+        #[arg(short, long, default_value = "combined_training.json")]
+        input: PathBuf,
+        #[arg(short, long, default_value = "data")]
+        output_dir: PathBuf,
+        #[arg(long, default_value = "0.7")]
+        train_ratio: f64,
+        #[arg(long, default_value = "0.15")]
+        val_ratio: f64,
+        #[arg(long, default_value = "0.15")]
+        test_ratio: f64,
+    },
+
+    /// Temporal evaluation
+    Temporal {
+        #[arg(short, long)]
+        model: PathBuf,
+        #[arg(short, long, default_value = "data/test.json")]
+        test_data: PathBuf,
+        #[arg(short, long, default_value = "5")]
+        windows: usize,
+        #[arg(short, long, default_value = "temporal_results")]
+        output: PathBuf,
+    },
+
+    /// Generate hard-negative dataset
+    HardNegatives {
+        project_dir: PathBuf,
+        #[arg(short, long, default_value = "hard_negatives.json")]
+        output: PathBuf,
+        #[arg(long, default_value = "100")]
+        count: usize,
+        #[arg(long, default_value = "0.7")]
+        min_confidence: f64,
+    },
+
+    /// Verify ground truth
+    VerifyGroundTruth {
+        project_dir: PathBuf,
+        #[arg(short, long, default_value = "verified_dataset.json")]
+        output: PathBuf,
+        #[arg(short, long)]
+        interactive: bool,
+        #[arg(long, default_value = "20")]
+        count: usize,
+    },
+
+    /// Calibration analysis
+    Calibration {
+        #[arg(short, long)]
+        model: PathBuf,
+        #[arg(short, long, default_value = "data/val.json")]
+        val_data: PathBuf,
+        #[arg(short, long, default_value = "data/test.json")]
+        test_data: PathBuf,
+        #[arg(long, default_value = "temperature")]
+        method: String,
+        #[arg(long)]
+        report: bool,
+        #[arg(long, default_value = "calibration_results")]
+        output_dir: PathBuf,
     },
 
     /// Configure global settings
@@ -453,13 +548,24 @@ enum UpdateAction {
     },
 }
 
+#[derive(Debug)]
+struct CiArgs {
+    path: PathBuf,
+    max_dead: Option<usize>,
+    max_ratio: Option<f64>,
+    format: String,
+    output: Option<PathBuf>,
+    fail_on_dead: bool,
+    threshold: f64,
+    no_memory_limit: bool,
+    conservative: bool,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     match args.command {
-        // ====================================================================
         // Core Analysis
-        // ====================================================================
         Commands::Analyze {
             path,
             threshold,
@@ -514,9 +620,150 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?;
         }
 
-        // ====================================================================
+        Commands::Ci {
+            path,
+            max_dead,
+            max_ratio,
+            format,
+            output,
+            fail_on_dead,
+            threshold,
+            no_memory_limit,
+            conservative,
+        } => {
+            // Create CiArgs struct from command fields
+            let ci_args = CiArgs {
+                path,
+                max_dead,
+                max_ratio,
+                format,
+                output,
+                fail_on_dead,
+                threshold,
+                no_memory_limit,
+                conservative,
+            };
+            run_ci(&ci_args)?;
+        }
+
+        Commands::Config { action } => {
+            run_config(action)?;
+        }
+
+        Commands::Split {
+            input,
+            output_dir,
+            train_ratio,
+            val_ratio,
+            test_ratio,
+        } => {
+            // Call the existing split_repositories binary
+            let status = Command::new("split_repositories")
+                .args(["--input", &input.to_string_lossy()])
+                .args(["--output-dir", &output_dir.to_string_lossy()])
+                .args(["--train-ratio", &train_ratio.to_string()])
+                .args(["--val-ratio", &val_ratio.to_string()])
+                .args(["--test-ratio", &test_ratio.to_string()])
+                .status()?;
+
+            if !status.success() {
+                eprintln!("❌ Split failed");
+                std::process::exit(1);
+            }
+            println!("✅ Split complete!");
+        }
+
+        Commands::Temporal {
+            model,
+            test_data,
+            windows,
+            output,
+        } => {
+            let status = Command::new("temporal_evaluation")
+                .args(["--model", &model.to_string_lossy()])
+                .args(["--test-data", &test_data.to_string_lossy()])
+                .args(["--windows", &windows.to_string()])
+                .args(["--output-dir", &output.to_string_lossy()])
+                .status()?;
+
+            if !status.success() {
+                eprintln!("❌ Temporal evaluation failed");
+                std::process::exit(1);
+            }
+            println!("✅ Temporal evaluation complete!");
+        }
+
+        Commands::HardNegatives {
+            project_dir,
+            output,
+            count,
+            min_confidence,
+        } => {
+            let status = Command::new("hard_negative_dataset")
+                .arg(&project_dir)
+                .args(["--output", &output.to_string_lossy()])
+                .args(["--count", &count.to_string()])
+                .args(["--min-confidence", &min_confidence.to_string()])
+                .status()?;
+
+            if !status.success() {
+                eprintln!("❌ Hard-negatives generation failed");
+                std::process::exit(1);
+            }
+            println!("✅ Hard-negatives generated!");
+        }
+
+        Commands::VerifyGroundTruth {
+            project_dir,
+            output,
+            interactive,
+            count,
+        } => {
+            let mut cmd = Command::new("verify_ground_truth");
+            cmd.arg(&project_dir)
+                .args(["--output", &output.to_string_lossy()])
+                .args(["--count", &count.to_string()]);
+
+            if interactive {
+                cmd.arg("--interactive");
+            }
+
+            let status = cmd.status()?;
+            if !status.success() {
+                eprintln!("❌ Ground truth verification failed");
+                std::process::exit(1);
+            }
+            println!("✅ Ground truth verified!");
+        }
+
+        Commands::Calibration {
+            model,
+            val_data,
+            test_data,
+            method,
+            report,
+            output_dir,
+        } => {
+            let mut cmd = Command::new("calibration_analysis");
+            cmd.args(["--model", &model.to_string_lossy()])
+                .args(["--val-data", &val_data.to_string_lossy()])
+                .args(["--test-data", &test_data.to_string_lossy()])
+                .args(["--method", &method]);
+
+            if report {
+                cmd.arg("--report");
+            }
+            cmd.args(["--output-dir", &output_dir.to_string_lossy()]);
+
+            let status = cmd.status()?;
+            if !status.success() {
+                eprintln!("❌ Calibration analysis failed");
+                std::process::exit(1);
+            }
+            println!("✅ Calibration analysis complete!");
+        }
+
         // Outcome Management
-        // ====================================================================
         Commands::List { path, all } => {
             let project_path = resolve_path(&path)?;
             run_list(&project_path, all)?;
@@ -552,9 +799,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_report(&project_path, &format, output, llm)?;
         }
 
-        // ====================================================================
         // Training & Model Management
-        // ====================================================================
         Commands::Train {
             data,
             val_data,
@@ -615,9 +860,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_evaluate_lang(&model, &test_data, val_data.as_deref(), detailed)?;
         }
 
-        // ====================================================================
         // Data Management
-        // ====================================================================
         Commands::Export { path, output } => {
             let project_path = resolve_path(&path)?;
             run_export(&project_path, &output)?;
@@ -643,9 +886,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_verify(&data, &output)?;
         }
 
-        // ====================================================================
         // Special Commands
-        // ====================================================================
         Commands::Dashboard { path, model } => {
             let project_path = resolve_path(&path)?;
             run_dashboard(&project_path, model)?;
@@ -653,10 +894,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         Commands::SelfAnalyze { format, output } => {
             run_self_analyze(&format, output)?;
-        }
-
-        Commands::Config { action } => {
-            run_config(action)?;
         }
     }
 
@@ -686,6 +923,122 @@ fn load_config() -> GlobalConfig {
             projects: std::collections::HashMap::new(),
         }
     }
+}
+
+fn run_ci(args: &CiArgs) -> Result<(), Box<dyn std::error::Error>> {
+    println!("🤖 Running in CI mode for: {:?}", args.path);
+    println!("   Threshold: {:.2}", args.threshold);
+    if args.conservative {
+        println!("   Conservative mode: ON");
+    }
+
+    // Run analysis with CI-optimized settings
+    let mut pipeline = Pipeline::new();
+
+    // Reduce memory limit in CI unless disabled
+    if !args.no_memory_limit {
+        let mut config = PipelineConfig::default();
+        config.max_memory_mb = Some(2048); // 2GB limit for CI
+        pipeline = pipeline.with_config(config);
+    }
+
+    // Disable expensive features for CI speed
+    let rt = tokio::runtime::Runtime::new()?;
+    let analysis = rt.block_on(pipeline.process_project(&args.path))?;
+
+    // Get dead code stats
+    let stats = DeadCodeDetector::get_dead_stats(&analysis.call_graph, &analysis.files);
+
+    // Generate report - ⭐ FIX: Use String for both cases
+    let report = if args.format == "json" {
+        let json_report = serde_json::json!({
+            "project": args.path.to_string_lossy(),
+            "threshold": args.threshold,
+            "total_functions": stats.total,
+            "dead_functions": stats.dead,
+            "alive_functions": stats.alive,
+            "dead_ratio": if stats.total > 0 {
+                stats.dead as f64 / stats.total as f64
+            } else { 0.0 },
+            "status": if stats.dead > 0 { "FAIL" } else { "PASS" },
+        });
+        serde_json::to_string_pretty(&json_report)?
+    } else {
+        format!(
+            "📊 CI Report\n\
+             ===========\n\
+             Project: {}\n\
+             Threshold: {:.2}\n\
+             Total Functions: {}\n\
+             Dead Functions: {}\n\
+             Dead Ratio: {:.1}%\n\
+             Status: {}\n",
+            args.path.to_string_lossy(),
+            args.threshold,
+            stats.total,
+            stats.dead,
+            if stats.total > 0 {
+                stats.dead as f64 / stats.total as f64 * 100.0
+            } else {
+                0.0
+            },
+            if stats.dead > 0 {
+                "❌ FAIL"
+            } else {
+                "✅ PASS"
+            }
+        )
+    };
+
+    // Write output
+    if let Some(output_path) = &args.output {
+        std::fs::write(output_path, &report)?;
+        println!("📄 Report written to: {:?}", output_path);
+    } else {
+        println!("{}", report);
+    }
+
+    // Determine exit code
+    let should_fail = args.fail_on_dead && stats.dead > 0;
+
+    if let Some(max_dead) = args.max_dead {
+        if stats.dead > max_dead {
+            eprintln!(
+                "❌ Dead code count {} exceeds limit {}",
+                stats.dead, max_dead
+            );
+            std::process::exit(1);
+        }
+    }
+
+    if let Some(max_ratio) = args.max_ratio {
+        let ratio = if stats.total > 0 {
+            stats.dead as f64 / stats.total as f64
+        } else {
+            0.0
+        };
+        if ratio > max_ratio {
+            eprintln!(
+                "❌ Dead ratio {:.1}% exceeds limit {:.1}%",
+                ratio * 100.0,
+                max_ratio * 100.0
+            );
+            std::process::exit(1);
+        }
+    }
+
+    if should_fail {
+        eprintln!("❌ Found {} dead functions", stats.dead);
+        std::process::exit(1);
+    }
+
+    if stats.dead == 0 {
+        println!("✅ No dead code found!");
+    } else {
+        println!("⚠️ Found {} dead functions (but not failing)", stats.dead);
+    }
+
+    Ok(())
 }
 
 fn save_config(config: &GlobalConfig) -> Result<(), String> {

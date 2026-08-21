@@ -3,6 +3,8 @@
 mod dashboard_ui;
 
 use code_intelligence::analysis::dead_code::DeadCodeAnalysis;
+use code_intelligence::analysis::explainability::ExplainabilityEngine;
+use code_intelligence::analysis::git_analysis::GitAnalyzer;
 use code_intelligence::graph::GraphMetrics;
 use code_intelligence::Pipeline;
 use crossterm::{
@@ -90,6 +92,7 @@ struct App {
     pending_id: Option<String>,
     reason_input: String,
     current_commit: String,
+    selected_evidence: Option<code_intelligence::analysis::explainability::VerdictExplanation>,
 }
 
 #[derive(Debug, Clone)]
@@ -125,9 +128,9 @@ impl App {
             pending_id: None,
             reason_input: String::new(),
             current_commit: String::new(),
+            selected_evidence: None,
         }
     }
-
     fn get_current_commit(&self) -> String {
         use std::process::Command;
         let output = Command::new("git")
@@ -386,6 +389,94 @@ impl App {
             }
         }
     }
+
+    fn show_evidence_for_function(
+        &self,
+        function_name: &str,
+    ) -> Option<code_intelligence::analysis::explainability::VerdictExplanation> {
+        if let Some(analysis) = &self.analysis {
+            for func in &analysis.functions {
+                if func.name == function_name {
+                    let git_info = GitAnalyzer::analyze(&self.project_path).ok();
+
+                    let func_node = code_intelligence::graph::call_graph::FunctionNode {
+                        name: func.name.clone(),
+                        full_path: func.full_path.clone(),
+                        file: func.file.clone(),
+                        line: func.line,
+                        body_start_line: 0,
+                        body_end_line: func.impact.lines_of_code,
+                        is_public: false,
+                        is_async: false,
+                        params: Vec::new(),
+                        returns: Vec::new(),
+                        complexity: func.impact.complexity,
+                        importance_score: 0.0,
+                        doc_comment: None,
+                        writes_to: Vec::new(),
+                        reads_from: Vec::new(),
+                        errors: Vec::new(),
+                        fan_in: 0,
+                        fan_out: 0,
+                        is_cycle: false,
+                        depth: 0,
+                        layer: String::new(),
+                        trait_impl: None,
+                        is_test: false,
+                        is_trait_method: false,
+                        is_trait_default: false,
+                    };
+
+                    use code_intelligence::analysis::training_data::TrainingLabel;
+                    use code_intelligence::analysis::verdict::{Signal, SignalDirection, Verdict};
+                    use code_intelligence::analysis::verdict_source::label_source::VerdictState;
+
+                    let verdict = Verdict {
+                        function_name: func.name.clone(),
+                        full_path: func.full_path.clone(),
+                        label: TrainingLabel::Dead,
+                        state: VerdictState::DefinitelyDead,
+                        confidence: func.score.score,
+                        signals: func
+                            .score
+                            .factors
+                            .iter()
+                            .map(|f| Signal {
+                                name: f.name.clone(),
+                                value: f.contribution.abs(),
+                                direction: if f.contribution > 0.0 {
+                                    SignalDirection::SupportsDead
+                                } else {
+                                    SignalDirection::SupportsAlive
+                                },
+                                weight: f.weight,
+                                explanation: f.explanation.clone(),
+                            })
+                            .collect(),
+                        ml_probability: Some(func.score.score),
+                        static_score: Some(func.score.score),
+                        explanation: format!(
+                            "Dead function with {:.1}% confidence",
+                            func.score.score * 100.0
+                        ),
+                        evidence_sources: Vec::new(),
+                        verified: false,
+                        verified_by: None,
+                    };
+
+                    let git_info_ref = git_info
+                        .as_ref()
+                        .and_then(|g| g.files.get(&std::path::PathBuf::from(&func.file)));
+                    return Some(ExplainabilityEngine::generate_explanation(
+                        &verdict,
+                        &func_node,
+                        git_info_ref,
+                    ));
+                }
+            }
+        }
+        None
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -500,6 +591,13 @@ fn handle_dialogs(app: &mut App, key: KeyCode) -> bool {
 }
 
 fn handle_navigation(app: &mut App, key: KeyCode) -> io::Result<()> {
+    if matches!(
+        key,
+        KeyCode::Tab | KeyCode::Right | KeyCode::Left | KeyCode::Char('l') | KeyCode::Char('h')
+    ) {
+        app.selected_evidence = None;
+    }
+
     match key {
         KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
             app.selected_tab = (app.selected_tab + 1) % app.tabs.len();
@@ -544,7 +642,34 @@ fn handle_navigation(app: &mut App, key: KeyCode) -> io::Result<()> {
     Ok(())
 }
 
-fn handle_actions(_app: &mut App, _key: KeyCode) -> bool {
+fn handle_actions(app: &mut App, key: KeyCode) -> bool {
+    match key {
+        KeyCode::Enter => {
+            if let Some(selected) = app.table_state.selected() {
+                if let Some(analysis) = &app.analysis {
+                    if let Some(func) = analysis.functions.get(selected) {
+                        // ⭐ Show evidence for the selected function
+                        if let Some(evidence) = app.show_evidence_for_function(&func.name) {
+                            app.selected_evidence = Some(evidence);
+                        }
+                        return true;
+                    }
+                }
+            }
+            // If evidence is showing, close it
+            if app.selected_evidence.is_some() {
+                app.selected_evidence = None;
+                return true;
+            }
+        }
+        KeyCode::Esc => {
+            if app.selected_evidence.is_some() {
+                app.selected_evidence = None;
+                return true;
+            }
+        }
+        _ => {}
+    }
     false
 }
 
@@ -603,12 +728,17 @@ fn ui(f: &mut Frame, app: &mut App) {
         .divider(symbols::DOT);
     f.render_widget(tabs, header_chunks[1]);
 
-    // Main content - delegate to dashboard_ui
     match &app.analysis {
         Some(analysis) => match app.selected_tab {
             0 => dashboard_ui::render_summary(f, root[1], analysis, app),
             1 => dashboard_ui::render_charts(f, root[1], analysis),
-            2 => dashboard_ui::render_list(f, root[1], analysis, &mut app.table_state),
+            2 => dashboard_ui::render_list(
+                f,
+                root[1],
+                analysis,
+                &mut app.table_state,
+                app.selected_evidence.as_ref(),
+            ),
             3 => dashboard_ui::render_by_file(f, root[1], analysis),
             4 => dashboard_ui::render_priority(f, root[1], analysis),
             5 => dashboard_ui::render_history(f, root[1], &app.decisions),

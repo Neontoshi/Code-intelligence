@@ -16,7 +16,7 @@ toml = "0.8"
 thiserror = "1"
 lazy_static = "1.4"
 hex = "0.4"
-once_cell = "1.19"  # ⭐ NEW
+once_cell = "1.19"
 
 # Parsing
 tree-sitter = "0.22"
@@ -71,6 +71,9 @@ reqwest = { version = "0.13.4", features = ["json", "stream"] }
 ratatui = "0.26"
 crossterm = "0.27"
 
+tempfile = "3"      # For temporary files
+ctrlc = "3"         # For signal handling
+
 # ML / Linear Algebra
 linfa = { version = "0.7", features = ["serde"] }
 linfa-logistic = "0.7"
@@ -118,18 +121,16 @@ path = "tests/unit/mod.rs"
 name = "integration"
 path = "tests/integration.rs"
 
-[[bin]]
-name = "analyze_features_per_language"
-path = "src/bin/analyze_features_per_language.rs"
+# ============================================================
+# BINARIES - Cleaned up (13 total)
+# ============================================================
 
+# Core CLI
 [[bin]]
-name = "calibrate_model"
-path = "src/bin/calibrate_model.rs"
+name = "ci"
+path = "src/bin/ci.rs"
 
-[[bin]]
-name = "collect_training_data"
-path = "src/bin/collect_training_data.rs"
-
+# Core Analysis
 [[bin]]
 name = "dead_code_check"
 path = "src/bin/dead_code_check.rs"
@@ -142,78 +143,41 @@ path = "src/bin/dead_code_dashboard.rs"
 name = "dedup_check"
 path = "src/bin/dedup_check.rs"
 
-[[bin]]
-name = "evaluate_per_language"
-path = "src/bin/evaluate_per_language.rs"
-
-[[bin]]
-name = "feature_ablation"
-path = "src/bin/feature_ablation.rs"
-
-[[bin]]
-name = "merge_all_training_data"
-path = "src/bin/merge_all_training_data.rs"
-
-[[bin]]
-name = "merge_training_data"
-path = "src/bin/merge_training_data.rs"
-
-[[bin]]
-name = "model_comparison"
-path = "src/bin/model_comparison.rs"
-
-[[bin]]
-name = "train_duplicate_model"
-path = "src/bin/train_duplicate_model.rs"
-
+# Training & Model Management
 [[bin]]
 name = "train_model"
 path = "src/bin/train_model.rs"
 
 [[bin]]
-name = "training_data_exporter"
-path = "src/bin/training_data_exporter.rs"
+name = "calibrate_model"
+path = "src/bin/calibrate_model.rs"
 
 [[bin]]
 name = "tune_threshold"
 path = "src/bin/tune_threshold.rs"
 
 [[bin]]
-name = "verify_dead_candidates"
-path = "src/bin/verify_dead_candidates.rs"
+name = "train_duplicate_model"
+path = "src/bin/train_duplicate_model.rs"
 
-[[bin]]
-name = "update_outcome"
-path = "src/bin/update_outcome.rs"
-
-[[bin]]
-name = "ci"
-path = "src/bin/ci.rs"
-
-[[bin]]
-name = "verify_ground_truth"
-path = "src/bin/verify_ground_truth.rs"
-
-[[bin]]
-name = "split_repositories"
-path = "src/bin/split_repositories.rs"
-
-[[bin]]
-name = "temporal_evaluation"
-path = "src/bin/temporal_evaluation.rs"
-
-[[bin]]
-name = "hard_negative_dataset"
-path = "src/bin/hard_negative_dataset.rs"
-
+# Evaluation
 [[bin]]
 name = "evaluate_metrics"
 path = "src/bin/evaluate_metrics.rs"
 
 [[bin]]
-name = "evaluate_per_language_detailed"
-path = "src/bin/evaluate_per_language_detailed.rs"
+name = "evaluate_per_language"
+path = "src/bin/evaluate_per_language.rs"
+
+# Data Management
+[[bin]]
+name = "training_data_exporter"
+path = "src/bin/training_data_exporter.rs"
 
 [[bin]]
-name = "calibration_analysis"
-path = "src/bin/calibration_analysis.rs"
+name = "merge_all_training_data"
+path = "src/bin/merge_all_training_data.rs"
+
+[[bin]]
+name = "collect_training_data"
+path = "src/bin/collect_training_data.rs"
