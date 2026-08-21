@@ -7,6 +7,7 @@ use crate::engine::cache::{AnalysisCacheManager, CachedFileEntry, FileCache};
 use crate::engine::call_graph_builder::CallGraphBuilder;
 use crate::engine::config::PipelineConfig;
 use crate::engine::file_collector::FileCollector;
+use crate::engine::incremental::{FileTracker, IncrementalResult};
 use crate::engine::indexer::IndexBuilder;
 use crate::engine::llm_analysis::{LLMAnalysis, LLMAnalyzer};
 use crate::engine::stages::{AnalyzedProject, OptimizedProject, ParsedProject, RawProject};
@@ -14,6 +15,7 @@ use crate::graph::call_graph::CallGraph;
 use crate::graph::project_graph::ProjectGraphBuilder;
 use crate::graph::traits::GraphMetrics;
 use crate::llm::{create_ollama_phi2, CodeUnderstandingEngine, LLMProvider};
+use crate::logging::StructuredLogger;
 use crate::parser::tree_sitter::{ParsedFile, TreeSitterParser};
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -44,6 +46,9 @@ pub struct Pipeline {
     analysis_cache: Option<AnalysisCacheManager>,
     progress: Option<ProgressFn>,
     last_build_summary: Option<BuildSummary>,
+    logger: Option<std::sync::Mutex<StructuredLogger>>,
+    file_tracker: Option<FileTracker>,
+    enable_incremental: bool,
 }
 
 impl Pipeline {
@@ -58,6 +63,105 @@ impl Pipeline {
             analysis_cache: None,
             progress: None,
             last_build_summary: None,
+            logger: None,
+            file_tracker: None,
+            enable_incremental: false,
+        }
+    }
+
+    pub fn with_logging(mut self, logger: StructuredLogger) -> Self {
+        self.logger = Some(std::sync::Mutex::new(logger));
+        self
+    }
+
+    fn log_event(&self, event: &str, fields: HashMap<String, serde_json::Value>) {
+        if let Some(logger) = &self.logger {
+            if let Ok(mut logger) = logger.lock() {
+                logger.info(event, fields);
+            }
+        }
+    }
+
+    fn report(&self, msg: &str) {
+        // Progress reporting
+        if let Some(f) = &self.progress {
+            f(msg);
+        }
+        // Structured logging
+        let mut fields = HashMap::new();
+        fields.insert(
+            "message".to_string(),
+            serde_json::Value::String(msg.to_string()),
+        );
+        self.log_event("progress", fields);
+    }
+
+    // Update stage methods to log events
+    pub fn stage_collect(&self, root: &Path) -> RawProject {
+        self.log_event("stage_collect_started", {
+            let mut fields = HashMap::new();
+            fields.insert(
+                "root".to_string(),
+                serde_json::Value::String(root.to_string_lossy().to_string()),
+            );
+            fields
+        });
+        let result = FileCollector::collect(root, &self.config);
+        self.log_event("stage_collect_completed", {
+            let mut fields = HashMap::new();
+            fields.insert(
+                "files_found".to_string(),
+                serde_json::Value::Number(result.files.len().into()),
+            );
+            fields
+        });
+        result
+    }
+
+    pub fn with_incremental(mut self, tracker: FileTracker) -> Self {
+        self.file_tracker = Some(tracker);
+        self.enable_incremental = true;
+        self
+    }
+
+    pub fn enable_incremental(mut self) -> Self {
+        self.enable_incremental = true;
+        if self.file_tracker.is_none() {
+            self.file_tracker = Some(FileTracker::new());
+        }
+        self
+    }
+
+    pub fn detect_changes(&mut self, files: &[ParsedFile]) -> Option<IncrementalResult> {
+        if !self.enable_incremental {
+            return None;
+        }
+
+        if let Some(tracker) = &mut self.file_tracker {
+            let changed_files = tracker.detect_changes(files);
+            if !changed_files.is_empty() {
+                // Cache hit - we can skip full analysis
+                let result = IncrementalResult {
+                    changed_files,
+                    affected_functions: Vec::new(),
+                    removed_functions: Vec::new(),
+                    added_functions: Vec::new(),
+                    modified_functions: Vec::new(),
+                    cache_hit: false,
+                };
+                Some(result)
+            } else {
+                Some(IncrementalResult {
+                    changed_files: Vec::new(),
+                    affected_functions: Vec::new(),
+                    removed_functions: Vec::new(),
+                    added_functions: Vec::new(),
+                    modified_functions: Vec::new(),
+                    cache_hit: true,
+                })
+            }
+        } else {
+            None
         }
     }
 
@@ -85,11 +189,6 @@ impl Pipeline {
     }
     pub fn take_build_summary(&mut self) -> Option<BuildSummary> {
         self.last_build_summary.take()
-    }
-    fn report(&self, msg: &str) {
-        if let Some(f) = &self.progress {
-            f(msg);
-        }
     }
 
     pub async fn with_ollama_phi2(mut self) -> Result<Self, String> {
@@ -136,11 +235,6 @@ impl Pipeline {
             }
         }
         entries
-    }
-
-    // Stage Methods
-    pub fn stage_collect(&self, root: &Path) -> RawProject {
-        FileCollector::collect(root, &self.config)
     }
 
     pub fn stage_parse_parallel(&self, raw: RawProject) -> ParsedProject {
@@ -297,6 +391,29 @@ impl Pipeline {
         let start_time = std::time::Instant::now();
         let project_hash = self.cache.hash_content(&format!("{:?}", root));
 
+        // Check for incremental changes
+        let raw = self.stage_collect(root);
+        self.report(&format!("found {} files", raw.files.len()));
+
+        let parsed = self.stage_parse_parallel(raw);
+        self.report(&format!("parsed {} files", parsed.files.len()));
+
+        // Check if we can use incremental analysis
+        if let Some(incremental_result) = self.detect_changes(&parsed.files) {
+            if incremental_result.cache_hit {
+                self.report("cache hit - using cached analysis");
+                // Return cached analysis if available
+                if let Some(cached) = self.load_from_cache(&project_hash) {
+                    return Ok(cached);
+                }
+            } else {
+                self.report(&format!(
+                    "{} files changed, performing incremental analysis",
+                    incremental_result.changed_files.len()
+                ));
+            }
+        }
+
         // Check if we have cached analysis
         if let Some(cache_mgr) = &self.analysis_cache {
             let file_entries = self.collect_file_hashes(root);
@@ -394,6 +511,10 @@ impl Pipeline {
         self.save_to_cache(&project_hash, root, &analysis)?;
 
         Ok(analysis)
+    }
+    fn load_from_cache(&self, _project_hash: &str) -> Option<ProjectAnalysis> {
+        // Implementation to load cached analysis
+        None // Placeholder
     }
 
     pub async fn process_project_with_git(

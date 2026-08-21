@@ -120,7 +120,10 @@ impl FunctionFeatures {
         }
     }
 
-    // Computation Helpers
+    // src/analysis/features.rs
+
+    // Find this function and add bounds checking:
+
     fn compute_complexity_metrics(source: &str) -> (f64, f64, usize) {
         let mut complexity: f64 = 1.0;
         let mut cyclomatic: f64 = 1.0;
@@ -144,6 +147,11 @@ impl FunctionFeatures {
             ("unwrap", 0.2),
             ("expect", 0.2),
         ];
+
+        // ⭐ FIX: Add bounds checking for empty source
+        if source.is_empty() {
+            return (1.0, 1.0, 0);
+        }
 
         for line in source.lines() {
             let trimmed = line.trim();

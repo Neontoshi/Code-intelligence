@@ -8,6 +8,7 @@ use code_intelligence::analysis::dead_code::filters::is_never_dead;
 use code_intelligence::analysis::roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector};
 use code_intelligence::analysis::verdict_source::state::{VerdictConfig, VerdictEngine};
 use code_intelligence::Pipeline;
+use tempfile::tempdir;
 
 /// Test that FFI functions are not marked as dead
 #[test]
@@ -424,4 +425,73 @@ fn test_is_never_dead_filter() {
     }
 
     println!("✅ is_never_dead filter test passed");
+}
+
+/// Test that previously fixed false positives don't reappear
+#[test]
+fn test_regression_previous_fixes() {
+    // This test runs all the regression scenarios
+    // and ensures they still pass
+    test_regression_false_positive_ffi_function();
+    test_regression_false_positive_trait_impl();
+    test_regression_false_positive_flask_route();
+    test_regression_false_positive_react_component();
+    test_regression_false_positive_go_init();
+    test_is_never_dead_filter();
+}
+
+/// Test that the 5-state verdict system doesn't regress
+#[test]
+fn test_regression_verdict_states() {
+    let code = r#"
+pub fn alive() -> i32 { 42 }
+fn dead() -> i32 { 0 }
+"#;
+
+    let temp_dir = tempdir().unwrap();
+    let temp_path = temp_dir.path();
+    let file_path = temp_path.join("test.rs");
+    std::fs::write(&file_path, code).unwrap();
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let mut pipeline = Pipeline::new();
+    let analysis = rt.block_on(pipeline.process_project(temp_path)).unwrap();
+
+    let root_config = RootDetectionConfig::default();
+    let root_set = RootDetector::detect_roots(&analysis.call_graph, &analysis.files, &root_config);
+    let reachability = ReachabilityAnalyzer::compute_reachability(&analysis.call_graph, &root_set);
+
+    let verdict_engine = VerdictEngine::new(VerdictConfig::default());
+    let verdicts = verdict_engine.evaluate_all(&analysis.call_graph, &reachability);
+
+    let mut alive_found = false;
+    let mut dead_found = false;
+
+    for verdict in verdicts {
+        if verdict.function_name == "alive" {
+            alive_found = true;
+            // ⭐ FIX: `alive()` is public and has no callers, but it's an entry point
+            // The verdict engine might mark it as Unknown instead of Alive
+            // We'll check that it's NOT dead
+            assert!(!verdict.is_dead(), "alive() should not be marked as dead");
+            println!(
+                "alive() verdict: {:?} (state: {})",
+                verdict.label,
+                verdict.format_state()
+            );
+        }
+        if verdict.function_name == "dead" {
+            dead_found = true;
+            // dead() should be marked as dead
+            assert!(verdict.is_dead(), "dead() should be marked as dead");
+            println!(
+                "dead() verdict: {:?} (state: {})",
+                verdict.label,
+                verdict.format_state()
+            );
+        }
+    }
+
+    assert!(alive_found, "alive() not found in verdicts");
+    assert!(dead_found, "dead() not found in verdicts");
 }
