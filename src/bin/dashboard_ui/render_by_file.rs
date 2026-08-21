@@ -70,7 +70,12 @@ pub fn render_by_file(
             ),
         ]));
         let mut sorted_funcs = funcs.clone();
-        sorted_funcs.sort_by(|a, b| b.score.score.partial_cmp(&a.score.score).unwrap());
+        sorted_funcs.sort_by(|a, b| {
+            b.score
+                .score
+                .partial_cmp(&a.score.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         for func in sorted_funcs.iter().take(5) {
             let color = confidence_color(func.score.score * 100.0);
             lines.push(Line::from(vec![

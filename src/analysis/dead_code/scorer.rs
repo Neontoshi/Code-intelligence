@@ -163,14 +163,16 @@ impl ConfidenceScorer {
         }
 
         // 7. Macro generated penalty (-40)
-        if func.doc_comment.is_some() && func.doc_comment.as_ref().unwrap().contains("macro") {
-            score += self.weights.macro_generated;
-            factors.push(ScoreFactor {
-                name: "macro_generated".to_string(),
-                weight: self.weights.macro_generated.abs(),
-                contribution: self.weights.macro_generated,
-                explanation: "Likely macro-generated code".to_string(),
-            });
+        if let Some(doc) = &func.doc_comment {
+            if doc.contains("macro") {
+                score += self.weights.macro_generated;
+                factors.push(ScoreFactor {
+                    name: "macro_generated".to_string(),
+                    weight: self.weights.macro_generated.abs(),
+                    contribution: self.weights.macro_generated,
+                    explanation: "Likely macro-generated code".to_string(),
+                });
+            }
         }
 
         // 8. Public API penalty (-20)

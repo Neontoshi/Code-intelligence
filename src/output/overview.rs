@@ -192,8 +192,9 @@ impl OverviewGraph {
         function_edges: &[serde_json::Value],
         project_name: &str,
     ) -> String {
-        let nodes_json = serde_json::to_string(function_nodes).unwrap();
-        let fn_edges_json = serde_json::to_string(function_edges).unwrap();
+        let nodes_json = serde_json::to_string(function_nodes).unwrap_or_else(|_| "[]".to_string());
+        let fn_edges_json =
+            serde_json::to_string(function_edges).unwrap_or_else(|_| "[]".to_string());
 
         let layers_json = serde_json::to_string(
             &layers
@@ -209,7 +210,7 @@ impl OverviewGraph {
                 })
                 .collect::<Vec<_>>(),
         )
-        .unwrap();
+        .expect("Failed to serialize layers for overview");
 
         let edges_json = serde_json::to_string(
             &edges
@@ -223,7 +224,7 @@ impl OverviewGraph {
                 })
                 .collect::<Vec<_>>(),
         )
-        .unwrap();
+        .expect("Failed to serialize function edges for overview");
 
         format!(
             r###"<!DOCTYPE html>

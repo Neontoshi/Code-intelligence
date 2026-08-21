@@ -757,7 +757,11 @@ Provide analysis in JSON format:
             .node_indices()
             .map(|idx| &call_graph[idx])
             .collect();
-        sorted.sort_by(|a, b| b.importance_score.partial_cmp(&a.importance_score).unwrap());
+        sorted.sort_by(|a, b| {
+            b.importance_score
+                .partial_cmp(&a.importance_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let mut output = String::new();
         for func in sorted.iter().take(count) {
@@ -781,7 +785,11 @@ Provide analysis in JSON format:
             })
             .map(|idx| &call_graph[idx])
             .collect();
-        entries.sort_by(|a, b| b.importance_score.partial_cmp(&a.importance_score).unwrap());
+        entries.sort_by(|a, b| {
+            b.importance_score
+                .partial_cmp(&a.importance_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let mut output = String::new();
         for func in entries.iter().take(count) {
@@ -806,7 +814,7 @@ Provide analysis in JSON format:
             return "No functions found.\n".to_string();
         }
 
-        complexities.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        complexities.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         let sum: f64 = complexities.iter().sum();
         let avg = sum / complexities.len() as f64;

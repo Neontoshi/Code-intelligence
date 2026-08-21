@@ -487,6 +487,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("      Impact: {}", func.impact.estimated_removal_impact);
         }
     }
+    use code_intelligence::bin::common::exit_codes::ExitCode;
 
-    Ok(())
+    // Exit with proper code based on results
+    if filtered_analysis.functions.len() > 0 {
+        std::process::exit(ExitCode::AnalysisFoundIssues.as_i32());
+    } else {
+        std::process::exit(ExitCode::Success.as_i32());
+    }
 }

@@ -201,7 +201,8 @@ impl RAGGenerator {
                 }
             });
 
-            output.push_str(&serde_json::to_string(&entry).unwrap());
+            output.push_str(&serde_json::to_string(&entry).unwrap_or_else(|_| "{}".to_string()));
+
             output.push('\n');
         }
 

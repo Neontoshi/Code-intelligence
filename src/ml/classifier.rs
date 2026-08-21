@@ -112,7 +112,12 @@ impl LinearClassifier {
 
             for example in &shuffled {
                 let raw = example.features.to_feature_vector();
-                let features = self.scaler.as_ref().unwrap().transform(&raw);
+                let features = self
+                    .scaler
+                    .as_ref()
+                    .expect("scaler was just fitted and set above the training loop")
+                    .transform(&raw);
+
                 let target = match example.label {
                     TrainingLabel::Alive => 1.0,
                     TrainingLabel::Dead => 0.0,

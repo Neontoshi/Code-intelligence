@@ -97,8 +97,9 @@ harness = false
 path = "benches/compression.rs"
 
 [features]
-default = ["ml"]
+default = ["ml", "cli"]
 ml = []
+cli = []
 
 [[bin]]
 name = "analyze_features_per_language"

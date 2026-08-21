@@ -388,9 +388,10 @@ impl CallGraph {
                         dfs_stack.push((neighbor, 0));
                     } else if on_stack.contains(&neighbor) {
                         let neighbor_low = *lowlink.get(&neighbor).unwrap_or(&0);
-                        let node_low = lowlink.get_mut(node).unwrap();
-                        if neighbor_low < *node_low {
-                            *node_low = neighbor_low;
+                        if let Some(node_low) = lowlink.get_mut(node) {
+                            if neighbor_low < *node_low {
+                                *node_low = neighbor_low;
+                            }
                         }
                     }
                 } else {
@@ -400,9 +401,10 @@ impl CallGraph {
                     let len = dfs_stack.len();
                     if len >= 2 {
                         let parent = dfs_stack[len - 2].0;
-                        let parent_low = lowlink.get_mut(&parent).unwrap();
-                        if node_low < *parent_low {
-                            *parent_low = node_low;
+                        if let Some(parent_low) = lowlink.get_mut(&parent) {
+                            if node_low < *parent_low {
+                                *parent_low = node_low;
+                            }
                         }
                     }
 

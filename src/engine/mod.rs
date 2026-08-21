@@ -4,6 +4,7 @@ pub mod cache;
 pub mod call_graph_builder;
 pub mod config;
 pub mod file_collector;
+pub mod incremental;
 pub mod indexer;
 pub mod llm_analysis;
 pub mod pipeline;

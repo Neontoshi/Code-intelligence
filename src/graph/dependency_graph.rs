@@ -158,11 +158,12 @@ impl DependencyGraph {
                 .edges_directed(node, petgraph::Direction::Outgoing)
             {
                 let target = edge.target();
-                let degree = indegree.get_mut(&target).unwrap();
-                *degree -= 1;
+                if let Some(degree) = indegree.get_mut(&target) {
+                    *degree -= 1;
 
-                if *degree == 0 {
-                    queue.push(target);
+                    if *degree == 0 {
+                        queue.push(target);
+                    }
                 }
             }
         }

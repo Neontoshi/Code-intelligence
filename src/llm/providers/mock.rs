@@ -62,7 +62,11 @@ impl MockProvider {
 
     /// Find the best matching response for a prompt
     fn get_response(&self, prompt: &str) -> String {
-        let responses = self.responses.lock().unwrap();
+        // This lock should never fail in single-threaded tests
+        let responses = self
+            .responses
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         // Try exact match first
         if let Some(response) = responses.get(prompt) {
@@ -303,7 +307,7 @@ mod tests {
             .await;
         assert!(response.is_ok());
 
-        let resp = response.unwrap();
+        let resp = response.expect("Mock response should be available");
         assert!(!resp.content.is_empty());
         assert_eq!(resp.model, "mock");
         assert!(resp.usage.is_some());

@@ -812,7 +812,8 @@ fn run_analyze(
     let threshold = threshold
         .or(get_project_config(path).and_then(|c| c.threshold))
         .unwrap_or_else(get_default_threshold);
-    let model_path = model.unwrap();
+    let model_path =
+        model.ok_or_else(|| "Model not configured. Run: ci config set model <path>".to_string())?;
 
     println!("📊 Using threshold: {:.2}", threshold);
     println!("🤖 Using model: {}", model_path);

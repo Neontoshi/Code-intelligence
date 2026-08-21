@@ -195,9 +195,9 @@ impl InteractiveGraph {
         stats: &serde_json::Value,
         project_name: &str,
     ) -> String {
-        let nodes_json = serde_json::to_string(nodes).unwrap();
-        let edges_json = serde_json::to_string(edges).unwrap();
-        let stats_json = serde_json::to_string(stats).unwrap();
+        let nodes_json = serde_json::to_string(nodes).unwrap_or_else(|_| "[]".to_string());
+        let edges_json = serde_json::to_string(edges).unwrap_or_else(|_| "[]".to_string());
+        let stats_json = serde_json::to_string(stats).unwrap_or_else(|_| "{}".to_string());
 
         format!(
             r###"<!DOCTYPE html>

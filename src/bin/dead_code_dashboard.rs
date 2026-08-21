@@ -162,11 +162,14 @@ impl App {
         }
     }
 
-    fn save_decision(&self, decision: &DashboardDecision) {
+    fn save_decision(&self, decision: &DashboardDecision) -> Result<(), String> {
         let path = self.project_path.join(".code-intelligence-decisions.json");
         let mut decisions = self.load_decisions();
         decisions.push(decision.clone());
-        let _ = std::fs::write(&path, serde_json::to_string_pretty(&decisions).unwrap());
+
+        let json = serde_json::to_string_pretty(&decisions)
+            .map_err(|e| format!("Failed to serialize decisions: {}", e))?;
+        std::fs::write(&path, json).map_err(|e| format!("Failed to write decisions file: {}", e))
     }
 
     fn get_analysis_id(&self) -> String {
@@ -206,7 +209,9 @@ impl App {
             model_version: self.get_model_version(),
             source_commit: self.get_source_commit(),
         };
-        self.save_decision(&decision_record);
+        if let Err(e) = self.save_decision(&decision_record) {
+            self.error = Some(format!("Decision not saved: {}", e));
+        }
         self.decisions.push(decision_record);
     }
 
@@ -219,12 +224,15 @@ impl App {
 
         use indicatif::{ProgressBar, ProgressStyle};
         let pb = ProgressBar::new_spinner();
-        pb.set_style(ProgressStyle::with_template("  {spinner:.cyan} {msg}").unwrap());
+        pb.set_style(
+            ProgressStyle::with_template("  {spinner:.cyan} {msg}")
+                .expect("Invalid progress bar template"),
+        );
         pb.enable_steady_tick(std::time::Duration::from_millis(80));
 
         let pb_clone = pb.clone();
         let result = std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async {
                 let mut pipeline = Pipeline::new().with_progress_reporter(std::sync::Arc::new(
                     move |msg: &str| {
@@ -361,7 +369,7 @@ impl App {
             })
         });
 
-        let outcome = result.join().unwrap();
+        let outcome = result.join().expect("Thread panicked during analysis");
         pb.finish_and_clear();
 
         match outcome {

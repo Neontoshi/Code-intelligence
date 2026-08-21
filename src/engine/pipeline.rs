@@ -372,7 +372,10 @@ impl Pipeline {
 
         let llm_analysis = if self.config.enable_llm && self.code_understanding.is_some() {
             self.report("running LLM analysis...");
-            let engine = self.code_understanding.as_mut().unwrap();
+            let engine = self
+                .code_understanding
+                .as_mut()
+                .ok_or_else(|| "LLM engine not initialized".to_string())?;
             let analysis = LLMAnalyzer::analyze(engine, &call_graph, &optimized.files).await;
             analysis.ok()
         } else {
@@ -462,5 +465,41 @@ impl Pipeline {
             println!("💾 Cached analysis for {:?}", root);
         }
         Ok(())
+    }
+    pub fn check_memory(&self) -> Result<(), String> {
+        if let Some(limit_mb) = self.config.max_memory_mb {
+            let current = self.get_current_memory_usage_mb();
+            if current > limit_mb as f64 * 0.9 {
+                return Err(format!(
+                    "Memory usage {:.1}MB approaching limit {}MB",
+                    current, limit_mb
+                ));
+            }
+            if current > limit_mb as f64 {
+                return Err(format!(
+                    "Memory limit {}MB exceeded (current: {:.1}MB)",
+                    limit_mb, current
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn get_current_memory_usage_mb(&self) -> f64 {
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(contents) = std::fs::read_to_string("/proc/self/statm") {
+                let parts: Vec<&str> = contents.split_whitespace().collect();
+                if let Some(&size) = parts.first() {
+                    if let Ok(pages) = size.parse::<f64>() {
+                        let page_size = 4096.0; // Typical page size
+                        return pages * page_size / 1024.0 / 1024.0;
+                    }
+                }
+            }
+        }
+        // Fallback: estimate from allocated bytes
+        let allocated = self.cache.len() * 1024; // Rough estimate
+        allocated as f64 / 1024.0 / 1024.0
     }
 }

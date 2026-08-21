@@ -239,8 +239,14 @@ fn generate_summary(metrics: &[LanguageMetrics]) -> LanguageSummary {
     let mut sorted = metrics.to_vec();
     sorted.sort_by(|a, b| b.f1.partial_cmp(&a.f1).unwrap_or(std::cmp::Ordering::Equal));
 
-    let best_language = sorted.first().unwrap().language.clone();
-    let worst_language = sorted.last().unwrap().language.clone();
+    let best_language = sorted
+        .first()
+        .map(|m| m.language.clone())
+        .unwrap_or_else(|| "none".to_string());
+    let worst_language = sorted
+        .last()
+        .map(|m| m.language.clone())
+        .unwrap_or_else(|| "none".to_string());
 
     let avg_f1: f64 = metrics.iter().map(|m| m.f1).sum::<f64>() / metrics.len() as f64;
     let f1_variance: f64 =

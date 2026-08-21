@@ -1,7 +1,9 @@
 pub mod analysis;
 pub mod engine;
+pub mod error;
 pub mod graph;
 pub mod llm;
+pub mod logging;
 pub mod ml;
 pub mod optimize;
 pub mod output;
@@ -48,3 +50,9 @@ pub use parser::comments::CommentAnalyzer;
 pub use parser::semantic::SemanticAnalyzer;
 pub use utils::hashing::HashUtils;
 pub use utils::parallel::ParallelUtils;
+
+pub mod bin {
+    pub mod common {
+        pub mod exit_codes;
+    }
+}

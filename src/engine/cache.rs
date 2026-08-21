@@ -123,6 +123,59 @@ impl FileCache {
     pub fn len(&self) -> usize {
         self.cache.len()
     }
+
+    pub fn validate(&self, path: &Path) -> bool {
+        if let Some(dir) = &self.persistent_dir {
+            let hash = self.hash_file(path);
+            if let Some(hash) = hash {
+                let cache_path = dir.join(format!("{}.cache", hash));
+                if cache_path.exists() {
+                    // Verify the cache file is readable and valid
+                    if let Ok(data) = std::fs::read_to_string(&cache_path) {
+                        if let Ok(_entry) = serde_json::from_str::<CacheEntry<String>>(&data) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Clear invalid cache entries
+    pub fn clear_invalid(&self) -> usize {
+        let mut cleared = 0;
+        if let Some(dir) = &self.persistent_dir {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let path = entry.path();
+                    if let Some(ext) = path.extension() {
+                        if ext == "cache" {
+                            // Check if the cache entry is valid
+                            if let Ok(data) = std::fs::read_to_string(&path) {
+                                if let Ok(entry) = serde_json::from_str::<CacheEntry<String>>(&data)
+                                {
+                                    // Validate the entry
+                                    let key = entry.hash;
+                                    if key.is_empty() {
+                                        let _ = std::fs::remove_file(&path);
+                                        cleared += 1;
+                                    }
+                                } else {
+                                    let _ = std::fs::remove_file(&path);
+                                    cleared += 1;
+                                }
+                            } else {
+                                let _ = std::fs::remove_file(&path);
+                                cleared += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        cleared
+    }
 }
 
 impl Default for FileCache {
@@ -284,8 +337,9 @@ mod tests {
     fn test_cache_hash_file() {
         let cache = FileCache::new();
         let temp_file = temp_dir().join("test.txt");
-        std::fs::write(&temp_file, "hello world").unwrap();
 
+        // Test code - unwrap is acceptable here
+        std::fs::write(&temp_file, "hello world").unwrap();
         let hash = cache.hash_file(&temp_file);
         assert!(hash.is_some());
 

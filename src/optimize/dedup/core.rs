@@ -100,8 +100,12 @@ pub fn compute_ast_hash(_func: &FunctionNode, source: &str) -> String {
         let id_regex = Regex::new(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b").unwrap();
         let mut replacements = Vec::new();
 
+        // After
         for cap in id_regex.captures_iter(line) {
-            let word = cap.get(1).unwrap().as_str();
+            let Some(m) = cap.get(1) else {
+                continue;
+            };
+            let word = m.as_str();
 
             let skip_words = [
                 "if", "else", "for", "while", "match", "fn", "pub", "async", "await", "return",
@@ -113,8 +117,8 @@ pub fn compute_ast_hash(_func: &FunctionNode, source: &str) -> String {
                 continue;
             }
 
-            let start = cap.get(0).unwrap().start();
-            let end = cap.get(0).unwrap().end();
+            let start = m.start();
+            let end = m.end();
             let prev_char = line[..start].chars().last().unwrap_or(' ');
             if prev_char == '.' || prev_char == ':' || prev_char == '<' {
                 continue;

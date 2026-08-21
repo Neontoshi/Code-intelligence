@@ -409,7 +409,9 @@ impl OllamaProvider {
             extra_headers: Vec::new(),
             api_key: None,
         };
-        Self::new(&config).await.unwrap()
+        Self::new(&config)
+            .await
+            .expect("Failed to create Ollama provider for phi-2. Make sure Ollama is running.")
     }
 
     /// Optimized generation for phi-2 with lower temperature for structured output

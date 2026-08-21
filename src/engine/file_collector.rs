@@ -9,6 +9,7 @@ use walkdir::WalkDir;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+// These regexes are validated at compile time - unwrap is safe
 static HASHED_FILE_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_-]+-[A-Za-z0-9]{6,10}\.(js|css|map)$").unwrap());
 static MINIFIED_FILE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\.min\.(js|css)$").unwrap());
