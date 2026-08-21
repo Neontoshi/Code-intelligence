@@ -47,6 +47,33 @@ impl LinearClassifier {
         self
     }
 
+    pub fn validate_features(&self, features: &[f64]) -> Result<(), String> {
+        use crate::ml::feature_schema::FEATURE_SCHEMA;
+
+        if features.len() != self.feature_count {
+            return Err(format!(
+                "Feature count mismatch: expected {}, got {}",
+                self.feature_count,
+                features.len()
+            ));
+        }
+
+        FEATURE_SCHEMA.validate_vector(features)?;
+        Ok(())
+    }
+
+    // ⭐ NEW: Predict with validation
+    pub fn predict_validated(&self, features: &[f64]) -> Result<f64, String> {
+        self.validate_features(features)?;
+        Ok(self.predict(features))
+    }
+
+    // ⭐ NEW: Predict label with validation
+    pub fn predict_label_validated(&self, features: &[f64]) -> Result<TrainingLabel, String> {
+        self.validate_features(features)?;
+        Ok(self.predict_label(features))
+    }
+
     pub fn train(&mut self, examples: &[TrainingExample]) -> f64 {
         let labeled: Vec<_> = examples
             .iter()
@@ -280,6 +307,44 @@ impl DeadCodeClassifier {
         println!("   Accuracy: {:.1}%", self.accuracy * 100.0);
 
         Ok(())
+    }
+
+    pub fn validate_features(&self, features: &[f64]) -> Result<(), String> {
+        if let Some(model) = &self.model {
+            model.validate_features(features)
+        } else {
+            Err("No model loaded".to_string())
+        }
+    }
+
+    // ⭐ NEW: Predict with validation
+    pub fn predict_validated(&self, example: &TrainingExample) -> Result<TrainingLabel, String> {
+        let features = example.features.to_feature_vector();
+        self.validate_features(&features)?;
+        Ok(self.predict(example))
+    }
+
+    // ⭐ NEW: Check if model is compatible with current schema
+    pub fn is_schema_compatible(&self) -> bool {
+        use crate::ml::feature_schema::FEATURE_SCHEMA;
+
+        if let Some(model) = &self.model {
+            model.feature_count == FEATURE_SCHEMA.feature_count()
+        } else {
+            false
+        }
+    }
+
+    // ⭐ NEW: Get schema version info
+    pub fn schema_info(&self) -> String {
+        use crate::ml::feature_schema::FEATURE_SCHEMA;
+
+        format!(
+            "Schema v{} ({} features) - Model: {} features",
+            FEATURE_SCHEMA.version,
+            FEATURE_SCHEMA.feature_count(),
+            self.feature_count
+        )
     }
 
     pub fn predict(&self, example: &TrainingExample) -> TrainingLabel {

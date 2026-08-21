@@ -331,7 +331,115 @@ impl FeatureSchema {
                 expected
             ));
         }
+
+        // Check for NaN or infinite values
+        for (i, &value) in vector.iter().enumerate() {
+            if value.is_nan() {
+                return Err(format!("Feature {} has NaN value", i));
+            }
+            if value.is_infinite() {
+                return Err(format!("Feature {} has infinite value", i));
+            }
+            // Check value is in reasonable range based on normalization
+            let feature = &self.features[i];
+            match feature.normalization {
+                Normalization::None => {
+                    if value != 0.0 && value != 1.0 {
+                        return Err(format!(
+                            "Feature '{}' should be 0 or 1, got {}",
+                            feature.name, value
+                        ));
+                    }
+                }
+                Normalization::MinMax { min, max } => {
+                    if value < min || value > max {
+                        return Err(format!(
+                            "Feature '{}' value {} outside range [{}, {}]",
+                            feature.name, value, min, max
+                        ));
+                    }
+                }
+                Normalization::Standard => {
+                    // Standard normalization can produce values outside [-3, 3] but rarely
+                    if value.abs() > 5.0 {
+                        return Err(format!(
+                            "Feature '{}' value {} unusually large for standard normalization",
+                            feature.name, value
+                        ));
+                    }
+                }
+                Normalization::Scale { factor } => {
+                    if value < -factor || value > factor {
+                        return Err(format!(
+                            "Feature '{}' value {} outside range [-{}, {}]",
+                            feature.name, value, factor, factor
+                        ));
+                    }
+                }
+            }
+        }
+
         Ok(())
+    }
+
+    pub fn assert_compatible(&self, other: &FeatureSchema) -> Result<(), String> {
+        if self.version != other.version {
+            return Err(format!(
+                "Schema version mismatch: {} vs {}",
+                self.version, other.version
+            ));
+        }
+
+        if self.feature_count() != other.feature_count() {
+            return Err(format!(
+                "Feature count mismatch: {} vs {}",
+                self.feature_count(),
+                other.feature_count()
+            ));
+        }
+
+        // Check each feature name
+        for (i, (a, b)) in self.features.iter().zip(other.features.iter()).enumerate() {
+            if a.name != b.name {
+                return Err(format!(
+                    "Feature name mismatch at index {}: '{}' vs '{}'",
+                    i, a.name, b.name
+                ));
+            }
+            if a.category != b.category {
+                return Err(format!(
+                    "Feature category mismatch at index {}: '{:?}' vs '{:?}'",
+                    i, a.category, b.category
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    // ⭐ NEW: Check if a feature exists
+    pub fn has_feature(&self, name: &str) -> bool {
+        self.name_to_index.contains_key(name)
+    }
+
+    // ⭐ NEW: Print schema summary
+    pub fn print_summary(&self) {
+        println!("📊 Feature Schema v{}", self.version);
+        println!("   Total features: {}", self.feature_count());
+        println!("   Categories:");
+        let categories = [
+            FeatureCategory::Graph,
+            FeatureCategory::Signature,
+            FeatureCategory::Complexity,
+            FeatureCategory::Name,
+            FeatureCategory::File,
+            FeatureCategory::Type,
+        ];
+        for category in &categories {
+            let count = self.get_by_category(category).len();
+            println!("      {:?}: {}", category, count);
+        }
+        println!();
     }
 }
 

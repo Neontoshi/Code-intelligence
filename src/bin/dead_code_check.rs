@@ -194,6 +194,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if args.conservative { 99.5 } else { 99.0 }
     );
 
+    if let Some((model, _)) = &ml_model {
+        // Check schema compatibility
+        if !model.is_schema_compatible() {
+            eprintln!("⚠️ Warning: Model schema is incompatible with current feature schema");
+            eprintln!("   {}", model.schema_info());
+            eprintln!("   Continuing may produce incorrect results.");
+        } else {
+            println!("✅ Model schema compatible: {}", model.schema_info());
+        }
+
+        // Validate feature vectors
+        if args.verbose {
+            println!("🔍 Validating feature vectors...");
+            let mut valid_count = 0;
+            let mut invalid_count = 0;
+
+            for idx in analysis.call_graph.node_indices() {
+                let func = &analysis.call_graph[idx];
+                let features =
+                    code_intelligence::analysis::training_data::FunctionFeatures::from_function(
+                        func,
+                        &analysis.call_graph,
+                    );
+                let vec = features.to_feature_vector();
+
+                match model.validate_features(&vec) {
+                    Ok(_) => valid_count += 1,
+                    Err(e) => {
+                        invalid_count += 1;
+                        if args.debug {
+                            eprintln!("   Invalid features for {}: {}", func.name, e);
+                        }
+                    }
+                }
+            }
+
+            println!("   Valid feature vectors: {}", valid_count);
+            if invalid_count > 0 {
+                println!("   ⚠️ Invalid feature vectors: {}", invalid_count);
+            }
+        }
+    }
+
     let root_config = RootDetectionConfig::default();
     let root_set = RootDetector::detect_roots(&analysis.call_graph, &analysis.files, &root_config);
     let reachability = ReachabilityAnalyzer::compute_reachability(&analysis.call_graph, &root_set);

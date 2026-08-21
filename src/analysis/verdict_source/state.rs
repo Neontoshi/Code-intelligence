@@ -1,5 +1,6 @@
 // src/analysis/verdict/state.rs
 
+use crate::analysis::dead_code::filters::is_never_dead;
 use crate::analysis::dynamic_refs::DynamicReference;
 use crate::analysis::roots::ReachabilityMap;
 use crate::analysis::training_data::{TrainingExample, TrainingLabel};
@@ -62,6 +63,34 @@ impl VerdictEngine {
         call_graph: &CallGraph,
         reachability: &ReachabilityMap,
     ) -> Verdict {
+        // Hard override: some function categories should never be scored as dead,
+        // regardless of what static/ML signals say (dynamic dispatch, decorators,
+        // FFI, etc. can make reachability analysis blind to real callers).
+        if is_never_dead(func) {
+            return Verdict {
+                function_name: func.name.clone(),
+                full_path: func.full_path.clone(),
+                label: TrainingLabel::Alive,
+                state: VerdictState::DefinitelyAlive,
+                confidence: 1.0,
+                signals: vec![Signal {
+                    name: "never_dead_filter".to_string(),
+                    value: 1.0,
+                    direction: SignalDirection::SupportsAlive,
+                    weight: 1.0,
+                    explanation: "Matched a category that is never considered dead \
+                                  (trait impl, framework hook, entry point, etc.)"
+                        .to_string(),
+                }],
+                ml_probability: None,
+                static_score: Some(1.0),
+                explanation: "Filtered: never-dead category".to_string(),
+                evidence_sources: vec![EvidenceSource::StaticReachability],
+                verified: false,
+                verified_by: None,
+            };
+        }
+
         let mut signals = Vec::new();
         let mut evidence_sources = Vec::new();
         let mut static_score = 0.0;
