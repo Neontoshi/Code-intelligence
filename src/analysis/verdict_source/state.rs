@@ -1,14 +1,139 @@
-// src/analysis/verdict/state.rs
+// src/analysis/verdict_source/state.rs
 
 use crate::analysis::dead_code::filters::is_never_dead;
 use crate::analysis::dynamic_refs::DynamicReference;
 use crate::analysis::roots::ReachabilityMap;
 use crate::analysis::training_data::{TrainingExample, TrainingLabel};
-use crate::analysis::verdict::{EvidenceSource, Signal, SignalDirection, Verdict};
 use crate::analysis::verdict_source::label_source::VerdictState;
 use crate::graph::call_graph::{CallGraph, FunctionNode};
 use crate::graph::traits::GraphMetrics;
 use crate::ml::classifier::DeadCodeClassifier;
+
+// ============================================================================
+// Signal Types - Now defined here (moved from old verdict.rs)
+// ============================================================================
+
+#[derive(Debug, Clone)]
+pub struct Signal {
+    pub name: String,
+    pub value: f64,
+    pub direction: SignalDirection,
+    pub weight: f64,
+    pub explanation: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SignalDirection {
+    SupportsDead,
+    SupportsAlive,
+    Neutral,
+}
+
+impl SignalDirection {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SignalDirection::SupportsDead => "→ DEAD",
+            SignalDirection::SupportsAlive => "→ ALIVE",
+            SignalDirection::Neutral => "→ NEUTRAL",
+        }
+    }
+}
+
+// ============================================================================
+// Verdict Types - Now defined here (moved from old verdict.rs)
+// ============================================================================
+
+#[derive(Debug, Clone)]
+pub struct Verdict {
+    pub function_name: String,
+    pub full_path: String,
+    pub label: TrainingLabel,
+    pub state: VerdictState,
+    pub confidence: f64,
+    pub signals: Vec<Signal>,
+    pub ml_probability: Option<f64>,
+    pub static_score: Option<f64>,
+    pub explanation: String,
+    pub evidence_sources: Vec<EvidenceSource>,
+    pub verified: bool,
+    pub verified_by: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum EvidenceSource {
+    StaticReachability,
+    CallGraph,
+    DynamicRefs,
+    MLModel(String), // model version
+    GitHistory,
+    HumanReview,
+    ProductionTelemetry,
+}
+
+impl Verdict {
+    pub fn is_dead(&self) -> bool {
+        self.label == TrainingLabel::Dead
+    }
+
+    pub fn is_alive(&self) -> bool {
+        self.label == TrainingLabel::Alive
+    }
+
+    pub fn needs_review(&self) -> bool {
+        self.label == TrainingLabel::Unknown
+    }
+
+    pub fn is_high_confidence(&self) -> bool {
+        matches!(
+            self.state,
+            VerdictState::DefinitelyAlive | VerdictState::DefinitelyDead
+        )
+    }
+
+    pub fn mark_verified(&mut self, verified_by: &str) {
+        self.verified = true;
+        self.verified_by = Some(verified_by.to_string());
+        self.evidence_sources.push(EvidenceSource::HumanReview);
+    }
+
+    pub fn format_state(&self) -> String {
+        self.state.confidence_label().to_string()
+    }
+
+    pub fn format_explanation(&self) -> String {
+        let mut output = String::new();
+
+        output.push_str(&format!("Function: {}\n", self.function_name));
+        output.push_str(&format!("Verdict: {:?}\n", self.label));
+        output.push_str(&format!("Confidence: {:.1}%\n\n", self.confidence * 100.0));
+
+        output.push_str("Signals:\n");
+        for signal in &self.signals {
+            output.push_str(&format!(
+                "  - {}: {:.2} {}\n",
+                signal.name,
+                signal.value,
+                signal.direction.as_str()
+            ));
+        }
+
+        if let Some(ml) = self.ml_probability {
+            output.push_str(&format!("\nML Probability: {:.1}%", ml * 100.0));
+        }
+
+        if let Some(static_score) = self.static_score {
+            output.push_str(&format!("\nStatic Score: {:.1}%", static_score * 100.0));
+        }
+
+        output.push_str(&format!("\n\nExplanation: {}\n", self.explanation));
+
+        output
+    }
+}
+
+// ============================================================================
+// Verdict Config and Engine
+// ============================================================================
 
 #[derive(Debug, Clone)]
 pub struct VerdictConfig {
@@ -27,6 +152,26 @@ impl Default for VerdictConfig {
             enable_ml: true,
             enable_static: true,
             model_version: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VerdictStats {
+    pub total: usize,
+    pub dead: usize,
+    pub alive: usize,
+    pub unknown: usize,
+    pub high_confidence: usize,
+    pub avg_confidence: f64,
+}
+
+impl VerdictStats {
+    pub fn dead_ratio(&self) -> f64 {
+        if self.total == 0 {
+            0.0
+        } else {
+            self.dead as f64 / self.total as f64
         }
     }
 }
@@ -57,15 +202,43 @@ impl VerdictEngine {
         self
     }
 
+    pub fn with_dead_threshold(mut self, threshold: f64) -> Self {
+        self.config.dead_threshold = threshold;
+        self
+    }
+
+    pub fn with_alive_threshold(mut self, threshold: f64) -> Self {
+        self.config.alive_threshold = threshold;
+        self
+    }
+
+    pub fn with_model_version(mut self, version: &str) -> Self {
+        self.config.model_version = Some(version.to_string());
+        self
+    }
+
+    // ⭐ FIX: This now actually uses the model's threshold
+    pub fn with_model_thresholds(mut self, model: &DeadCodeClassifier) -> Self {
+        // If the model has calibration parameters with a temperature,
+        // use it to adjust the threshold
+        if let Some(calibration) = &model.calibration {
+            if calibration.temperature != 1.0 {
+                // Higher temperature = more spread = lower effective threshold
+                let adjusted_threshold = self.config.dead_threshold / calibration.temperature;
+                self.config.dead_threshold = adjusted_threshold.clamp(0.5, 0.95);
+            }
+        }
+        // If we had a stored threshold in a manifest, we'd load it here
+        self
+    }
+
     pub fn evaluate_function(
         &self,
         func: &FunctionNode,
         call_graph: &CallGraph,
         reachability: &ReachabilityMap,
     ) -> Verdict {
-        // Hard override: some function categories should never be scored as dead,
-        // regardless of what static/ML signals say (dynamic dispatch, decorators,
-        // FFI, etc. can make reachability analysis blind to real callers).
+        // Hard override: some function categories should never be scored as dead
         if is_never_dead(func) {
             return Verdict {
                 function_name: func.name.clone(),
@@ -197,37 +370,32 @@ impl VerdictEngine {
             }
         }
 
-        // 5. Git history (if available)
-        // This would be added by the caller
-
-        // 6. Combined score
+        // 5. Combined score
         let combined_score = if let Some(ml) = ml_probability {
             normalized_static * 0.6 + ml * 0.4
         } else {
             normalized_static
         };
 
-        // 7. Determine 5-state verdict
+        // 6. Determine state from combined_score
         let state = VerdictState::from_score(
             combined_score,
             self.config.dead_threshold,
             self.config.alive_threshold,
         );
 
-        // 8. Determine label
-        let label = match state {
-            VerdictState::DefinitelyDead | VerdictState::ProbablyDead => TrainingLabel::Dead,
-            VerdictState::DefinitelyAlive | VerdictState::ProbablyAlive => TrainingLabel::Alive,
-            VerdictState::Unknown => TrainingLabel::Unknown,
+        // 7. Determine label from state
+        let (label, confidence) = match state {
+            VerdictState::DefinitelyDead | VerdictState::ProbablyDead => {
+                (TrainingLabel::Dead, combined_score)
+            }
+            VerdictState::DefinitelyAlive | VerdictState::ProbablyAlive => {
+                (TrainingLabel::Alive, combined_score)
+            }
+            VerdictState::Unknown => (TrainingLabel::Unknown, 0.5),
         };
 
-        let confidence = match state {
-            VerdictState::DefinitelyDead | VerdictState::DefinitelyAlive => combined_score,
-            VerdictState::ProbablyDead | VerdictState::ProbablyAlive => combined_score * 0.85,
-            VerdictState::Unknown => 0.5,
-        };
-
-        // 9. Generate explanation
+        // 8. Generate explanation
         let explanation = self.generate_explanation(
             func,
             &signals,
@@ -461,14 +629,4 @@ impl VerdictEngine {
             avg_confidence,
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct VerdictStats {
-    pub total: usize,
-    pub dead: usize,
-    pub alive: usize,
-    pub unknown: usize,
-    pub high_confidence: usize,
-    pub avg_confidence: f64,
 }

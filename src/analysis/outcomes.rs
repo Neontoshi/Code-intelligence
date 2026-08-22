@@ -126,7 +126,7 @@ impl OutcomeTracker {
         Ok(())
     }
 
-    /// Track a new verdict
+    /// Track a new verdict - ⭐ FIXED: Now returns Result
     pub fn track_verdict(
         &mut self,
         function_name: &str,
@@ -135,7 +135,7 @@ impl OutcomeTracker {
         line: usize,
         confidence: f64,
         project: &str,
-    ) -> String {
+    ) -> Result<String, String> {
         let id = format!(
             "{}_{}",
             function_name,
@@ -164,8 +164,9 @@ impl OutcomeTracker {
         };
 
         self.verdicts.push(verdict);
-        let _ = self.save();
-        id
+        // ⭐ FIXED: Now returns error if save fails
+        self.save()?;
+        Ok(id)
     }
 
     /// Update the outcome of a verdict
@@ -250,24 +251,25 @@ impl OutcomeTracker {
     }
 
     /// Import verdicts from dead_code_check output and track them
+    /// ⭐ FIXED: Now returns Result
     pub fn import_verdicts(
         &mut self,
-        dead_verdicts: &[&crate::analysis::verdict::Verdict],
+        dead_verdicts: &[&crate::analysis::verdict_source::state::Verdict],
         project: &str,
-    ) -> usize {
+    ) -> Result<usize, String> {
         let mut count = 0;
         for verdict in dead_verdicts {
-            let _id = self.track_verdict(
+            self.track_verdict(
                 &verdict.function_name,
                 &verdict.full_path,
                 &verdict.full_path,
                 0,
                 verdict.confidence,
                 project,
-            );
+            )?;
             count += 1;
         }
-        count
+        Ok(count)
     }
 
     /// Generate a report

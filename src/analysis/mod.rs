@@ -9,7 +9,7 @@ pub mod importance;
 pub mod outcomes;
 pub mod roots;
 pub mod training_data;
-pub mod verdict;
+// pub mod verdict;  // REMOVED - using verdict_source instead
 pub mod verdict_source;
 
 pub use context::AnalysisIndexes;
@@ -28,4 +28,6 @@ pub use roots::{
 pub use training_data::TrainingDataCollector;
 pub use training_data::TrainingExample;
 pub use training_data::TrainingLabel;
-pub use verdict::{Signal, SignalDirection, Verdict, VerdictConfig, VerdictEngine, VerdictStats};
+// Re-export from verdict_source instead
+pub use verdict_source::state::{VerdictConfig, VerdictEngine, VerdictStats};
+pub use verdict_source::{EvidenceSource, Signal, SignalDirection, Verdict, VerdictState};

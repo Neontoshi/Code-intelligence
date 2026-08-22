@@ -20,7 +20,7 @@ impl InteractiveGraph {
         use crate::analysis::{
             dead_code::is_never_dead,
             roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector},
-            verdict::{VerdictConfig, VerdictEngine},
+            verdict_source::{VerdictConfig, VerdictEngine},
         };
 
         // 1. Detect roots
@@ -103,7 +103,7 @@ impl InteractiveGraph {
         use crate::analysis::{
             dead_code::is_never_dead,
             roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector},
-            verdict::{VerdictConfig, VerdictEngine},
+            verdict_source::{VerdictConfig, VerdictEngine},
         };
 
         // 1. Detect roots

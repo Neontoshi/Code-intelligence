@@ -95,7 +95,7 @@ fn test_verdict_mark_verified() {
     assert_eq!(verdict.verified_by, Some("test_user".to_string()));
     assert!(verdict
         .evidence_sources
-        .contains(&code_intelligence::analysis::verdict::EvidenceSource::HumanReview));
+        .contains(&code_intelligence::analysis::verdict_source::EvidenceSource::HumanReview));
 }
 
 #[test]
@@ -149,8 +149,10 @@ fn create_test_function(name: &str) -> FunctionNode {
     }
 }
 
-fn create_test_verdict(state: VerdictState) -> code_intelligence::analysis::verdict::Verdict {
-    code_intelligence::analysis::verdict::Verdict {
+fn create_test_verdict(
+    state: VerdictState,
+) -> code_intelligence::analysis::verdict_source::Verdict {
+    code_intelligence::analysis::verdict_source::Verdict {
         function_name: "test".to_string(),
         full_path: "test::test".to_string(),
         label: TrainingLabel::Unknown,

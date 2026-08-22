@@ -1,11 +1,10 @@
-// src/analysis/verdict/mod.rs
+// src/analysis/verdict_source/mod.rs
 
 pub mod label_source;
 pub mod state;
 
-// Re-export
+// Re-export everything from this module
 pub use label_source::{LabelSource, VerdictState};
-pub use state::VerdictEngine;
-
-// Keep existing exports
-pub use super::{Signal, SignalDirection, Verdict, VerdictConfig, VerdictStats};
+pub use state::{
+    EvidenceSource, Signal, SignalDirection, Verdict, VerdictConfig, VerdictEngine, VerdictStats,
+};

@@ -1,5 +1,3 @@
-// src/lib.rs
-
 pub mod analysis;
 pub mod engine;
 pub mod error;
@@ -35,8 +33,10 @@ pub use analysis::importance::ImportanceScorer;
 pub use analysis::roots::{
     ReachabilityAnalyzer, ReachabilityMap, RootDetectionConfig, RootDetector, RootSet,
 };
-pub use analysis::verdict::{
-    Signal, SignalDirection, Verdict, VerdictConfig, VerdictEngine, VerdictStats,
+// Re-export from verdict_source instead of verdict
+pub use analysis::verdict_source::state::{VerdictConfig, VerdictEngine, VerdictStats};
+pub use analysis::verdict_source::{
+    EvidenceSource, LabelSource, Signal, SignalDirection, Verdict, VerdictState,
 };
 pub use engine::cache::FileCache;
 pub use engine::indexer::IndexBuilder;

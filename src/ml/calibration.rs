@@ -9,9 +9,7 @@ use crate::analysis::training_data::{TrainingExample, TrainingLabel};
 use crate::ml::classifier::{DeadCodeClassifier, LinearClassifier};
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
 // Calibrated Model
-// ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CalibratedModel {
@@ -35,11 +33,11 @@ pub struct CalibrationBin {
     pub count: usize,
 }
 
+// ⭐ FIX: Removed IsotonicRegression from the enum
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum CalibrationMethod {
     TemperatureScaling,
     HistogramBinning,
-    IsotonicRegression,
     #[default]
     None,
 }
@@ -57,9 +55,6 @@ impl CalibratedModel {
             }
             CalibrationMethod::HistogramBinning => {
                 Self::calibrate_histogram(classifier, val_examples)
-            }
-            CalibrationMethod::IsotonicRegression => {
-                Self::calibrate_isotonic(classifier, val_examples)
             }
             CalibrationMethod::None => Self {
                 classifier: classifier.clone(),
@@ -104,9 +99,6 @@ impl CalibratedModel {
             for example in &labeled {
                 let features = example.features.to_feature_vector();
                 let raw_prob = classifier.predict(&features).clamp(1e-6, 1.0 - 1e-6);
-                // Recover the pre-sigmoid logit from the probability, then
-                // apply temperature scaling to the logit itself (standard
-                // Platt/temperature scaling), not to ln(1-p).
                 let logit = (raw_prob / (1.0 - raw_prob)).ln();
                 let calibrated = 1.0 / (1.0 + (-logit / temp).exp());
                 let target = match example.label {
@@ -212,12 +204,6 @@ impl CalibratedModel {
         }
     }
 
-    /// Isotonic regression (simplified - using piecewise linear)
-    fn calibrate_isotonic(classifier: &LinearClassifier, val_examples: &[TrainingExample]) -> Self {
-        // For simplicity, use histogram binning as a proxy for isotonic regression
-        Self::calibrate_histogram(classifier, val_examples)
-    }
-
     /// Predict with calibration
     pub fn predict_calibrated(&self, features: &[f64]) -> f64 {
         let raw = self.classifier.predict(features);
@@ -238,7 +224,7 @@ impl CalibratedModel {
                 // If outside all bins, use raw
                 raw
             }
-            _ => raw,
+            CalibrationMethod::None => raw,
         }
     }
 
@@ -274,13 +260,11 @@ impl CalibratedModel {
     }
 }
 
-// ============================================================================
 // Calibration Stats
-// ============================================================================
 
 #[derive(Debug, Clone, Default)]
 pub struct CalibrationStats {
-    pub expected_calibration_error: f64, // ECE - lower is better
+    pub expected_calibration_error: f64,
     pub miscalibration_area: f64,
     pub num_bins: usize,
     pub method: CalibrationMethod,
@@ -306,10 +290,7 @@ impl CalibrationStats {
     }
 }
 
-// ============================================================================
 // Calibration Wrapper for DeadCodeClassifier
-// ============================================================================
-
 impl DeadCodeClassifier {
     /// Calibrate the model using validation data
     pub fn calibrate(&mut self, val_examples: &[TrainingExample]) -> Result<(), String> {
@@ -340,15 +321,6 @@ impl DeadCodeClassifier {
                 }
                 CalibrationMethod::HistogramBinning => {
                     // Find which bin the prediction falls into
-                    for bin in &calibration.bins {
-                        if raw >= bin.lower && raw < bin.upper {
-                            return bin.empirical_accuracy;
-                        }
-                    }
-                    raw
-                }
-                CalibrationMethod::IsotonicRegression => {
-                    // For now, fall back to histogram binning
                     for bin in &calibration.bins {
                         if raw >= bin.lower && raw < bin.upper {
                             return bin.empirical_accuracy;

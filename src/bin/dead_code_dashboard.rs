@@ -253,7 +253,7 @@ impl App {
                     dead_code::{filters::is_never_dead, DeadCodeAnalyzer, DeadFunction},
                     dynamic_refs::DynamicRefDetector,
                     roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector},
-                    verdict::{VerdictConfig, VerdictEngine},
+                    verdict_source::{VerdictConfig, VerdictEngine},
                 };
 
                 // 1. Detect roots
@@ -428,8 +428,10 @@ impl App {
                     };
 
                     use code_intelligence::analysis::training_data::TrainingLabel;
-                    use code_intelligence::analysis::verdict::{Signal, SignalDirection, Verdict};
                     use code_intelligence::analysis::verdict_source::label_source::VerdictState;
+                    use code_intelligence::analysis::verdict_source::{
+                        Signal, SignalDirection, Verdict,
+                    };
 
                     let verdict = Verdict {
                         function_name: func.name.clone(),

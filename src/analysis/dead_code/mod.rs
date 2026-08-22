@@ -7,6 +7,7 @@ mod report;
 mod scorer;
 mod types;
 mod whitelist;
+// reachability.rs has been removed - using roots::ReachabilityAnalyzer instead
 
 pub use analyzer::{
     AnalysisSummary, DeadCodeAnalysis, DeadCodeAnalyzer, DeadFunction, FunctionImpact, RemovalCost,
@@ -21,7 +22,7 @@ pub use filters::{filter_reason, is_framework_file, is_never_dead};
 
 use crate::analysis::dynamic_refs::DynamicRefDetector;
 use crate::analysis::roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector};
-use crate::analysis::verdict::{VerdictConfig, VerdictEngine};
+use crate::analysis::verdict_source::state::{VerdictConfig, VerdictEngine};
 use crate::graph::call_graph::CallGraph;
 use crate::graph::dependency_graph::DependencyGraph;
 use crate::graph::import_graph::ImportGraph;

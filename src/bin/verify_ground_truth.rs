@@ -149,7 +149,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn get_candidates(
     analysis: &code_intelligence::analysis::context::ProjectAnalysis,
     count: usize,
-) -> Vec<code_intelligence::analysis::verdict::Verdict> {
+) -> Vec<code_intelligence::analysis::verdict_source::Verdict> {
     let root_config = RootDetectionConfig::default();
     let root_set = RootDetector::detect_roots(&analysis.call_graph, &analysis.files, &root_config);
     let reachability = ReachabilityAnalyzer::compute_reachability(&analysis.call_graph, &root_set);
@@ -167,7 +167,7 @@ fn get_candidates(
 
 fn verify_with_git(
     analysis: &code_intelligence::analysis::context::ProjectAnalysis,
-    candidates: &[code_intelligence::analysis::verdict::Verdict],
+    candidates: &[code_intelligence::analysis::verdict_source::Verdict],
 ) -> Vec<VerifiedEntry> {
     use std::process::Command;
     let mut verified = Vec::new();
@@ -216,7 +216,7 @@ fn verify_with_git(
 
 fn verify_interactive(
     analysis: &code_intelligence::analysis::context::ProjectAnalysis,
-    candidates: &[code_intelligence::analysis::verdict::Verdict],
+    candidates: &[code_intelligence::analysis::verdict_source::Verdict],
 ) -> Result<Vec<VerifiedEntry>, Box<dyn std::error::Error>> {
     let mut verified = Vec::new();
     let mut idx = 0;
@@ -298,7 +298,7 @@ fn verify_interactive(
 
 fn generate_review_file(
     analysis: &code_intelligence::analysis::context::ProjectAnalysis,
-    candidates: &[code_intelligence::analysis::verdict::Verdict],
+    candidates: &[code_intelligence::analysis::verdict_source::Verdict],
     output_path: &PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut markdown = String::new();

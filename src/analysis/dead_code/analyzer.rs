@@ -1,16 +1,13 @@
 // src/analysis/dead_code/analyzer.rs
-
+use super::modules::{DeadModuleReport, ModuleDeadCodeDetector};
+use super::scorer::{ConfidenceLevel, DeadScore, ScoreFactor};
+use super::types::{DeadTypeReport, TypeDeadCodeDetector};
 use crate::analysis::roots::ReachabilityMap;
-use crate::analysis::verdict::Verdict;
+use crate::analysis::verdict_source::Verdict;
 use crate::graph::call_graph::{CallGraph, FunctionNode};
 use crate::graph::import_graph::ImportGraph;
 use crate::graph::traits::GraphMetrics;
 use crate::graph::type_graph::TypeGraph;
-
-use super::modules::{DeadModuleReport, ModuleDeadCodeDetector};
-use super::scorer::{ConfidenceLevel, DeadScore, ScoreFactor};
-use super::types::{DeadTypeReport, TypeDeadCodeDetector};
-
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -112,7 +109,7 @@ impl DeadCodeAnalyzer {
                                 name: s.name.clone(),
                                 weight: s.weight,
                                 contribution: if s.direction
-                                    == crate::analysis::verdict::SignalDirection::SupportsDead
+                                    == crate::analysis::verdict_source::SignalDirection::SupportsDead
                                 {
                                     s.weight
                                 } else {

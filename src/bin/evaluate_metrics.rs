@@ -142,7 +142,7 @@ fn evaluate(
 
     // For calibration and PR-AUC
     let mut predictions = Vec::new();
-    let mut confidences = Vec::new();
+    let mut labels = Vec::new();
 
     for example in &labeled {
         let alive_prob = classifier.predict_probability(example);
@@ -163,9 +163,9 @@ fn evaluate(
             _ => {}
         }
 
-        // Store for calibration
+        // Store for calibration and AUC
         predictions.push(dead_prob);
-        confidences.push(match actual {
+        labels.push(match actual {
             TrainingLabel::Dead => 1.0,
             TrainingLabel::Alive => 0.0,
             _ => 0.5,
@@ -207,19 +207,19 @@ fn evaluate(
     };
     let specificity = 1.0 - fpr;
 
-    // Compute PR-AUC (simplified approximation)
-    let auc_pr = compute_pr_auc(&predictions, &confidences);
+    // ⭐ FIXED: Compute proper PR-AUC
+    let auc_pr = compute_pr_auc(&predictions, &labels);
 
-    // Compute ROC-AUC (simplified)
-    let auc_roc = compute_roc_auc(&predictions, &confidences);
+    // ⭐ FIXED: Compute proper ROC-AUC
+    let auc_roc = compute_roc_auc(&predictions, &labels);
 
     // Calibration
-    let calibration = compute_calibration(&predictions, &confidences);
+    let calibration = compute_calibration(&predictions, &labels);
 
     // Top-K precision
     let mut top_k_precision = Vec::new();
     for &k in top_k_values {
-        let precision_at_k = compute_precision_at_k(&predictions, &confidences, k);
+        let precision_at_k = compute_precision_at_k(&predictions, &labels, k);
         top_k_precision.push(TopKPrecision {
             k,
             precision: precision_at_k,
@@ -245,39 +245,119 @@ fn evaluate(
     }
 }
 
-fn compute_pr_auc(predictions: &[f64], confidences: &[f64]) -> f64 {
-    // Simple approximation using trapezoidal rule
-    let mut points: Vec<(f64, f64)> = predictions
-        .iter()
-        .zip(confidences.iter())
-        .map(|(&p, &c)| (p, c))
-        .collect();
-    points.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-
-    let mut auc = 0.0;
-    for i in 1..points.len() {
-        let width = points[i].0 - points[i - 1].0;
-        let height = (points[i].1 + points[i - 1].1) / 2.0;
-        auc += width * height;
+/// ⭐ FIXED: Compute proper PR-AUC using PR curve construction
+fn compute_pr_auc(predictions: &[f64], labels: &[f64]) -> f64 {
+    if predictions.is_empty() || labels.is_empty() {
+        return 0.0;
     }
+
+    // Sort predictions by descending score
+    let mut pairs: Vec<(f64, f64)> = predictions
+        .iter()
+        .zip(labels.iter())
+        .map(|(&p, &l)| (p, l))
+        .collect();
+    pairs.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let total_pos = labels.iter().filter(|&&l| l == 1.0).count();
+    if total_pos == 0 {
+        return 0.0;
+    }
+
+    let mut precision = Vec::new();
+    let mut recall = Vec::new();
+    let mut tp = 0;
+    let mut fp = 0;
+
+    // Add point (recall=0, precision=1) at the start
+    precision.push(1.0);
+    recall.push(0.0);
+
+    for (_, label) in &pairs {
+        if *label == 1.0 {
+            tp += 1;
+        } else {
+            fp += 1;
+        }
+        let prec = if tp + fp > 0 {
+            tp as f64 / (tp + fp) as f64
+        } else {
+            1.0
+        };
+        let rec = tp as f64 / total_pos as f64;
+        precision.push(prec);
+        recall.push(rec);
+    }
+
+    // Add point (recall=1, precision=0) at the end
+    precision.push(0.0);
+    recall.push(1.0);
+
+    // Trapezoidal integration
+    let mut auc = 0.0;
+    for i in 1..precision.len() {
+        let rec_diff = recall[i] - recall[i - 1];
+        let prec_avg = (precision[i] + precision[i - 1]) / 2.0;
+        auc += rec_diff * prec_avg;
+    }
+
     auc
 }
 
-fn compute_roc_auc(predictions: &[f64], confidences: &[f64]) -> f64 {
-    // Simple approximation using trapezoidal rule
-    let mut points: Vec<(f64, f64)> = predictions
-        .iter()
-        .zip(confidences.iter())
-        .map(|(&p, &c)| (p, c))
-        .collect();
-    points.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-
-    let mut auc = 0.0;
-    for i in 1..points.len() {
-        let width = points[i].0 - points[i - 1].0;
-        let height = (points[i].1 + points[i - 1].1) / 2.0;
-        auc += width * height;
+/// ⭐ FIXED: Compute proper ROC-AUC using ROC curve construction
+fn compute_roc_auc(predictions: &[f64], labels: &[f64]) -> f64 {
+    if predictions.is_empty() || labels.is_empty() {
+        return 0.0;
     }
+
+    // Sort predictions by descending score
+    let mut pairs: Vec<(f64, f64)> = predictions
+        .iter()
+        .zip(labels.iter())
+        .map(|(&p, &l)| (p, l))
+        .collect();
+    pairs.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let total_pos = labels.iter().filter(|&&l| l == 1.0).count();
+    let total_neg = labels.iter().filter(|&&l| l == 0.0).count();
+
+    if total_pos == 0 || total_neg == 0 {
+        return 0.0;
+    }
+
+    let mut tpr = Vec::new();
+    let mut fpr = Vec::new();
+    let mut tp = 0;
+    let mut fp = 0;
+
+    // Add point (0, 0) at the start
+    tpr.push(0.0);
+    fpr.push(0.0);
+
+    for (_, label) in &pairs {
+        if *label == 1.0 {
+            tp += 1;
+        } else {
+            fp += 1;
+        }
+        let tpr_val = tp as f64 / total_pos as f64;
+        let fpr_val = fp as f64 / total_neg as f64;
+        tpr.push(tpr_val);
+        fpr.push(fpr_val);
+    }
+
+    // Add point (1, 1) at the end
+    tpr.push(1.0);
+    fpr.push(1.0);
+
+    // Trapezoidal integration
+    let mut auc = 0.0;
+    for i in 1..tpr.len() {
+        let fpr_diff = fpr[i] - fpr[i - 1];
+        let tpr_avg = (tpr[i] + tpr[i - 1]) / 2.0;
+        auc += fpr_diff * tpr_avg;
+    }
+
     auc
 }
 

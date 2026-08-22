@@ -115,8 +115,9 @@ impl FunctionFeatures {
 
         let type_info = Self::extract_type_info(func);
 
-        use crate::optimize::dedup::core::compute_signature_hash;
+        use crate::optimize::dedup::core::{compute_exact_hash, compute_signature_hash};
         let sig_hash = compute_signature_hash(func);
+        let body_hash = compute_exact_hash(func, None);
 
         Self {
             param_count: func.params.len(),
@@ -131,7 +132,7 @@ impl FunctionFeatures {
             ends_with_test: func.name.ends_with("_test"),
             contains_trait_impl,
             signature_hash: sig_hash.clone(),
-            body_hash: sig_hash,
+            body_hash: body_hash,
             fan_in: func.fan_in,
             fan_out: func.fan_out,
             complexity: func.complexity,

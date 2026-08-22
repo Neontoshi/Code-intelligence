@@ -7,7 +7,7 @@ use code_intelligence::analysis::dead_code::DeadCodeAnalyzer;
 use code_intelligence::analysis::dynamic_refs::DynamicRefDetector;
 use code_intelligence::analysis::git_analysis::GitAnalyzer;
 use code_intelligence::analysis::roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector};
-use code_intelligence::analysis::verdict::{Verdict, VerdictConfig, VerdictEngine};
+use code_intelligence::analysis::verdict_source::{Verdict, VerdictConfig, VerdictEngine};
 use code_intelligence::analysis::AnalysisMetadata;
 use code_intelligence::bin::common::cleanup::ResourceManager;
 use code_intelligence::bin::common::error_handler::{ErrorHandler, ErrorSeverity};
@@ -381,17 +381,21 @@ async fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             .to_string();
 
         let mut tracker = code_intelligence::analysis::OutcomeTracker::new(&args.project_dir);
-        let tracked = tracker.import_verdicts(&dead_verdicts, &project_name);
-
-        if tracked > 0 {
-            println!("📝 Tracked {} dead functions in {}", tracked, project_name);
-            if args.verbose {
-                println!("   Use `cargo run --bin update_outcome` to mark them as removed/false positive");
-                println!("   Or check .code-intelligence-outcomes.json");
+        match tracker.import_verdicts(&dead_verdicts, &project_name) {
+            Ok(tracked) => {
+                if tracked > 0 {
+                    println!("📝 Tracked {} dead functions in {}", tracked, project_name);
+                    if args.verbose {
+                        println!("   Use `cargo run --bin update_outcome` to mark them as removed/false positive");
+                        println!("   Or check .code-intelligence-outcomes.json");
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("⚠️ Failed to track outcomes: {}", e);
             }
         }
     }
-
     println!("\n📊 Verdict Engine Results:");
     println!("   Total functions: {}", verdicts.len());
     println!("   Dead: {}", dead_verdicts.len());
