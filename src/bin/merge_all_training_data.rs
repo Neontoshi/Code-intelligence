@@ -1,6 +1,5 @@
-// src/bin/merge_all_training_data.rs
-
 use code_intelligence::analysis::training_data::TrainingExample;
+use code_intelligence::analysis::verdict_source::label_source::LabelSource;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -29,25 +28,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let data = std::fs::read_to_string(&path)?;
 
             let mut examples: Vec<TrainingExample> = if ext == "jsonl" {
-                // One TrainingExample per line — matches TrainingDataCollector::to_jsonl()
                 data.lines()
                     .filter(|l| !l.trim().is_empty())
-                    .filter_map(|l| match serde_json::from_str(l) {
-                        Ok(ex) => Some(ex),
-                        Err(e) => {
-                            eprintln!("   ⚠️ Skipping malformed line in {}: {}", repo_name, e);
-                            None
+                    .filter_map(|l| {
+                        match serde_json::from_str::<TrainingExample>(l) {
+                            Ok(ex) => Some(ex),
+                            Err(e) => {
+                                // ⭐ NEW: Try legacy parsing if modern fails
+                                match parse_legacy_example(l) {
+                                    Ok(ex) => {
+                                        println!("   ✅ Converted legacy example");
+                                        Some(ex)
+                                    }
+                                    Err(_) => {
+                                        eprintln!(
+                                            "   ⚠️ Skipping malformed line in {}: {}",
+                                            repo_name, e
+                                        );
+                                        None
+                                    }
+                                }
+                            }
                         }
                     })
                     .collect()
             } else {
-                serde_json::from_str(&data)?
+                match serde_json::from_str::<Vec<TrainingExample>>(&data) {
+                    Ok(examples) => examples,
+                    Err(e) => {
+                        eprintln!("   ⚠️ Failed to parse {} as modern JSON: {}", repo_name, e);
+                        // ⭐ NEW: Try legacy parsing
+                        parse_legacy_json_file(&data, &repo_name)?
+                    }
+                }
             };
 
-            // ⭐ Add repository_id to each example
+            // Add repository_id to each example
             for example in &mut examples {
-                example.repository_id = Some(repo_name.clone());
-                example.commit_hash = Some("unknown".to_string()); // Could extract from repo
+                if example.repository_id.is_none() {
+                    example.repository_id = Some(repo_name.clone());
+                }
+                if example.commit_hash.is_none() {
+                    example.commit_hash = Some("unknown".to_string());
+                }
+                // ⭐ Ensure label_source is set
+                if example.label_source == LabelSource::StaticHeuristic {
+                    // Already set
+                }
             }
 
             println!("      {} examples", examples.len());
@@ -272,4 +299,181 @@ fn deduplicate_examples(by_repo: &HashMap<String, Vec<TrainingExample>>) -> Vec<
     }
 
     deduped
+}
+
+fn parse_legacy_json_file(
+    data: &str,
+    repo_name: &str,
+) -> Result<Vec<TrainingExample>, Box<dyn std::error::Error>> {
+    use serde_json::Value;
+
+    let json: Vec<Value> = serde_json::from_str(data)?;
+    let mut examples = Vec::new();
+
+    for item in json {
+        if let Ok(ex) = convert_legacy_to_training_example(item, repo_name) {
+            examples.push(ex);
+        }
+    }
+
+    Ok(examples)
+}
+
+// ⭐ NEW: Convert legacy JSON to TrainingExample
+fn convert_legacy_to_training_example(
+    item: serde_json::Value,
+    repo_name: &str,
+) -> Result<TrainingExample, String> {
+    use code_intelligence::analysis::training_data::{FunctionFeatures, TrainingLabel};
+
+    // Extract fields with defaults
+    let function_name = item
+        .get("function_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let full_path = item
+        .get("full_path")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&function_name)
+        .to_string();
+    let file = item
+        .get("file")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown.rs")
+        .to_string();
+    let language = item
+        .get("language")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    // Extract label
+    let label_str = item
+        .get("label")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
+    let label = match label_str {
+        "Alive" => TrainingLabel::Alive,
+        "Dead" => TrainingLabel::Dead,
+        _ => TrainingLabel::Unknown,
+    };
+
+    let confidence = item
+        .get("confidence")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.5);
+    let source = item
+        .get("source")
+        .and_then(|v| v.as_str())
+        .unwrap_or("legacy")
+        .to_string();
+    let label_reason = item
+        .get("label_reason")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let label_version = item
+        .get("label_version")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32);
+
+    // Create default features (simplified)
+    let features = FunctionFeatures {
+        param_count: item
+            .get("features")
+            .and_then(|f| f.get("param_count"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize,
+        return_count: item
+            .get("features")
+            .and_then(|f| f.get("return_count"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize,
+        is_public: item
+            .get("features")
+            .and_then(|f| f.get("is_public"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        is_async: item
+            .get("features")
+            .and_then(|f| f.get("is_async"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        name_length: function_name.len(),
+        starts_with_use: function_name.starts_with("use"),
+        starts_with_test: function_name.starts_with("test_") || function_name.starts_with("Test"),
+        starts_with_bench: function_name.starts_with("bench_")
+            || function_name.starts_with("Benchmark"),
+        ends_with_test: function_name.ends_with("_test"),
+        contains_trait_impl: false,
+        signature_hash: String::new(),
+        body_hash: String::new(),
+        fan_in: 0,
+        fan_out: 0,
+        complexity: 1.0,
+        call_depth: 0,
+        is_cycle: false,
+        file_extension: file.split('.').last().unwrap_or("").to_string(),
+        is_in_test_file: file.contains("/tests/")
+            || file.contains("/test/")
+            || file.ends_with("_test.rs"),
+        is_in_benches: file.contains("/benches/"),
+        is_in_meta: file.contains("/.meta/"),
+        is_in_examples: file.contains("/examples/"),
+        is_generated: file.contains(".gen.") || file.contains("_gen."),
+        name_contains_use: function_name.to_lowercase().contains("use"),
+        name_contains_test: function_name.to_lowercase().contains("test"),
+        name_contains_init: function_name.to_lowercase().contains("init"),
+        name_contains_get: function_name.to_lowercase().contains("get"),
+        name_contains_set: function_name.to_lowercase().contains("set"),
+        name_contains_new: function_name.to_lowercase().contains("new"),
+        name_contains_create: function_name.to_lowercase().contains("create"),
+        name_contains_build: function_name.to_lowercase().contains("build"),
+        name_contains_parse: function_name.to_lowercase().contains("parse"),
+        name_contains_validate: function_name.to_lowercase().contains("validate"),
+        name_contains_handle: function_name.to_lowercase().contains("handle"),
+        name_contains_process: function_name.to_lowercase().contains("process"),
+        name_contains_convert: function_name.to_lowercase().contains("convert"),
+        name_contains_commit: function_name.to_lowercase().contains("commit"),
+        name_contains_reveal: function_name.to_lowercase().contains("reveal"),
+        name_contains_submit: function_name.to_lowercase().contains("submit"),
+        name_contains_upload: function_name.to_lowercase().contains("upload"),
+        name_contains_download: function_name.to_lowercase().contains("download"),
+        name_contains_fetch: function_name.to_lowercase().contains("fetch"),
+        name_contains_verify: function_name.to_lowercase().contains("verify"),
+        name_contains_audit: function_name.to_lowercase().contains("audit"),
+        type_name: None,
+        type_path: None,
+        is_method: false,
+        is_trait_impl: false,
+        trait_name: None,
+        is_associated: false,
+    };
+
+    Ok(TrainingExample {
+        function_name,
+        full_path,
+        file,
+        language,
+        features,
+        label,
+        confidence,
+        source,
+        repository_id: Some(repo_name.to_string()),
+        commit_hash: Some("unknown".to_string()),
+        dataset_split: None,
+        label_reason,
+        label_version,
+        label_source: LabelSource::StaticHeuristic,
+        generated_by_model: None,
+        verified_by: None,
+        created_at: Some(chrono::Utc::now().timestamp()),
+    })
+}
+
+// ⭐ NEW: Parse legacy single line
+fn parse_legacy_example(line: &str) -> Result<TrainingExample, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(line).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+    convert_legacy_to_training_example(value, "legacy")
 }
