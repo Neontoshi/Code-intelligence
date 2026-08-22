@@ -53,6 +53,7 @@ pub struct GlobalConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Defaults {
     pub model: Option<String>,
+    pub duplicate_model: Option<String>,
     pub threshold: Option<f64>,
     pub verbose: bool,
     pub llm_provider: Option<String>,
@@ -63,6 +64,7 @@ impl Default for Defaults {
     fn default() -> Self {
         Self {
             model: None,
+            duplicate_model: None,
             threshold: None,
             verbose: false,
             llm_provider: Some("ollama".to_string()),
@@ -900,9 +902,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ============================================================================
 // Config Helper Functions
-// ============================================================================
 
 fn get_config_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
@@ -1136,9 +1136,7 @@ fn resolve_path(path: &Path) -> Result<PathBuf, String> {
     Ok(resolved)
 }
 
-// ============================================================================
 // Command Implementations
-// ============================================================================
 
 fn run_analyze(
     path: &Path,
@@ -1237,17 +1235,27 @@ fn run_analyze(
 fn run_dedup(path: &Path, threshold: f64, ml: bool) -> Result<(), Box<dyn std::error::Error>> {
     println!("🔍 Finding duplicates in: {:?}", path);
     println!("📊 Similarity threshold: {:.2}", threshold);
-    if ml {
-        println!("🤖 Using ML model for duplicate detection");
-    }
-    println!("");
 
     let mut cmd = Command::new("dedup_check");
-    cmd.arg(path);
+    cmd.arg(path).args(["--threshold", &threshold.to_string()]);
 
-    if ml {
-        let model = get_default_model().unwrap_or_else(|| "model.bin".to_string());
-        cmd.args(["--duplicate-model", &model]);
+    // Always use ML model if available (even if --ml flag not specified)
+    let model = get_default_duplicate_model();
+    if let Some(model_path) = model {
+        println!("🤖 Using ML model: {}", model_path);
+        cmd.args(["--duplicate-model", &model_path]);
+    } else {
+        // Fallback: try to find latest model
+        let latest_model = find_latest_duplicate_model();
+        if let Some(model_path) = latest_model {
+            println!("🤖 Using ML model: {}", model_path);
+            cmd.args(["--duplicate-model", &model_path]);
+        } else {
+            println!("⚠️ No ML model found. Running without ML.");
+            if ml {
+                println!("   (--ml flag was specified but no model found)");
+            }
+        }
     }
 
     let status = cmd.status()?;
@@ -1353,9 +1361,7 @@ fn run_llm(
     Ok(())
 }
 
-// ============================================================================
 // Outcome Management
-// ============================================================================
 
 fn run_list(path: &Path, all: bool) -> Result<(), Box<dyn std::error::Error>> {
     println!("📋 Listing dead functions in: {:?}", path);
@@ -1704,9 +1710,7 @@ fn run_report(
     Ok(())
 }
 
-// ============================================================================
 // Training & Model Management
-// ============================================================================
 
 fn run_train(
     data: &Path,
@@ -1933,9 +1937,7 @@ fn run_evaluate_lang(
     Ok(())
 }
 
-// ============================================================================
 // Data Management
-// ============================================================================
 
 fn run_export(path: &Path, output: &Path) -> Result<(), Box<dyn std::error::Error>> {
     println!("📊 Exporting training data from: {:?}", path);
@@ -2039,9 +2041,7 @@ fn run_verify(data: &Path, output: &Path) -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-// ============================================================================
 // Special Commands
-// ============================================================================
 
 fn run_dashboard(path: &Path, model: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     println!("📊 Opening dashboard for: {:?}", path);
@@ -2102,9 +2102,7 @@ fn run_self_analyze(
     Ok(())
 }
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 fn run_config(action: ConfigAction) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = load_config();
@@ -2116,6 +2114,12 @@ fn run_config(action: ConfigAction) -> Result<(), Box<dyn std::error::Error>> {
                 save_config(&config)?;
                 println!("✅ Model set to: {}", value);
             }
+            "duplicate_model" => {
+                config.defaults.duplicate_model = Some(value.clone());
+                save_config(&config)?;
+                println!("✅ Duplicate model set to: {}", value);
+            }
+
             "threshold" => {
                 let threshold = value
                     .parse::<f64>()
@@ -2150,6 +2154,13 @@ fn run_config(action: ConfigAction) -> Result<(), Box<dyn std::error::Error>> {
         ConfigAction::Get { key } => match key.as_str() {
             "model" => {
                 if let Some(model) = &config.defaults.model {
+                    println!("{}", model);
+                } else {
+                    println!("(not set)");
+                }
+            }
+            "duplicate_model" => {
+                if let Some(model) = &config.defaults.duplicate_model {
                     println!("{}", model);
                 } else {
                     println!("(not set)");
@@ -2219,9 +2230,48 @@ fn run_config(action: ConfigAction) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ============================================================================
+// Duplicate Model Helpers
+
+/// Get the default duplicate model from config
+fn get_default_duplicate_model() -> Option<String> {
+    let config = load_config();
+    if let Some(model) = config.defaults.duplicate_model {
+        return Some(model);
+    }
+    None
+}
+
+/// Find the latest duplicate model in the models directory
+fn find_latest_duplicate_model() -> Option<String> {
+    let models_dir = PathBuf::from("models");
+    if !models_dir.exists() {
+        return None;
+    }
+
+    let mut models: Vec<_> = std::fs::read_dir(&models_dir)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            name_str.starts_with("duplicate_model") && name_str.ends_with(".bin")
+        })
+        .collect();
+
+    if models.is_empty() {
+        return None;
+    }
+
+    // Sort by modification time (newest first)
+    models.sort_by_key(|entry| entry.metadata().ok().and_then(|m| m.modified().ok()));
+    models.reverse();
+
+    models
+        .first()
+        .map(|entry| entry.path().to_string_lossy().to_string())
+}
+
 // Helper Functions
-// ============================================================================
 
 fn find_binary(name: &str) -> Option<PathBuf> {
     // Check current directory
