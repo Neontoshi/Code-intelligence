@@ -249,3 +249,9 @@ impl From<ErrorWithContext> for CodeIntelError {
         *err.error
     }
 }
+
+impl From<CodeIntelError> for String {
+    fn from(err: CodeIntelError) -> Self {
+        err.to_string()
+    }
+}

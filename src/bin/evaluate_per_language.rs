@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = EvalArgs::parse();
 
     println!("🔬 Loading model from: {:?}", args.model);
-    let classifier = DeadCodeClassifier::load(&args.model.to_string_lossy())?;
+    let classifier = DeadCodeClassifier::load(&*args.model.to_string_lossy())?;
 
     // Load test data (should be from repositories NOT seen during training)
     println!("📊 Loading test data from: {:?}", args.test_data);

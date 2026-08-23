@@ -81,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load model
     println!("📊 Loading model from: {:?}", args.model);
-    let classifier = DeadCodeClassifier::load(&args.model.to_string_lossy())?;
+    let classifier = DeadCodeClassifier::load(&*args.model.to_string_lossy())?;
     println!("   Model loaded successfully");
 
     // Load test data

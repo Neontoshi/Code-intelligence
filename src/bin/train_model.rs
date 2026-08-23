@@ -209,7 +209,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Also save legacy format for backward compatibility
-    classifier.save(&args.output.to_string_lossy())?;
+    classifier.save(&*args.output.to_string_lossy())?;
     println!("✅ Legacy model saved to: {:?}", args.output);
 
     // Show predictions on test set

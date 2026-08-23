@@ -2,7 +2,8 @@
 
 use crate::graph::call_graph::CallGraph;
 use crate::parser::tree_sitter::ParsedFile;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use tree_sitter::{Language, Node, Parser, Query, QueryCursor};
 
 #[derive(Debug, Clone)]
 pub struct DynamicReference {
@@ -14,6 +15,7 @@ pub struct DynamicReference {
     pub reference_type: DynamicRefType,
     pub confidence: f64,
     pub context: String,
+    pub resolved: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -41,40 +43,69 @@ impl DynamicRefDetector {
     ) -> Vec<DynamicReference> {
         let mut refs = Vec::new();
 
-        // Build a name-to-full-path index for symbol resolution
+        // 1. Build indexed lookup structures for O(1) symbol resolution
         let mut name_to_paths: HashMap<String, Vec<String>> = HashMap::new();
+        let mut lower_name_to_paths: HashMap<String, Vec<String>> = HashMap::new();
+        let mut unqualified_to_paths: HashMap<String, Vec<String>> = HashMap::new();
+
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
             name_to_paths
                 .entry(func.name.clone())
                 .or_default()
                 .push(func.full_path.clone());
-        }
 
-        // Also index by lowercase name for case-insensitive matching
-        let mut lower_name_to_paths: HashMap<String, Vec<String>> = HashMap::new();
-        for (name, paths) in &name_to_paths {
             lower_name_to_paths
-                .entry(name.to_lowercase())
+                .entry(func.name.to_lowercase())
                 .or_default()
-                .extend(paths.clone());
+                .push(func.full_path.clone());
+
+            // Map short/unqualified function name from full path
+            if let Some(short_name) = func.full_path.rsplit("::").next() {
+                unqualified_to_paths
+                    .entry(short_name.to_string())
+                    .or_default()
+                    .push(func.full_path.clone());
+            }
         }
 
         for file in files {
-            // Check file path for framework indicators
-            let is_flask = file.path.contains(".py") && file.source.contains("flask");
-            let is_go_reflect = file.path.contains(".go") && file.source.contains("reflect");
+            // AST-level extraction per language
+            let ast_dynamic_calls = Self::extract_dynamic_calls_via_ast(file);
+
+            for dyn_call in ast_dynamic_calls {
+                let resolved_path = Self::resolve_symbol(
+                    &dyn_call.target_name,
+                    &name_to_paths,
+                    &lower_name_to_paths,
+                    &unqualified_to_paths,
+                );
+
+                refs.push(DynamicReference {
+                    source_file: file.path.clone(),
+                    source_function: dyn_call.enclosing_function,
+                    target_function: Some(dyn_call.target_name.clone()),
+                    target_full_path: resolved_path.clone(),
+                    target_pattern: dyn_call.pattern,
+                    reference_type: dyn_call.ref_type,
+                    confidence: dyn_call.confidence,
+                    context: dyn_call.context,
+                    resolved: resolved_path.is_some(),
+                });
+            }
 
             for func_info in &file.functions {
-                // 1. AST Decorators / Attributes - Now resolves symbols
+                // Decorator & Framework inspection
                 for decorator in &func_info.decorators {
                     let d_lower = decorator.to_lowercase();
+                    let resolved_path = Self::resolve_symbol(
+                        &func_info.name,
+                        &name_to_paths,
+                        &lower_name_to_paths,
+                        &unqualified_to_paths,
+                    );
 
-                    // Try to resolve decorator to a specific function
-                    let resolved_path =
-                        Self::resolve_symbol(decorator, &name_to_paths, &lower_name_to_paths);
-
-                    if d_lower.contains("route")
+                    let is_route = d_lower.contains("route")
                         || d_lower.contains("get")
                         || d_lower.contains("post")
                         || d_lower.contains("put")
@@ -82,9 +113,9 @@ impl DynamicRefDetector {
                         || d_lower.contains("mapping")
                         || d_lower.contains("controller")
                         || d_lower.contains("injectable")
-                        || d_lower.contains("app.route")
-                        || d_lower.contains("blueprint")
-                    {
+                        || d_lower.contains("blueprint");
+
+                    if is_route {
                         refs.push(DynamicReference {
                             source_file: file.path.clone(),
                             source_function: Some(func_info.name.clone()),
@@ -94,241 +125,289 @@ impl DynamicRefDetector {
                             reference_type: DynamicRefType::Framework,
                             confidence: 0.95,
                             context: format!("Decorated endpoint: {}", decorator),
-                        });
-                    }
-
-                    // Spring annotations
-                    if d_lower.contains("getmapping")
-                        || d_lower.contains("postmapping")
-                        || d_lower.contains("putmapping")
-                        || d_lower.contains("deletemapping")
-                        || d_lower.contains("requestmapping")
-                        || d_lower.contains("restcontroller")
-                        || d_lower.contains("service")
-                        || d_lower.contains("repository")
-                        || d_lower.contains("component")
-                    {
-                        refs.push(DynamicReference {
-                            source_file: file.path.clone(),
-                            source_function: Some(func_info.name.clone()),
-                            target_function: Some(func_info.name.clone()),
-                            target_full_path: resolved_path,
-                            target_pattern: decorator.clone(),
-                            reference_type: DynamicRefType::Framework,
-                            confidence: 0.95,
-                            context: format!("Spring annotation: {}", decorator),
+                            resolved: resolved_path.is_some(),
                         });
                     }
                 }
 
-                // 2. React JSX / Component detection with symbol resolution
-                if (file.path.ends_with(".tsx") || file.path.ends_with(".jsx"))
-                    && func_info
+                // React components and hooks
+                if file.path.ends_with(".tsx") || file.path.ends_with(".jsx") {
+                    let is_component = func_info
                         .name
                         .chars()
                         .next()
                         .map(|c| c.is_uppercase())
-                        .unwrap_or(false)
-                {
-                    let resolved =
-                        Self::resolve_symbol(&func_info.name, &name_to_paths, &lower_name_to_paths);
-                    refs.push(DynamicReference {
-                        source_file: file.path.clone(),
-                        source_function: Some(func_info.name.clone()),
-                        target_function: Some(func_info.name.clone()),
-                        target_full_path: resolved,
-                        target_pattern: "JSXComponent".to_string(),
-                        reference_type: DynamicRefType::Framework,
-                        confidence: 0.90,
-                        context: "React Component function".to_string(),
-                    });
-                }
+                        .unwrap_or(false);
 
-                // React hooks with symbol resolution
-                if func_info.name.starts_with("use")
-                    && (file.path.ends_with(".tsx") || file.path.ends_with(".jsx"))
-                {
-                    let resolved =
-                        Self::resolve_symbol(&func_info.name, &name_to_paths, &lower_name_to_paths);
-                    refs.push(DynamicReference {
-                        source_file: file.path.clone(),
-                        source_function: Some(func_info.name.clone()),
-                        target_function: Some(func_info.name.clone()),
-                        target_full_path: resolved,
-                        target_pattern: "ReactHook".to_string(),
-                        reference_type: DynamicRefType::Framework,
-                        confidence: 0.85,
-                        context: "React Hook".to_string(),
-                    });
-                }
+                    let is_hook = func_info.name.starts_with("use");
 
-                // 3. String-based function dispatcher patterns - now resolves targets
-                if func_info.body_range.1 > func_info.body_range.0 {
-                    let body = &file.source[func_info.body_range.0..func_info.body_range.1];
+                    if is_component || is_hook {
+                        let resolved_path = Self::resolve_symbol(
+                            &func_info.name,
+                            &name_to_paths,
+                            &lower_name_to_paths,
+                            &unqualified_to_paths,
+                        );
 
-                    // Python reflection with symbol extraction
-                    if body.contains("getattr(") || body.contains("importlib") {
-                        // ⭐ NEW: Try to extract the actual function name from getattr
-                        let target_name = Self::extract_getattr_target(body);
-                        let resolved = target_name.as_ref().and_then(|name| {
-                            Self::resolve_symbol(name, &name_to_paths, &lower_name_to_paths)
-                        });
                         refs.push(DynamicReference {
                             source_file: file.path.clone(),
                             source_function: Some(func_info.name.clone()),
-                            target_function: target_name,
-                            target_full_path: resolved,
-                            target_pattern: "ReflectionDispatch".to_string(),
-                            reference_type: DynamicRefType::Reflection,
-                            confidence: 0.85,
-                            context: "Reflection or dynamic symbol lookup present in function body"
-                                .to_string(),
-                        });
-                    }
-
-                    // Go reflection with symbol extraction
-                    if body.contains("reflect.") || body.contains("reflect.ValueOf") {
-                        // Try to extract the method name from reflection
-                        let target_name = Self::extract_reflect_target(body);
-                        let resolved = target_name.as_ref().and_then(|name| {
-                            Self::resolve_symbol(name, &name_to_paths, &lower_name_to_paths)
-                        });
-                        refs.push(DynamicReference {
-                            source_file: file.path.clone(),
-                            source_function: Some(func_info.name.clone()),
-                            target_function: target_name,
-                            target_full_path: resolved,
-                            target_pattern: "GoReflection".to_string(),
-                            reference_type: DynamicRefType::Reflection,
-                            confidence: 0.85,
-                            context: "Go reflection usage".to_string(),
-                        });
-                    }
-
-                    // Dynamic imports with symbol resolution
-                    if body.contains("import(") || body.contains("require(") {
-                        // Try to extract the module path from import
-                        let target_name = Self::extract_import_target(body);
-                        let resolved = target_name.as_ref().and_then(|name| {
-                            Self::resolve_symbol(name, &name_to_paths, &lower_name_to_paths)
-                        });
-                        refs.push(DynamicReference {
-                            source_file: file.path.clone(),
-                            source_function: Some(func_info.name.clone()),
-                            target_function: target_name,
-                            target_full_path: resolved,
-                            target_pattern: "DynamicImport".to_string(),
-                            reference_type: DynamicRefType::DynamicImport,
-                            confidence: 0.80,
-                            context: "Dynamic import or require statement".to_string(),
+                            target_function: Some(func_info.name.clone()),
+                            target_full_path: resolved_path.clone(),
+                            target_pattern: if is_component {
+                                "JSXComponent"
+                            } else {
+                                "ReactHook"
+                            }
+                            .to_string(),
+                            reference_type: DynamicRefType::Framework,
+                            confidence: if is_component { 0.90 } else { 0.85 },
+                            context: if is_component {
+                                "React Component"
+                            } else {
+                                "React Hook"
+                            }
+                            .to_string(),
+                            resolved: resolved_path.is_some(),
                         });
                     }
                 }
             }
 
-            // 4. Dynamic Import Imports (file-level) with symbol resolution
+            // File-level imports
             for import in &file.imports {
                 if import.module.contains("dynamic")
                     || import.module.contains("lazy")
                     || import.module.contains("plugin")
                     || import.module.contains("importlib")
                 {
-                    let resolved =
-                        Self::resolve_symbol(&import.module, &name_to_paths, &lower_name_to_paths);
+                    let resolved = Self::resolve_symbol(
+                        &import.module,
+                        &name_to_paths,
+                        &lower_name_to_paths,
+                        &unqualified_to_paths,
+                    );
+
                     refs.push(DynamicReference {
                         source_file: file.path.clone(),
                         source_function: None,
                         target_function: Some(import.module.clone()),
-                        target_full_path: resolved,
+                        target_full_path: resolved.clone(),
                         target_pattern: import.module.clone(),
                         reference_type: DynamicRefType::DynamicImport,
                         confidence: 0.80,
                         context: format!("Dynamic import statement: {}", import.module),
+                        resolved: resolved.is_some(),
                     });
                 }
             }
+        }
 
-            // 5. Flask route detection with symbol resolution
-            if is_flask {
-                for func_info in &file.functions {
-                    if func_info.decorators.iter().any(|d| d.contains("route")) {
-                        let resolved = Self::resolve_symbol(
-                            &func_info.name,
-                            &name_to_paths,
-                            &lower_name_to_paths,
-                        );
-                        refs.push(DynamicReference {
-                            source_file: file.path.clone(),
-                            source_function: Some(func_info.name.clone()),
-                            target_function: Some(func_info.name.clone()),
-                            target_full_path: resolved,
-                            target_pattern: "FlaskRoute".to_string(),
-                            reference_type: DynamicRefType::Framework,
-                            confidence: 0.95,
-                            context: "Flask route decorator".to_string(),
+        // Deduplicate references
+        let mut seen = HashSet::new();
+        refs.retain(|r| {
+            seen.insert((
+                r.source_file.clone(),
+                r.target_full_path.clone().unwrap_or_default(),
+                r.target_pattern.clone(),
+                r.reference_type.clone(),
+            ))
+        });
+
+        refs
+    }
+
+    /// AST Tree-Sitter based target extraction
+    fn extract_dynamic_calls_via_ast(file: &ParsedFile) -> Vec<ExtractedDynamicCall> {
+        let mut extracted = Vec::new();
+        let lang = match file.language.as_str() {
+            "python" => tree_sitter_python::language(),
+            "go" => tree_sitter_go::language(),
+            "javascript" => tree_sitter_javascript::language(),
+            "typescript" => tree_sitter_typescript::language_typescript(),
+            _ => return extracted,
+        };
+
+        let mut parser = Parser::new();
+        if parser.set_language(&lang).is_err() {
+            return extracted;
+        }
+
+        let tree = match parser.parse(&file.source, None) {
+            Some(t) => t,
+            None => return extracted,
+        };
+
+        match file.language.as_str() {
+            "python" => {
+                // Match getattr(obj, "method_name")
+                let query_str = r#"
+                    (call
+                        function: (identifier) @fn_name (#eq? @fn_name "getattr")
+                        arguments: (argument_list
+                            (_)
+                            (string) @target_str
+                        )
+                    )
+                "#;
+                Self::run_ast_query(
+                    &query_str,
+                    &lang,
+                    tree.root_node(),
+                    &file.source,
+                    |target, node| {
+                        let clean_target =
+                            target.trim_matches(|c| c == '"' || c == '\'').to_string();
+                        extracted.push(ExtractedDynamicCall {
+                            enclosing_function: Self::find_enclosing_function(node, &file.source),
+                            target_name: clean_target,
+                            pattern: "getattr".to_string(),
+                            ref_type: DynamicRefType::Reflection,
+                            confidence: 0.85,
+                            context: "Python getattr() reflection dispatch".to_string(),
                         });
-                    }
-                }
+                    },
+                );
             }
+            "go" => {
+                // Match MethodByName("MethodName")
+                let query_str = r#"
+                    (call_expression
+                        function: (selector_expression
+                            field: (field_identifier) @method (#eq? @method "MethodByName")
+                        )
+                        arguments: (argument_list
+                            (interpreted_string_literal) @target_str
+                        )
+                    )
+                "#;
+                Self::run_ast_query(
+                    &query_str,
+                    &lang,
+                    tree.root_node(),
+                    &file.source,
+                    |target, node| {
+                        let clean_target = target.trim_matches('"').to_string();
+                        extracted.push(ExtractedDynamicCall {
+                            enclosing_function: Self::find_enclosing_function(node, &file.source),
+                            target_name: clean_target,
+                            pattern: "MethodByName".to_string(),
+                            ref_type: DynamicRefType::Reflection,
+                            confidence: 0.90,
+                            context: "Go reflect.MethodByName() dispatch".to_string(),
+                        });
+                    },
+                );
+            }
+            "javascript" | "typescript" => {
+                // Match import("./path") or require("./path")
+                let query_str = r#"
+                    (call_expression
+                        function: (identifier) @fn (#match? @fn "^(import|require)$")
+                        arguments: (arguments
+                            (string (string_fragment) @target_str)
+                        )
+                    )
+                "#;
+                Self::run_ast_query(
+                    &query_str,
+                    &lang,
+                    tree.root_node(),
+                    &file.source,
+                    |target, node| {
+                        let clean_target = target.trim_matches(|c| c == '"' || c == '\'');
+                        let target_fn = clean_target
+                            .split('/')
+                            .last()
+                            .and_then(|seg| seg.split('.').next())
+                            .unwrap_or(clean_target)
+                            .to_string();
 
-            // 6. Go reflection with symbol resolution
-            if is_go_reflect {
-                for func_info in &file.functions {
-                    if func_info.body_range.1 > func_info.body_range.0 {
-                        let body = &file.source[func_info.body_range.0..func_info.body_range.1];
-                        if body.contains("reflect.") {
-                            let target_name = Self::extract_reflect_target(body);
-                            let resolved = target_name.as_ref().and_then(|name| {
-                                Self::resolve_symbol(name, &name_to_paths, &lower_name_to_paths)
-                            });
-                            refs.push(DynamicReference {
-                                source_file: file.path.clone(),
-                                source_function: Some(func_info.name.clone()),
-                                target_function: target_name,
-                                target_full_path: resolved,
-                                target_pattern: "GoReflection".to_string(),
-                                reference_type: DynamicRefType::Reflection,
-                                confidence: 0.85,
-                                context: "Go reflection usage".to_string(),
-                            });
+                        extracted.push(ExtractedDynamicCall {
+                            enclosing_function: Self::find_enclosing_function(node, &file.source),
+                            target_name: target_fn,
+                            pattern: "DynamicImport".to_string(),
+                            ref_type: DynamicRefType::DynamicImport,
+                            confidence: 0.80,
+                            context: "Dynamic module import/require".to_string(),
+                        });
+                    },
+                );
+            }
+            _ => {}
+        }
+
+        extracted
+    }
+
+    fn run_ast_query<F>(
+        query_str: &str,
+        language: &Language,
+        root: Node,
+        source: &str,
+        mut handler: F,
+    ) where
+        F: FnMut(String, Node),
+    {
+        if let Ok(query) = Query::new(language, query_str) {
+            let mut cursor = QueryCursor::new();
+            let matches = cursor.matches(&query, root, source.as_bytes());
+
+            for m in matches {
+                for capture in m.captures {
+                    let capture_name = &query.capture_names()[capture.index as usize];
+                    if *capture_name == "target_str" {
+                        if let Ok(text) = capture.node.utf8_text(source.as_bytes()) {
+                            handler(text.to_string(), capture.node);
                         }
                     }
                 }
             }
         }
+    }
 
-        // Remove duplicate references (same source, same target_full_path)
-        let mut seen = std::collections::HashSet::new();
-        refs.retain(|r| {
-            let key = (
-                r.source_file.clone(),
-                r.target_full_path.clone().unwrap_or_default(),
-                r.reference_type.clone(),
-            );
-            if seen.contains(&key) {
-                false
-            } else {
-                seen.insert(key);
-                true
+    fn find_enclosing_function(mut node: Node, source: &str) -> Option<String> {
+        while let Some(parent) = node.parent() {
+            let kind = parent.kind();
+            if kind == "function_item"
+                || kind == "function_declaration"
+                || kind == "function_definition"
+                || kind == "method_declaration"
+                || kind == "method_definition"
+            {
+                if let Some(name_node) = parent.child_by_field_name("name") {
+                    return name_node
+                        .utf8_text(source.as_bytes())
+                        .ok()
+                        .map(|s| s.to_string());
+                }
             }
-        });
-
-        refs
+            node = parent;
+        }
+        None
     }
 
     fn resolve_symbol(
         name: &str,
         name_to_paths: &HashMap<String, Vec<String>>,
         lower_name_to_paths: &HashMap<String, Vec<String>>,
+        unqualified_to_paths: &HashMap<String, Vec<String>>,
     ) -> Option<String> {
-        // Try exact match first
+        // 1. Exact match
         if let Some(paths) = name_to_paths.get(name) {
             if paths.len() == 1 {
                 return Some(paths[0].clone());
             }
         }
 
-        // Try lowercase match
+        // 2. Unqualified index match (O(1))
+        if let Some(paths) = unqualified_to_paths.get(name) {
+            if paths.len() == 1 {
+                return Some(paths[0].clone());
+            }
+        }
+
+        // 3. Lowercase match
         let lower = name.to_lowercase();
         if let Some(paths) = lower_name_to_paths.get(&lower) {
             if paths.len() == 1 {
@@ -336,82 +415,21 @@ impl DynamicRefDetector {
             }
         }
 
-        // Try to find a function that ends with this name
-        for (full_name, paths) in name_to_paths {
-            if full_name.ends_with(name) || full_name.ends_with(&format!("::{}", name)) {
+        // 4. Strip common accessors
+        let stripped = name
+            .trim_start_matches("get_")
+            .trim_start_matches("set_")
+            .trim_start_matches("is_")
+            .trim_start_matches("has_");
+
+        if stripped != name {
+            if let Some(paths) = name_to_paths.get(stripped) {
                 if paths.len() == 1 {
                     return Some(paths[0].clone());
                 }
             }
         }
 
-        None
-    }
-    fn extract_getattr_target(body: &str) -> Option<String> {
-        // Look for patterns like getattr(module, "function_name")
-        if let Some(start) = body.find("getattr(") {
-            let after = &body[start + 8..];
-            if let Some(comma_pos) = after.find(',') {
-                let after_comma = &after[comma_pos + 1..];
-                // Find the quoted string
-                if let Some(quote_start) = after_comma.find('"') {
-                    let after_quote = &after_comma[quote_start + 1..];
-                    if let Some(quote_end) = after_quote.find('"') {
-                        return Some(after_quote[..quote_end].to_string());
-                    }
-                }
-                if let Some(quote_start) = after_comma.find('\'') {
-                    let after_quote = &after_comma[quote_start + 1..];
-                    if let Some(quote_end) = after_quote.find('\'') {
-                        return Some(after_quote[..quote_end].to_string());
-                    }
-                }
-            }
-        }
-        None
-    }
-    fn extract_reflect_target(body: &str) -> Option<String> {
-        // Look for patterns like MethodByName("method_name")
-        if let Some(start) = body.find("MethodByName(") {
-            let after = &body[start + 13..];
-            if let Some(quote_start) = after.find('"') {
-                let after_quote = &after[quote_start + 1..];
-                if let Some(quote_end) = after_quote.find('"') {
-                    return Some(after_quote[..quote_end].to_string());
-                }
-            }
-            if let Some(quote_start) = after.find('\'') {
-                let after_quote = &after[quote_start + 1..];
-                if let Some(quote_end) = after_quote.find('\'') {
-                    return Some(after_quote[..quote_end].to_string());
-                }
-            }
-        }
-        None
-    }
-
-    fn extract_import_target(body: &str) -> Option<String> {
-        // Look for patterns like import("module") or require("module")
-        let patterns = ["import(", "require("];
-        for pattern in patterns {
-            if let Some(start) = body.find(pattern) {
-                let after = &body[start + pattern.len()..];
-                if let Some(quote_start) = after.find('"') {
-                    let after_quote = &after[quote_start + 1..];
-                    if let Some(quote_end) = after_quote.find('"') {
-                        let module = after_quote[..quote_end].to_string();
-                        // Extract just the filename/function name from the path
-                        if let Some(last_part) = module.split('/').last() {
-                            if let Some(func_name) = last_part.split('.').next() {
-                                return Some(func_name.to_string());
-                            }
-                            return Some(last_part.to_string());
-                        }
-                        return Some(module);
-                    }
-                }
-            }
-        }
         None
     }
 
@@ -450,6 +468,15 @@ impl DynamicRefDetector {
         }
         output
     }
+}
+
+struct ExtractedDynamicCall {
+    enclosing_function: Option<String>,
+    target_name: String,
+    pattern: String,
+    ref_type: DynamicRefType,
+    confidence: f64,
+    context: String,
 }
 
 impl Default for DynamicRefDetector {

@@ -1,10 +1,9 @@
 // src/ml/model_serialization.rs
+
 use crate::ml::calibration::CalibrationParams;
 use crate::ml::classifier::LinearClassifier;
 use crate::ml::feature_schema::{FeatureSchema, FEATURE_SCHEMA};
 use serde::{Deserialize, Serialize};
-
-// Versioned Model
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionedModel {
@@ -12,7 +11,7 @@ pub struct VersionedModel {
     pub model_id: String,
     pub created_at: String,
     pub feature_schema: FeatureSchema,
-    pub classifier: LinearClassifier, // scaling now lives on the classifier itself
+    pub classifier: LinearClassifier,
     pub calibration: Option<CalibrationParams>,
     pub threshold: f64,
     pub training_metadata: TrainingMetadata,
@@ -39,6 +38,56 @@ pub struct ModelPerformance {
     pub fpr: f64,
     pub fnr: f64,
     pub threshold: f64,
+}
+
+/// Model validation result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelValidationResult {
+    pub passed: bool,
+    pub issues: Vec<String>,
+    pub warnings: Vec<String>,
+    pub feature_count: usize,
+    pub model_version: u32,
+    pub created_at: String,
+}
+
+impl ModelValidationResult {
+    pub fn is_valid(&self) -> bool {
+        self.passed
+    }
+
+    pub fn has_warnings(&self) -> bool {
+        !self.warnings.is_empty()
+    }
+
+    pub fn print(&self) {
+        println!("\n📋 Model Validation Report");
+        println!("==========================");
+        println!("Model Version: v{}", self.model_version);
+        println!("Created: {}", self.created_at);
+        println!("Features: {}", self.feature_count);
+        println!();
+
+        if self.passed {
+            println!("✅ Model validation PASSED");
+        } else {
+            println!("❌ Model validation FAILED");
+        }
+
+        if !self.issues.is_empty() {
+            println!("\n❌ Issues:");
+            for issue in &self.issues {
+                println!("  - {}", issue);
+            }
+        }
+
+        if !self.warnings.is_empty() {
+            println!("\n⚠️ Warnings:");
+            for warning in &self.warnings {
+                println!("  - {}", warning);
+            }
+        }
+    }
 }
 
 impl VersionedModel {
@@ -96,6 +145,120 @@ impl VersionedModel {
         Ok(model)
     }
 
+    /// Comprehensive model validation
+    pub fn validate(&self) -> Result<ModelValidationResult, String> {
+        let mut issues = Vec::new();
+        let mut warnings = Vec::new();
+        let mut passed = true;
+
+        // 1. Check schema compatibility
+        if let Err(e) = self.validate_schema() {
+            issues.push(e);
+            passed = false;
+        }
+
+        // 2. Check model ID format
+        if self.model_id.is_empty() || self.model_id.len() < 8 {
+            warnings.push("Model ID is empty or too short".to_string());
+        }
+
+        // 3. Check creation date
+        if let Err(e) = chrono::DateTime::parse_from_rfc3339(&self.created_at) {
+            warnings.push(format!("Invalid creation date format: {}", e));
+        }
+
+        // 4. Check version
+        if self.version == 0 {
+            warnings.push("Model version is 0 - this may be an unversioned model".to_string());
+        }
+
+        // 5. Validate feature schema features
+        for feature in &self.feature_schema.features {
+            if feature.name.is_empty() {
+                issues.push("Feature has empty name".to_string());
+                passed = false;
+            }
+            if feature.index >= self.feature_schema.feature_count() {
+                issues.push(format!("Feature index out of bounds: {}", feature.index));
+                passed = false;
+            }
+        }
+
+        // 6. Check classifier weights match feature count
+        let weight_count = self.classifier.weights.len();
+        let feature_count = self.feature_schema.feature_count();
+        if weight_count != feature_count {
+            issues.push(format!(
+                "Weight count ({}) does not match feature count ({})",
+                weight_count, feature_count
+            ));
+            passed = false;
+        }
+
+        // 7. Check for NaN/infinite weights
+        for (i, &w) in self.classifier.weights.iter().enumerate() {
+            if w.is_nan() || w.is_infinite() {
+                issues.push(format!("Weight {} is NaN or infinite", i));
+                passed = false;
+            }
+        }
+        if self.classifier.bias.is_nan() || self.classifier.bias.is_infinite() {
+            issues.push("Bias is NaN or infinite".to_string());
+            passed = false;
+        }
+
+        // 8. Check threshold
+        if self.threshold <= 0.0 || self.threshold >= 1.0 {
+            warnings.push(format!(
+                "Threshold {} is outside valid range (0.0-1.0)",
+                self.threshold
+            ));
+        }
+
+        // 9. Check calibration if present
+        if let Some(cal) = &self.calibration {
+            if cal.temperature <= 0.0 {
+                issues.push(format!(
+                    "Calibration temperature {} is not positive",
+                    cal.temperature
+                ));
+                passed = false;
+            }
+            if cal.num_samples == 0 && cal.bins.is_empty() {
+                warnings.push("Calibration has no samples and no bins".to_string());
+            }
+        }
+
+        // 10. Check performance metrics if present
+        if let Some(perf) = &self.performance {
+            if perf.accuracy < 0.0 || perf.accuracy > 1.0 {
+                warnings.push(format!("Accuracy {} is outside valid range", perf.accuracy));
+            }
+            if perf.precision < 0.0 || perf.precision > 1.0 {
+                warnings.push(format!(
+                    "Precision {} is outside valid range",
+                    perf.precision
+                ));
+            }
+            if perf.recall < 0.0 || perf.recall > 1.0 {
+                warnings.push(format!("Recall {} is outside valid range", perf.recall));
+            }
+            if perf.f1 < 0.0 || perf.f1 > 1.0 {
+                warnings.push(format!("F1 {} is outside valid range", perf.f1));
+            }
+        }
+
+        Ok(ModelValidationResult {
+            passed,
+            issues,
+            warnings,
+            feature_count: self.feature_schema.feature_count(),
+            model_version: self.version,
+            created_at: self.created_at.clone(),
+        })
+    }
+
+    /// Validate schema compatibility
     pub fn validate_schema(&self) -> Result<(), String> {
         let current = FEATURE_SCHEMA.clone();
 
@@ -129,6 +292,36 @@ impl VersionedModel {
         Ok(())
     }
 
+    /// Check if model is compatible with current runtime
+    pub fn is_compatible(&self) -> bool {
+        self.validate_schema().is_ok()
+    }
+
+    /// Get model summary
+    pub fn summary(&self) -> String {
+        let mut s = String::new();
+        s.push_str(&format!("Model: {}\n", self.model_id));
+        s.push_str(&format!("Version: v{}\n", self.version));
+        s.push_str(&format!("Created: {}\n", self.created_at));
+        s.push_str(&format!(
+            "Features: {}\n",
+            self.feature_schema.feature_count()
+        ));
+        s.push_str(&format!("Threshold: {:.2}\n", self.threshold));
+
+        if let Some(perf) = &self.performance {
+            s.push_str(&format!("Accuracy: {:.1}%\n", perf.accuracy * 100.0));
+            s.push_str(&format!("F1: {:.1}%\n", perf.f1 * 100.0));
+        }
+
+        if let Some(cal) = &self.calibration {
+            s.push_str(&format!("Calibration: {:?}\n", cal.method));
+            s.push_str(&format!("Calibration samples: {}\n", cal.num_samples));
+        }
+
+        s
+    }
+
     pub fn get_classifier(&self) -> &LinearClassifier {
         &self.classifier
     }
@@ -157,7 +350,6 @@ impl VersionedModel {
         self.threshold = threshold;
     }
 }
-// Legacy Model Compatibility
 
 impl VersionedModel {
     /// Migrate from legacy model format (just LinearClassifier)
@@ -177,7 +369,9 @@ impl VersionedModel {
 
     /// Load legacy model (just LinearClassifier) and convert
     pub fn load_legacy(path: &str) -> Result<Self, String> {
-        let classifier: LinearClassifier = crate::ml::serialization::load_model(path)?;
+        let classifier: LinearClassifier =
+            crate::ml::serialization::ModelSerializer::load_auto(path)
+                .map_err(|e| e.to_string())?;
         Ok(Self::from_legacy(classifier, None))
     }
 }

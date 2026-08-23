@@ -1,7 +1,6 @@
 // src/analysis/dead_code/report.rs
 
-use super::analyzer::DeadCodeAnalysis;
-use super::scorer::ConfidenceLevel;
+use super::analyzer::{ConfidenceLevel, DeadCodeAnalysis};
 
 pub struct DeadCodeReportGenerator;
 

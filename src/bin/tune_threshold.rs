@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     println!("🔬 Loading model from: {:?}", args.model);
-    let classifier = DeadCodeClassifier::load(&args.model.to_string_lossy())?;
+    let classifier = DeadCodeClassifier::load(&*args.model.to_string_lossy())?;
 
     println!("📊 Loading validation data from: {:?}", args.val_data);
     let data = std::fs::read_to_string(&args.val_data)?;

@@ -99,14 +99,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 // src/bin/dead_code_check.rs
 
 async fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
-    // ⭐ NEW: Initialize metrics collector
+    // Initialize metrics collector
     let metrics = if args.metrics {
         Some(Arc::new(MetricsCollector::new()))
     } else {
         None
     };
 
-    // ⭐ NEW: Initialize resource manager
+    // Initialize resource manager
     let resource_manager = if args.cleanup {
         Some(ResourceManager::new(true))
     } else {
@@ -132,7 +132,7 @@ async fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("🔍 Analyzing dead code in: {:?}\n", args.project_dir);
 
-    // ⭐ NEW: Record start time
+    // Record start time
     let start_time = Instant::now();
     if let Some(metrics) = &metrics {
         metrics.record_now("analysis_started", 1.0).await;
@@ -153,7 +153,7 @@ async fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
     let analysis = pipeline.process_project(&args.project_dir).await?;
 
-    // ⭐ NEW: Record after analysis
+    // Record after analysis
     if let Some(metrics) = &metrics {
         let duration = start_time.elapsed().as_secs_f64();
         metrics
@@ -197,6 +197,22 @@ async fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 &model_path.to_string_lossy(),
             ) {
                 Ok(versioned) => {
+                    // Validate the model
+                    let validation = versioned.validate();
+                    match validation {
+                        Ok(result) => {
+                            result.print();
+                            if !result.is_valid() {
+                                eprintln!("\n⚠️ Model validation failed. Continuing may produce incorrect results.");
+                                eprintln!("   Consider retraining the model with current schema.");
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("❌ Model validation error: {}", e);
+                            eprintln!("   Model may be incompatible. Continuing may produce incorrect results.");
+                        }
+                    }
+
                     println!("✅ Loaded versioned model from: {:?}", model_path);
                     println!("   Version: {}", versioned.version);
                     println!("   Created: {}", versioned.created_at);
@@ -231,7 +247,7 @@ async fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
                     Some((classifier, model_threshold))
                 }
-                Err(_) => match DeadCodeClassifier::load(&model_path.to_string_lossy()) {
+                Err(_) => match DeadCodeClassifier::load(&*model_path.to_string_lossy()) {
                     Ok(model) => {
                         println!("✅ Loaded legacy model from: {:?}", model_path);
                         Some((model, args.threshold))
@@ -331,7 +347,14 @@ async fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut verdict_config = VerdictConfig::default();
     verdict_config.enable_ml = ml_model.is_some();
 
-    let mut verdict_engine = VerdictEngine::new(verdict_config);
+    let mut verdict_engine = VerdictEngine::new(verdict_config)
+        .with_commit_sha(&get_current_commit(&args.project_dir))
+        .with_stage("dynamic_references")
+        .with_stage("ml_prediction");
+
+    if let Some(model_path) = &args.model {
+        verdict_engine = verdict_engine.with_model_path(&model_path.to_string_lossy());
+    }
 
     if let Some((model, _)) = &ml_model {
         if let Some(_cal) = &model.calibration {
@@ -612,7 +635,7 @@ async fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         &format!("{}", args.model.is_some() && !args.no_ml),
     );
 
-    // ⭐ NEW: Add metrics from collector
+    // Add metrics from collector
     if let Some(metrics) = &metrics {
         if let Some(duration) = metrics.get_latest("analysis_duration_seconds").await {
             reporter.set_metric("duration_seconds", &format!("{:.2}", duration));
@@ -634,7 +657,7 @@ async fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         println!("📄 Report saved to: {:?}", output_path);
     }
 
-    // ⭐ NEW: Generate metrics report if metrics enabled
+    // Generate metrics report if metrics enabled
     if args.metrics {
         if let Some(metrics) = &metrics {
             let metrics_report = metrics.generate_report().await;

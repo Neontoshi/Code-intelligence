@@ -89,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load model if provided
     if let Some(model_path) = &args.model {
-        if let Ok(_model) = DeadCodeClassifier::load(&model_path.to_string_lossy()) {
+        if let Ok(_model) = DeadCodeClassifier::load(&*model_path.to_string_lossy()) {
             println!("✅ Model loaded: {:?}", model_path);
         }
     }

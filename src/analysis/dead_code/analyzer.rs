@@ -1,14 +1,44 @@
 // src/analysis/dead_code/analyzer.rs
-use super::modules::{DeadModuleReport, ModuleDeadCodeDetector};
-use super::scorer::{ConfidenceLevel, DeadScore, ScoreFactor};
-use super::types::{DeadTypeReport, TypeDeadCodeDetector};
+
 use crate::analysis::roots::ReachabilityMap;
-use crate::analysis::verdict_source::Verdict;
+use crate::analysis::verdict_source::state::Verdict;
 use crate::graph::call_graph::{CallGraph, FunctionNode};
 use crate::graph::import_graph::ImportGraph;
 use crate::graph::traits::GraphMetrics;
 use crate::graph::type_graph::TypeGraph;
+use crate::SignalDirection;
+use crate::VerdictState;
+
+use super::modules::{DeadModuleReport, ModuleDeadCodeDetector};
+use super::types::{DeadTypeReport, TypeDeadCodeDetector};
+
 use std::collections::HashMap;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ConfidenceLevel {
+    Guaranteed,
+    VeryLikely,
+    Probably,
+    Uncertain,
+    Unlikely,
+    VeryUnlikely,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeadScore {
+    pub score: f64,
+    pub level: ConfidenceLevel,
+    pub factors: Vec<ScoreFactor>,
+    pub ml_probability: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScoreFactor {
+    pub name: String,
+    pub weight: f64,
+    pub contribution: f64,
+    pub explanation: String,
+}
 
 #[derive(Clone, Debug)]
 pub struct DeadCodeAnalysis {
@@ -89,38 +119,39 @@ impl DeadCodeAnalyzer {
                 let is_binary_only = self.is_binary_only_function(func);
                 let is_internal_call = func.fan_in == 0 && !is_binary_only && !func.is_public;
 
+                // ⭐ Use verdict's state for confidence level
+                let level = match verdict.state {
+                    VerdictState::DefinitelyDead => ConfidenceLevel::Guaranteed,
+                    VerdictState::ProbablyDead => ConfidenceLevel::VeryLikely,
+                    _ => ConfidenceLevel::Probably,
+                };
+
+                let score = DeadScore {
+                    score: verdict.confidence,
+                    level,
+                    factors: verdict
+                        .signals
+                        .iter()
+                        .map(|s| ScoreFactor {
+                            name: s.name.clone(),
+                            weight: s.weight,
+                            contribution: if s.direction == SignalDirection::SupportsDead {
+                                s.weight
+                            } else {
+                                -s.weight
+                            },
+                            explanation: s.explanation.clone(),
+                        })
+                        .collect(),
+                    ml_probability: verdict.dead_probability,
+                };
+
                 dead_functions.push(DeadFunction {
                     full_path: verdict.full_path.clone(),
                     name: verdict.function_name.clone(),
                     file: func.file.clone(),
                     line: func.line,
-                    score: DeadScore {
-                        score: verdict.confidence,
-                        level: if verdict.confidence > 0.95 {
-                            ConfidenceLevel::Guaranteed
-                        } else if verdict.confidence > 0.85 {
-                            ConfidenceLevel::VeryLikely
-                        } else {
-                            ConfidenceLevel::Probably
-                        },
-                        factors: verdict
-                            .signals
-                            .iter()
-                            .map(|s| ScoreFactor {
-                                name: s.name.clone(),
-                                weight: s.weight,
-                                contribution: if s.direction
-                                    == crate::analysis::verdict_source::SignalDirection::SupportsDead
-                                {
-                                    s.weight
-                                } else {
-                                    -s.weight
-                                },
-                                explanation: s.explanation.clone(),
-                            })
-                            .collect(),
-                        ml_probability: verdict.dead_probability,
-                    },
+                    score,
                     impact,
                     removal_order: 0,
                     is_binary_only,

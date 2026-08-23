@@ -4,17 +4,16 @@ mod analyzer;
 pub mod filters;
 mod modules;
 mod report;
-mod scorer;
 mod types;
 mod whitelist;
 // reachability.rs has been removed - using roots::ReachabilityAnalyzer instead
 
 pub use analyzer::{
-    AnalysisSummary, DeadCodeAnalysis, DeadCodeAnalyzer, DeadFunction, FunctionImpact, RemovalCost,
+    AnalysisSummary, ConfidenceLevel, DeadCodeAnalysis, DeadCodeAnalyzer, DeadFunction, DeadScore,
+    FunctionImpact, RemovalCost, ScoreFactor,
 };
 pub use modules::{DeadFile, DeadImport, DeadModule, DeadModuleReport};
 pub use report::DeadCodeReportGenerator;
-pub use scorer::{ConfidenceLevel, ConfidenceScorer, DeadScore, ScoreFactor, ScoreWeights};
 pub use types::{DeadType, DeadTypeReport};
 pub use whitelist::WHITELIST;
 

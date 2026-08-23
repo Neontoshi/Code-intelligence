@@ -1,8 +1,9 @@
 // src/engine/incremental.rs
 
 use crate::graph::call_graph::CallGraph;
+use crate::graph::traits::GraphMetrics;
 use crate::parser::tree_sitter::ParsedFile;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -14,6 +15,10 @@ pub struct FileTracker {
     files: HashMap<PathBuf, (SystemTime, String)>,
     /// Functions that were previously analyzed
     function_cache: HashMap<String, IncrementalFunction>,
+    /// Reverse dependency map: function -> list of functions that call it
+    reverse_deps: HashMap<String, HashSet<String>>,
+    /// Forward dependency map: function -> list of functions it calls
+    forward_deps: HashMap<String, HashSet<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +46,21 @@ pub struct IncrementalResult {
     pub added_functions: Vec<String>,
     pub modified_functions: Vec<String>,
     pub cache_hit: bool,
+    /// ⭐ NEW: Rebuild instructions for the pipeline
+    pub rebuild_scope: RebuildScope,
+}
+
+/// ⭐ NEW: Defines what needs to be rebuilt
+#[derive(Debug, Clone, Default)]
+pub struct RebuildScope {
+    /// Functions that need full re-analysis
+    pub functions_to_reanalyze: HashSet<String>,
+    /// Files that need re-parsing
+    pub files_to_reparse: HashSet<PathBuf>,
+    /// Edges that need to be re-evaluated
+    pub edges_to_rebuild: HashSet<(String, String)>,
+    /// Whether the entire graph needs rebuilding
+    pub full_rebuild: bool,
 }
 
 impl FileTracker {
@@ -48,6 +68,8 @@ impl FileTracker {
         Self {
             files: HashMap::new(),
             function_cache: HashMap::new(),
+            reverse_deps: HashMap::new(),
+            forward_deps: HashMap::new(),
         }
     }
 
@@ -89,15 +111,43 @@ impl FileTracker {
         }
     }
 
-    /// Get affected functions (callers of changed functions)
-    pub fn get_affected_functions(
+    /// ⭐ NEW: Build dependency graph from call graph
+    pub fn build_dependency_graph(&mut self, call_graph: &CallGraph) {
+        self.reverse_deps.clear();
+        self.forward_deps.clear();
+
+        for idx in call_graph.node_indices() {
+            let func = &call_graph[idx];
+            let full_path = func.full_path.clone();
+
+            // Forward dependencies: functions this function calls
+            let callees: HashSet<String> = call_graph
+                .get_callees(idx)
+                .iter()
+                .map(|f| f.full_path.clone())
+                .collect();
+
+            self.forward_deps.insert(full_path.clone(), callees.clone());
+
+            // Reverse dependencies: functions that call this function
+            for callee in callees {
+                self.reverse_deps
+                    .entry(callee)
+                    .or_default()
+                    .insert(full_path.clone());
+            }
+        }
+    }
+
+    /// ⭐ NEW: Get all functions affected by changes (full dependency propagation)
+    pub fn get_affected_functions_full(
         &self,
-        call_graph: &CallGraph,
         changed_files: &[PathBuf],
+        call_graph: &CallGraph,
     ) -> HashSet<String> {
         let mut affected = HashSet::new();
 
-        // Direct changes
+        // 1. Direct changes: functions in changed files
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
             let file_path = PathBuf::from(&func.file);
@@ -106,28 +156,92 @@ impl FileTracker {
             }
         }
 
-        // Propagate to callers
-        let mut to_process: Vec<String> = affected.iter().cloned().collect();
+        // 2. Propagate through dependency graph (both directions)
+        let mut queue: VecDeque<String> = affected.iter().cloned().collect();
         let mut processed = HashSet::new();
 
-        while let Some(path) = to_process.pop() {
+        while let Some(path) = queue.pop_front() {
             if processed.contains(&path) {
                 continue;
             }
             processed.insert(path.clone());
 
-            // Find callers of this function
-            if let Some(idx) = call_graph.name_index.get(&path) {
-                for caller in call_graph.get_callers(*idx) {
-                    if !affected.contains(&caller.full_path) {
-                        affected.insert(caller.full_path.clone());
-                        to_process.push(caller.full_path.clone());
+            // Forward: functions that depend on this one (callers)
+            if let Some(callers) = self.reverse_deps.get(&path) {
+                for caller in callers {
+                    if !affected.contains(caller) {
+                        affected.insert(caller.clone());
+                        queue.push_back(caller.clone());
+                    }
+                }
+            }
+
+            // Backward: functions that this one depends on (callees)
+            if let Some(callees) = self.forward_deps.get(&path) {
+                for callee in callees {
+                    if !affected.contains(callee) {
+                        affected.insert(callee.clone());
+                        queue.push_back(callee.clone());
                     }
                 }
             }
         }
 
         affected
+    }
+
+    /// ⭐ NEW: Determine rebuild scope
+    pub fn determine_rebuild_scope(
+        &self,
+        changed_files: &[PathBuf],
+        call_graph: &CallGraph,
+    ) -> RebuildScope {
+        let mut scope = RebuildScope::default();
+
+        // If too many files changed, do full rebuild
+        if changed_files.len() > 10
+            || changed_files.len() as f64 / call_graph.node_count() as f64 > 0.3
+        {
+            scope.full_rebuild = true;
+            return scope;
+        }
+
+        // Get affected functions
+        let affected = self.get_affected_functions_full(changed_files, call_graph);
+        scope.functions_to_reanalyze = affected;
+
+        // Find files that need re-parsing
+        for idx in call_graph.node_indices() {
+            let func = &call_graph[idx];
+            if scope.functions_to_reanalyze.contains(&func.full_path) {
+                scope.files_to_reparse.insert(PathBuf::from(&func.file));
+            }
+        }
+
+        // Find edges that need rebuilding
+        for idx in call_graph.node_indices() {
+            let func = &call_graph[idx];
+            if scope.functions_to_reanalyze.contains(&func.full_path) {
+                for callee in call_graph.get_callees(idx) {
+                    if scope.functions_to_reanalyze.contains(&callee.full_path) {
+                        scope
+                            .edges_to_rebuild
+                            .insert((func.full_path.clone(), callee.full_path.clone()));
+                    }
+                }
+            }
+        }
+
+        scope
+    }
+
+    /// Get affected functions (callers of changed functions) - simple version
+    pub fn get_affected_functions(
+        &self,
+        call_graph: &CallGraph,
+        changed_files: &[PathBuf],
+    ) -> HashSet<String> {
+        self.get_affected_functions_full(changed_files, call_graph)
     }
 
     /// Cache a function for incremental analysis

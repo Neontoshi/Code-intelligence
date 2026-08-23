@@ -242,7 +242,6 @@ enum Commands {
         llm: bool,
     },
 
-    // Training & Model Management
     /// Train the ML model
     Train {
         /// Training data path
@@ -516,6 +515,17 @@ enum Commands {
         report: bool,
         #[arg(long, default_value = "calibration_results")]
         output_dir: PathBuf,
+    },
+
+    /// Export dashboard decisions as training data
+    ExportFeedback {
+        /// Path to the project
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Output file for training data
+        #[arg(short, long, default_value = "feedback_training.json")]
+        output: PathBuf,
     },
 
     /// Configure global settings
@@ -888,6 +898,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_verify(&data, &output)?;
         }
 
+        Commands::ExportFeedback { path, output } => {
+            let project_path = resolve_path(&path)?;
+            run_export_feedback(&project_path, &output)?;
+        }
+
         // Special Commands
         Commands::Dashboard { path, model } => {
             let project_path = resolve_path(&path)?;
@@ -1050,6 +1065,43 @@ fn save_config(config: &GlobalConfig) -> Result<(), String> {
     let content =
         toml::to_string_pretty(config).map_err(|e| format!("Failed to serialize config: {}", e))?;
     std::fs::write(&path, content).map_err(|e| format!("Failed to write config: {}", e))?;
+    Ok(())
+}
+
+/// ⭐ NEW: Export dashboard decisions as training data
+fn run_export_feedback(path: &Path, output: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    use code_intelligence::analysis::OutcomeTracker;
+
+    println!("📊 Exporting feedback from: {:?}", path);
+    println!("📁 Output: {:?}", output);
+
+    let tracker = OutcomeTracker::new(path);
+    let stats = tracker.get_feedback_stats();
+
+    println!("\n📈 Feedback Statistics:");
+    println!("   Total decisions: {}", stats.total_decisions);
+    println!("   Removed (True Positives): {}", stats.true_positives);
+    println!("   Kept (True Negatives): {}", stats.true_negatives);
+    println!("   False Positives: {}", stats.false_positives);
+    println!("   Pending: {}", stats.pending);
+    println!("   Feedback ratio: {:.1}%", stats.feedback_ratio * 100.0);
+    println!(
+        "   False positive rate: {:.1}%",
+        stats.false_positive_rate * 100.0
+    );
+
+    if stats.total_decisions == 0 {
+        println!("\n⚠️ No decisions to export. Run the dashboard and make decisions first.");
+        return Ok(());
+    }
+
+    tracker.save_feedback_as_training_data(output)?;
+    println!("\n✅ Feedback exported to: {:?}", output);
+    println!(
+        "   Use this file with `ci train --data {}`",
+        output.display()
+    );
+
     Ok(())
 }
 

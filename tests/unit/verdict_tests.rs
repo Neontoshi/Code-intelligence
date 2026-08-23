@@ -166,5 +166,17 @@ fn create_test_verdict(
         evidence_sources: vec![],
         verified: false,
         verified_by: None,
+        provenance: code_intelligence::analysis::verdict_source::state::VerdictProvenance {
+            analysis_version: env!("CARGO_PKG_VERSION").to_string(),
+            model_version: None,
+            commit_sha: None,
+            feature_schema_version: 1,
+            analysis_timestamp: chrono::Utc::now().timestamp(),
+            analysis_duration_secs: None,
+            stages_used: vec!["test_analysis".to_string()],
+            ml_enabled: false,
+            static_enabled: true,
+            model_path: None,
+        },
     }
 }

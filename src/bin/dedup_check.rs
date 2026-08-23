@@ -61,7 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let duplicate_model = if let Some(path) = model_path {
         if path.exists() {
-            match DuplicateClassifier::load(&path.to_string_lossy()) {
+            match DuplicateClassifier::load(&*path.to_string_lossy()) {
                 Ok(model) => {
                     println!("✅ Loaded duplicate model from: {:?}\n", path);
                     Some(model)

@@ -7,7 +7,7 @@ use crate::engine::cache::{AnalysisCacheManager, CachedFileEntry, FileCache};
 use crate::engine::call_graph_builder::CallGraphBuilder;
 use crate::engine::config::PipelineConfig;
 use crate::engine::file_collector::FileCollector;
-use crate::engine::incremental::{FileTracker, IncrementalResult};
+use crate::engine::incremental::{FileTracker, IncrementalResult, RebuildScope};
 use crate::engine::indexer::IndexBuilder;
 use crate::engine::llm_analysis::{LLMAnalysis, LLMAnalyzer};
 use crate::engine::stages::{AnalyzedProject, OptimizedProject, ParsedProject, RawProject};
@@ -65,6 +65,16 @@ impl Pipeline {
             logger: None,
             file_tracker: None,
             enable_incremental: false,
+        }
+    }
+
+    pub fn get_rebuild_scope(&self) -> Option<RebuildScope> {
+        if let Some(_tracker) = &self.file_tracker {
+            // This would be set during analysis
+            // For now, return None
+            None
+        } else {
+            None
         }
     }
 
@@ -147,6 +157,7 @@ impl Pipeline {
                     added_functions: Vec::new(),
                     modified_functions: Vec::new(),
                     cache_hit: false,
+                    rebuild_scope: RebuildScope::default(),
                 };
                 Some(result)
             } else {
@@ -157,6 +168,7 @@ impl Pipeline {
                     added_functions: Vec::new(),
                     modified_functions: Vec::new(),
                     cache_hit: true,
+                    rebuild_scope: RebuildScope::default(),
                 })
             }
         } else {

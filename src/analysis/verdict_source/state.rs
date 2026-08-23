@@ -54,6 +54,32 @@ pub struct Verdict {
     pub evidence_sources: Vec<EvidenceSource>,
     pub verified: bool,
     pub verified_by: Option<String>,
+    pub provenance: VerdictProvenance,
+}
+
+/// Provenance information for a verdict
+#[derive(Debug, Clone)]
+pub struct VerdictProvenance {
+    /// Version of the analysis engine
+    pub analysis_version: String,
+    /// Model version used (if any)
+    pub model_version: Option<String>,
+    /// Git commit SHA (if available)
+    pub commit_sha: Option<String>,
+    /// Feature schema version
+    pub feature_schema_version: u32,
+    /// When the analysis was performed
+    pub analysis_timestamp: i64,
+    /// How long the analysis took (in seconds)
+    pub analysis_duration_secs: Option<f64>,
+    /// Which pipeline stages were used
+    pub stages_used: Vec<String>,
+    /// Whether ML was enabled
+    pub ml_enabled: bool,
+    /// Whether static analysis was enabled
+    pub static_enabled: bool,
+    /// Model file path (if any)
+    pub model_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,6 +131,57 @@ impl Verdict {
         self.state.confidence_label().to_string()
     }
 
+    /// ⭐ NEW: Format provenance as a string
+    pub fn format_provenance(&self) -> String {
+        let mut s = String::new();
+        s.push_str(&format!(
+            "Analysis Version: {}\n",
+            self.provenance.analysis_version
+        ));
+
+        if let Some(model_ver) = &self.provenance.model_version {
+            s.push_str(&format!("Model Version: {}\n", model_ver));
+        }
+
+        if let Some(commit) = &self.provenance.commit_sha {
+            s.push_str(&format!("Commit: {}\n", &commit[..8]));
+        }
+
+        s.push_str(&format!(
+            "Feature Schema: v{}\n",
+            self.provenance.feature_schema_version
+        ));
+        s.push_str(&format!(
+            "Analysis Time: {}\n",
+            chrono::DateTime::from_timestamp(self.provenance.analysis_timestamp, 0)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        ));
+
+        if let Some(duration) = self.provenance.analysis_duration_secs {
+            s.push_str(&format!("Analysis Duration: {:.2}s\n", duration));
+        }
+
+        s.push_str(&format!("ML Enabled: {}\n", self.provenance.ml_enabled));
+        s.push_str(&format!(
+            "Static Analysis: {}\n",
+            self.provenance.static_enabled
+        ));
+
+        if !self.provenance.stages_used.is_empty() {
+            s.push_str(&format!(
+                "Stages: {}\n",
+                self.provenance.stages_used.join(" → ")
+            ));
+        }
+
+        if let Some(model_path) = &self.provenance.model_path {
+            s.push_str(&format!("Model: {}\n", model_path));
+        }
+
+        s
+    }
+
     pub fn format_explanation(&self) -> String {
         let mut output = String::new();
 
@@ -139,6 +216,8 @@ impl Verdict {
         }
 
         output.push_str(&format!("\n\nExplanation: {}\n", self.explanation));
+        output.push_str("\n---\n");
+        output.push_str(&self.format_provenance());
 
         output
     }
@@ -191,6 +270,7 @@ pub struct VerdictEngine {
     config: VerdictConfig,
     ml_model: Option<DeadCodeClassifier>,
     dynamic_refs: Option<Vec<DynamicReference>>,
+    provenance: VerdictProvenance,
 }
 
 impl VerdictEngine {
@@ -199,6 +279,22 @@ impl VerdictEngine {
             config,
             ml_model: None,
             dynamic_refs: None,
+            provenance: VerdictProvenance {
+                analysis_version: env!("CARGO_PKG_VERSION").to_string(),
+                model_version: None,
+                commit_sha: None,
+                feature_schema_version: 1,
+                analysis_timestamp: chrono::Utc::now().timestamp(),
+                analysis_duration_secs: None,
+                stages_used: vec![
+                    "root_detection".to_string(),
+                    "reachability".to_string(),
+                    "verdict".to_string(),
+                ],
+                ml_enabled: false,
+                static_enabled: true,
+                model_path: None,
+            },
         }
     }
 
@@ -228,18 +324,43 @@ impl VerdictEngine {
         self
     }
 
-    // ⭐ FIX: This now actually uses the model's threshold
-    pub fn with_model_thresholds(mut self, model: &DeadCodeClassifier) -> Self {
-        // If the model has calibration parameters with a temperature,
-        // use it to adjust the threshold
+    pub fn with_model_thresholds(self, model: &DeadCodeClassifier) -> Self {
         if let Some(calibration) = &model.calibration {
-            if calibration.temperature != 1.0 {
-                // Higher temperature = more spread = lower effective threshold
-                let adjusted_threshold = self.config.dead_threshold / calibration.temperature;
-                self.config.dead_threshold = adjusted_threshold.clamp(0.5, 0.95);
-            }
+            if calibration.temperature != 1.0 {}
         }
-        // If we had a stored threshold in a manifest, we'd load it here
+        self
+    }
+
+    /// Set the Git commit SHA
+    pub fn with_commit_sha(mut self, commit_sha: &str) -> Self {
+        self.provenance.commit_sha = Some(commit_sha.to_string());
+        self
+    }
+
+    /// Set the model path
+    pub fn with_model_path(mut self, model_path: &str) -> Self {
+        self.provenance.model_path = Some(model_path.to_string());
+        if let Some(_model) = &self.ml_model {
+            self.provenance.model_version = Some(
+                self.config
+                    .model_version
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
+            );
+            self.provenance.ml_enabled = true;
+        }
+        self
+    }
+
+    /// Set analysis duration
+    pub fn with_analysis_duration(mut self, duration_secs: f64) -> Self {
+        self.provenance.analysis_duration_secs = Some(duration_secs);
+        self
+    }
+
+    /// Add a stage to the provenance
+    pub fn with_stage(mut self, stage: &str) -> Self {
+        self.provenance.stages_used.push(stage.to_string());
         self
     }
 
@@ -273,6 +394,7 @@ impl VerdictEngine {
                 evidence_sources: vec![EvidenceSource::StaticReachability],
                 verified: false,
                 verified_by: None,
+                provenance: self.provenance.clone(),
             };
         }
 
@@ -328,8 +450,12 @@ impl VerdictEngine {
                     verified_by: None,
                     created_at: Some(chrono::Utc::now().timestamp()),
                 };
-                let alive_prob = model.predict_probability(&example);
-                let dead_prob = 1.0 - alive_prob;
+                // Use calibrated probability if available
+                let dead_prob = if model.calibration.is_some() {
+                    1.0 - model.predict_alive_calibrated(&example)
+                } else {
+                    1.0 - model.predict_probability(&example)
+                };
 
                 signals.push(Signal {
                     name: "ml_prediction".to_string(),
@@ -429,6 +555,7 @@ impl VerdictEngine {
             evidence_sources,
             verified: false,
             verified_by: None,
+            provenance: self.provenance.clone(),
         }
     }
 
@@ -549,27 +676,63 @@ impl VerdictEngine {
             });
         }
 
-        // ⭐ NEW: Dynamic references signal (moved from evaluate_function)
+        // Dynamic references signal - uses resolved targets when available
         if let Some(dynamic_refs) = &self.dynamic_refs {
             let is_dynamically_referenced = dynamic_refs.iter().any(|r| {
-                r.target_full_path
-                    .as_ref()
-                    .map(|p| p == &func.full_path)
-                    .unwrap_or(false)
-                    || r.target_function
-                        .as_ref()
-                        .map(|f| f == &func.name)
-                        .unwrap_or(false)
-                    || r.target_pattern.contains(&func.name)
+                //  PRIORITY 1: Check if we resolved the full path
+                if let Some(ref target_path) = r.target_full_path {
+                    if target_path == &func.full_path {
+                        return true;
+                    }
+                }
+                //  PRIORITY 2: Check if the function name matches
+                if let Some(ref target_name) = r.target_function {
+                    if target_name == &func.name {
+                        return true;
+                    }
+                }
+                //  PRIORITY 3: Check if the pattern contains the function name (fallback)
+                r.target_pattern.contains(&func.name)
             });
 
             if is_dynamically_referenced {
+                // Find the specific reference that matched for better explanation
+                let matched_ref = dynamic_refs.iter().find(|r| {
+                    if let Some(ref target_path) = r.target_full_path {
+                        if target_path == &func.full_path {
+                            return true;
+                        }
+                    }
+                    if let Some(ref target_name) = r.target_function {
+                        if target_name == &func.name {
+                            return true;
+                        }
+                    }
+                    r.target_pattern.contains(&func.name)
+                });
+
+                let explanation = if let Some(r) = matched_ref {
+                    if r.resolved {
+                        format!(
+                            "Dynamically referenced via {:?} (resolved to this function)",
+                            r.reference_type
+                        )
+                    } else {
+                        format!(
+                            "Dynamically referenced via {:?} (unresolved target: '{}')",
+                            r.reference_type, r.target_pattern
+                        )
+                    }
+                } else {
+                    "Referenced dynamically (reflection/callback)".to_string()
+                };
+
                 signals.push(Signal {
                     name: "dynamic_reference".to_string(),
                     value: 1.0,
                     direction: SignalDirection::SupportsAlive,
                     weight: 0.4,
-                    explanation: "Referenced dynamically (reflection/callback)".to_string(),
+                    explanation,
                 });
             }
         }

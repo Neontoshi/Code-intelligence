@@ -17,4 +17,4 @@ pub use feature_schema::{
 };
 pub use features::FeatureExtractor;
 pub use model_serialization::{ModelPerformance, TrainingMetadata, VersionedModel};
-pub use serialization::{load_model, save_model};
+pub use serialization::ModelSerializer;

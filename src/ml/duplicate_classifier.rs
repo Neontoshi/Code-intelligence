@@ -232,13 +232,12 @@ impl DuplicateClassifier {
             correct as f64 / total as f64
         }
     }
-
-    pub fn save(&self, path: &str) -> Result<(), String> {
-        crate::ml::serialization::save_model(self, path)
+    pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> crate::error::Result<()> {
+        crate::ml::serialization::ModelSerializer::save_binary(self, path)
     }
 
-    pub fn load(path: &str) -> Result<Self, String> {
-        crate::ml::serialization::load_model(path)
+    pub fn load<P: AsRef<std::path::Path>>(path: P) -> crate::error::Result<Self> {
+        crate::ml::serialization::ModelSerializer::load_auto(path)
     }
 }
 

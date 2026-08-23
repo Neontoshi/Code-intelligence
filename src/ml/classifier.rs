@@ -11,15 +11,15 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinearClassifier {
-    weights: Vec<f64>,
-    bias: f64,
-    learning_rate: f64,
-    epochs: usize,
-    feature_count: usize,
+    pub weights: Vec<f64>,
+    pub bias: f64,
+    pub learning_rate: f64,
+    pub epochs: usize,
+    pub feature_count: usize,
     // `#[serde(default)]` so model files saved before this field existed
     // still deserialize (they'll just load with scaler: None).
     #[serde(default)]
-    scaler: Option<FeatureScaler>,
+    pub scaler: Option<FeatureScaler>,
 }
 
 impl LinearClassifier {
@@ -422,23 +422,12 @@ impl DeadCodeClassifier {
         }
     }
 
-    pub fn save(&self, path: &str) -> Result<(), String> {
-        if let Some(model) = &self.model {
-            crate::ml::serialization::save_model(model, path)
-        } else {
-            Err("No model trained".to_string())
-        }
+    pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> crate::error::Result<()> {
+        crate::ml::serialization::ModelSerializer::save_binary(self, path)
     }
 
-    pub fn load(path: &str) -> Result<Self, String> {
-        let model: LinearClassifier = crate::ml::serialization::load_model(path)?;
-        let feature_count = model.feature_count();
-        Ok(Self {
-            model: Some(model),
-            accuracy: 0.0,
-            feature_count,
-            calibration: None,
-        })
+    pub fn load<P: AsRef<std::path::Path>>(path: P) -> crate::error::Result<Self> {
+        crate::ml::serialization::ModelSerializer::load_auto(path)
     }
 }
 

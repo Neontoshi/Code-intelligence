@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load model
     println!("📊 Loading model from: {:?}", args.model);
-    let classifier = DeadCodeClassifier::load(&args.model.to_string_lossy())?;
+    let classifier = DeadCodeClassifier::load(&*args.model.to_string_lossy())?;
 
     let model = classifier.model.ok_or("No model found")?;
 
@@ -70,7 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut new_classifier = DeadCodeClassifier::new();
     new_classifier.model = Some(calibrated.classifier);
-    new_classifier.save(&args.output.to_string_lossy())?;
+    new_classifier.save(&*args.output.to_string_lossy())?;
     println!("\n✅ Calibrated model saved to: {:?}", args.output);
 
     Ok(())

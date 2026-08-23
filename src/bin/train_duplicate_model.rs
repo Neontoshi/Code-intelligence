@@ -214,7 +214,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Note: this saves a model trained on 80% of the data, not the full
     // set. Once the held-out number looks good, rerun without the split
     // (or retrain on `examples` directly) for the model you actually ship.
-    classifier.save(&model_file.to_string_lossy())?;
+    classifier.save(&*model_file.to_string_lossy())?;
     println!("✅ Model saved to: {:?}", model_file);
     // Show predictions — from the held-out split, so these are examples
     // the model didn't train on, not just training-set recall.

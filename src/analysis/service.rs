@@ -162,7 +162,7 @@ impl AnalysisService {
                 }
                 Err(_) => {
                     // Try legacy model
-                    match DeadCodeClassifier::load(&model_path.to_string_lossy()) {
+                    match DeadCodeClassifier::load(model_path) {
                         Ok(classifier) => {
                             self.ml_model = Some(classifier);
                             if self.config.verbose {
@@ -209,11 +209,14 @@ impl AnalysisService {
         let mut engine = VerdictEngine::new(config)
             .with_dead_threshold(effective_threshold)
             .with_dynamic_refs(dynamic_refs);
+        if let Some(model_path) = &self.config.model_path {
+            engine = engine.with_model_path(&model_path.to_string_lossy());
+        }
+        engine = engine.with_stage("service_analysis");
 
         if let Some(model) = &self.ml_model {
             engine = engine.with_ml(model.clone());
         }
-
         self.verdict_engine = Some(engine.clone());
         engine
     }

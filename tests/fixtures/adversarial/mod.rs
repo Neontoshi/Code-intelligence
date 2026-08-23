@@ -1,10 +1,5 @@
 // tests/fixtures/adversarial/mod.rs
 
-//! Adversarial test fixtures designed to fool the dead-code detector
-//!
-//! These fixtures contain code that LOOKS dead but is actually alive,
-//! testing the detector's ability to handle edge cases.
-
 use std::path::PathBuf;
 
 pub fn fixtures_dir() -> PathBuf {

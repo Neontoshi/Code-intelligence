@@ -147,12 +147,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Process project
-    let analysis = if args.git && args.llm {
+    let analysis = if args.git {
         pipeline.process_project_with_git(&root).await?
-    } else if args.git {
-        pipeline.process_project_with_git(&root).await?
-    } else if args.llm {
-        pipeline.process_project(&root).await?
     } else {
         pipeline.process_project(&root).await?
     };

@@ -1,3 +1,6 @@
+use crate::analysis::training_data::FunctionFeatures;
+use crate::analysis::{TrainingExample, TrainingLabel};
+use crate::LabelSource;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -39,6 +42,20 @@ pub struct OutcomeStats {
     pub pending_count: usize,
     pub false_positive_count: usize,
     pub removal_rate: f64,
+}
+
+/// Feedback statistics for ML improvement
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FeedbackStats {
+    pub total_decisions: usize,
+    pub removed: usize,
+    pub kept: usize,
+    pub pending: usize,
+    pub false_positives: usize,
+    pub true_positives: usize,
+    pub true_negatives: usize,
+    pub feedback_ratio: f64,
+    pub false_positive_rate: f64,
 }
 
 impl OutcomeStats {
@@ -454,5 +471,238 @@ impl OutcomeTracker {
         }
 
         output
+    }
+    /// ⭐ NEW: Export decisions as training examples
+    pub fn export_decisions_as_training_data(&self) -> Vec<TrainingExample> {
+        let mut examples = Vec::new();
+
+        for verdict in &self.verdicts {
+            // Only include decisions that are final (Removed or Kept)
+            if verdict.outcome == VerdictOutcome::Removed {
+                // Function was removed → it was truly dead
+                let example = TrainingExample {
+                    function_name: verdict.function_name.clone(),
+                    full_path: verdict.full_path.clone(),
+                    file: verdict.file.clone(),
+                    language: self.detect_language(&verdict.file),
+                    features: self.create_features_from_verdict(verdict),
+                    label: TrainingLabel::Dead,
+                    confidence: verdict.confidence,
+                    source: "dashboard_decision".to_string(),
+                    repository_id: Some(verdict.project.clone()),
+                    commit_hash: verdict.removed_commit.clone(),
+                    dataset_split: Some("verified".to_string()),
+                    label_reason: Some("Removed by developer via dashboard".to_string()),
+                    label_version: Some(2),
+                    label_source: LabelSource::HumanVerified,
+                    generated_by_model: None,
+                    verified_by: Some(verdict.notes.clone().unwrap_or_default()),
+                    created_at: Some(verdict.outcome_date.unwrap_or(0) as i64),
+                };
+                examples.push(example);
+            } else if verdict.outcome == VerdictOutcome::Kept {
+                // Function was kept → it's alive (false positive)
+                let is_false_positive = verdict
+                    .notes
+                    .as_ref()
+                    .map(|n| n.contains("false positive"))
+                    .unwrap_or(false);
+
+                if is_false_positive {
+                    let example = TrainingExample {
+                        function_name: verdict.function_name.clone(),
+                        full_path: verdict.full_path.clone(),
+                        file: verdict.file.clone(),
+                        language: self.detect_language(&verdict.file),
+                        features: self.create_features_from_verdict(verdict),
+                        label: TrainingLabel::Alive,
+                        confidence: verdict.confidence,
+                        source: "dashboard_decision".to_string(),
+                        repository_id: Some(verdict.project.clone()),
+                        commit_hash: None,
+                        dataset_split: Some("verified".to_string()),
+                        label_reason: Some("Kept as false positive via dashboard".to_string()),
+                        label_version: Some(2),
+                        label_source: LabelSource::HumanVerified,
+                        generated_by_model: None,
+                        verified_by: Some(verdict.notes.clone().unwrap_or_default()),
+                        created_at: Some(verdict.outcome_date.unwrap_or(0) as i64),
+                    };
+                    examples.push(example);
+                }
+            }
+        }
+
+        examples
+    }
+
+    /// ⭐ NEW: Get feedback statistics
+    pub fn get_feedback_stats(&self) -> FeedbackStats {
+        let total_decisions = self.verdicts.len();
+        let removed = self
+            .verdicts
+            .iter()
+            .filter(|v| v.outcome == VerdictOutcome::Removed)
+            .count();
+        let kept = self
+            .verdicts
+            .iter()
+            .filter(|v| v.outcome == VerdictOutcome::Kept)
+            .count();
+        let pending = self
+            .verdicts
+            .iter()
+            .filter(|v| v.outcome == VerdictOutcome::Pending)
+            .count();
+
+        let false_positives = self
+            .verdicts
+            .iter()
+            .filter(|v| {
+                v.outcome == VerdictOutcome::Kept
+                    && v.notes
+                        .as_ref()
+                        .map(|n| n.contains("false positive"))
+                        .unwrap_or(false)
+            })
+            .count();
+
+        let true_positives = removed; // Removed = correctly identified as dead
+        let true_negatives = self
+            .verdicts
+            .iter()
+            .filter(|v| {
+                v.outcome == VerdictOutcome::Kept
+                    && !v
+                        .notes
+                        .as_ref()
+                        .map(|n| n.contains("false positive"))
+                        .unwrap_or(false)
+            })
+            .count();
+
+        FeedbackStats {
+            total_decisions,
+            removed,
+            kept,
+            pending,
+            false_positives,
+            true_positives,
+            true_negatives,
+            feedback_ratio: if total_decisions > 0 {
+                (removed + kept) as f64 / total_decisions as f64
+            } else {
+                0.0
+            },
+            false_positive_rate: if kept > 0 {
+                false_positives as f64 / kept as f64
+            } else {
+                0.0
+            },
+        }
+    }
+
+    /// ⭐ NEW: Create features from a verdict (for training examples)
+    fn create_features_from_verdict(&self, verdict: &TrackedVerdict) -> FunctionFeatures {
+        // Create a simplified FunctionFeatures from the tracked verdict
+        // This is a best-effort reconstruction since we don't have the full AST
+        use crate::analysis::training_data::FunctionFeatures;
+
+        let name_lower = verdict.function_name.to_lowercase();
+        let is_in_test_file = verdict.file.contains("/tests/")
+            || verdict.file.contains("/test/")
+            || verdict.file.ends_with("_test.rs");
+
+        FunctionFeatures {
+            param_count: 0,
+            return_count: 0,
+            is_public: false,
+            is_async: false,
+            name_length: verdict.function_name.len(),
+            starts_with_use: verdict.function_name.starts_with("use"),
+            starts_with_test: verdict.function_name.starts_with("test_")
+                || verdict.function_name.starts_with("Test"),
+            starts_with_bench: verdict.function_name.starts_with("bench_")
+                || verdict.function_name.starts_with("Benchmark"),
+            ends_with_test: verdict.function_name.ends_with("_test"),
+            contains_trait_impl: false,
+            signature_hash: String::new(),
+            body_hash: String::new(),
+            fan_in: 0,
+            fan_out: 0,
+            complexity: 1.0,
+            call_depth: 0,
+            is_cycle: false,
+            file_extension: verdict.file.split('.').last().unwrap_or("").to_string(),
+            is_in_test_file,
+            is_in_benches: verdict.file.contains("/benches/"),
+            is_in_meta: verdict.file.contains("/.meta/"),
+            is_in_examples: verdict.file.contains("/examples/"),
+            is_generated: verdict.file.contains(".gen.") || verdict.file.contains("_gen."),
+            name_contains_use: name_lower.contains("use"),
+            name_contains_test: name_lower.contains("test"),
+            name_contains_init: name_lower.contains("init"),
+            name_contains_get: name_lower.contains("get"),
+            name_contains_set: name_lower.contains("set"),
+            name_contains_new: name_lower.contains("new"),
+            name_contains_create: name_lower.contains("create"),
+            name_contains_build: name_lower.contains("build"),
+            name_contains_parse: name_lower.contains("parse"),
+            name_contains_validate: name_lower.contains("validate"),
+            name_contains_handle: name_lower.contains("handle"),
+            name_contains_process: name_lower.contains("process"),
+            name_contains_convert: name_lower.contains("convert"),
+            name_contains_commit: name_lower.contains("commit"),
+            name_contains_reveal: name_lower.contains("reveal"),
+            name_contains_submit: name_lower.contains("submit"),
+            name_contains_upload: name_lower.contains("upload"),
+            name_contains_download: name_lower.contains("download"),
+            name_contains_fetch: name_lower.contains("fetch"),
+            name_contains_verify: name_lower.contains("verify"),
+            name_contains_audit: name_lower.contains("audit"),
+            type_name: None,
+            type_path: None,
+            is_method: false,
+            is_trait_impl: false,
+            trait_name: None,
+            is_associated: false,
+        }
+    }
+
+    /// ⭐ NEW: Detect language from file path
+    fn detect_language(&self, file: &str) -> String {
+        if file.ends_with(".rs") {
+            "rust".to_string()
+        } else if file.ends_with(".go") {
+            "go".to_string()
+        } else if file.ends_with(".py") {
+            "python".to_string()
+        } else if file.ends_with(".js") || file.ends_with(".jsx") {
+            "javascript".to_string()
+        } else if file.ends_with(".ts") || file.ends_with(".tsx") {
+            "typescript".to_string()
+        } else if file.ends_with(".java") {
+            "java".to_string()
+        } else {
+            "unknown".to_string()
+        }
+    }
+
+    /// ⭐ NEW: Save feedback as training data
+    pub fn save_feedback_as_training_data(
+        &self,
+        output_path: &std::path::Path,
+    ) -> Result<(), String> {
+        let examples = self.export_decisions_as_training_data();
+        if examples.is_empty() {
+            return Err("No feedback examples to export".to_string());
+        }
+
+        let json = serde_json::to_string_pretty(&examples)
+            .map_err(|e| format!("Failed to serialize: {}", e))?;
+
+        std::fs::write(output_path, json).map_err(|e| format!("Failed to write: {}", e))?;
+
+        Ok(())
     }
 }

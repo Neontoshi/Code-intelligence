@@ -335,7 +335,7 @@ impl App {
                         label: TrainingLabel::Dead,
                         state: VerdictState::DefinitelyDead,
                         confidence: func.score.score,
-                        dead_probability: None,
+                        dead_probability: Some(func.score.score),
                         signals: func
                             .score
                             .factors
@@ -361,6 +361,19 @@ impl App {
                         evidence_sources: Vec::new(),
                         verified: false,
                         verified_by: None,
+                        provenance:
+                            code_intelligence::analysis::verdict_source::state::VerdictProvenance {
+                                analysis_version: env!("CARGO_PKG_VERSION").to_string(),
+                                model_version: None,
+                                commit_sha: Some(self.current_commit.clone()),
+                                feature_schema_version: 1,
+                                analysis_timestamp: chrono::Utc::now().timestamp(),
+                                analysis_duration_secs: None,
+                                stages_used: vec!["dashboard_analysis".to_string()],
+                                ml_enabled: false,
+                                static_enabled: true,
+                                model_path: None,
+                            },
                     };
 
                     let git_info_ref = git_info

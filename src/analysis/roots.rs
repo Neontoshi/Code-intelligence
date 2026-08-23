@@ -2,12 +2,11 @@
 
 use crate::graph::call_graph::CallGraph;
 use crate::parser::tree_sitter::ParsedFile;
+use crate::FunctionNode;
 use std::collections::{HashMap, HashSet};
 
-/// A unique identifier for a function
 pub type FunctionId = String;
 
-/// Set of root functions categorized by type
 #[derive(Debug, Clone, Default)]
 pub struct RootSet {
     /// Application entry points (main, run, start, etc.)
@@ -120,22 +119,73 @@ impl RootDetector {
         roots
     }
 
-    // Detection Methods
-
-    /// Detect application entry points
+    /// Detect application entry points using contextual evidence
     fn detect_application_roots(call_graph: &CallGraph) -> HashSet<FunctionId> {
         let mut roots = HashSet::new();
 
+        // ⭐ Only treat as entry point if there's supporting context
         let app_entry_names = ["main", "async_main", "run", "start", "init", "setup"];
 
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
-            if app_entry_names.contains(&func.name.as_str()) {
+
+            // Must be exactly "main" or "async_main"
+            if func.name == "main" || func.name == "async_main" {
                 roots.insert(func.full_path.clone());
+                continue;
+            }
+
+            // For generic names like "run", "start", "init", "setup"
+            if app_entry_names.contains(&func.name.as_str()) {
+                // Only treat as root if there's supporting evidence:
+                // 1. It's the only function with that name in the project
+                // 2. It has no callers (true entry point)
+                // 3. It's in a bin/ or main.rs file
+                // 4. It has #[tokio::main] or similar attribute
+
+                let is_entry = Self::is_likely_entry_point(func, call_graph);
+                if is_entry {
+                    roots.insert(func.full_path.clone());
+                }
             }
         }
 
         roots
+    }
+
+    ///Check if a function is likely a true entry point
+    fn is_likely_entry_point(func: &FunctionNode, call_graph: &CallGraph) -> bool {
+        // Check 1: No callers (true entry point)
+        let idx = call_graph.name_index.get(&func.full_path);
+        if let Some(&idx) = idx {
+            let callers = call_graph.get_callers(idx);
+            if callers.is_empty() {
+                // Check 2: In bin/ or main.rs file
+                if func.file.contains("/bin/")
+                    || func.file.ends_with("main.rs")
+                    || func.file.contains("/src/bin/")
+                {
+                    return true;
+                }
+
+                // Check 3: Has async attribute (likely tokio::main)
+                if func.is_async {
+                    return true;
+                }
+
+                // Check 4: Has doc comment with entry point indicators
+                if let Some(doc) = &func.doc_comment {
+                    if doc.contains("#[tokio::main]")
+                        || doc.contains("#[async_std::main]")
+                        || doc.contains("entry point")
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     /// Detect test functions
@@ -160,8 +210,6 @@ impl RootDetector {
         roots
     }
 
-    // src/analysis/roots.rs
-
     // Update the detect_export_roots function
     fn detect_export_roots(call_graph: &CallGraph) -> HashSet<FunctionId> {
         let mut roots = HashSet::new();
@@ -169,7 +217,7 @@ impl RootDetector {
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
 
-            // ⭐ NEW: React components are roots (even if not public)
+            // React components are roots (even if not public)
             if func.file.ends_with(".tsx") || func.file.ends_with(".jsx") {
                 let is_component = func
                     .name
@@ -223,7 +271,7 @@ impl RootDetector {
                 roots.insert(func.full_path.clone());
             }
 
-            // 3. ⭐ NEW: Check for extern "C" in doc comment
+            // 3. Check for extern "C" in doc comment
             if let Some(doc) = &func.doc_comment {
                 if doc.contains("extern \"C\"")
                     || doc.contains("#[no_mangle]")
@@ -234,7 +282,7 @@ impl RootDetector {
                 }
             }
 
-            // 4. ⭐ NEW: Check for #[no_mangle] attribute via function name pattern
+            // 4. Check for #[no_mangle] attribute via function name pattern
             if func.name.starts_with("_") && func.name.contains("c_") {
                 roots.insert(func.full_path.clone());
             }
@@ -243,15 +291,15 @@ impl RootDetector {
         roots
     }
 
-    // Update the detect_framework_roots function
     fn detect_framework_roots(call_graph: &CallGraph, files: &[ParsedFile]) -> HashSet<FunctionId> {
         let mut roots = HashSet::new();
 
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
 
-            // ⭐ React components (TSX/JSX) - function-level detection
+            // ⭐ React components (TSX/JSX) - contextual detection
             if func.file.ends_with(".tsx") || func.file.ends_with(".jsx") {
+                // Must be in components/ or pages/ directory OR exported
                 let is_component = func
                     .name
                     .chars()
@@ -259,21 +307,33 @@ impl RootDetector {
                     .map(|c| c.is_uppercase())
                     .unwrap_or(false);
                 let is_hook = func.name.starts_with("use");
-                let is_export = func.is_public;
+                let is_exported = func.is_public;
 
-                if is_component || is_hook || is_export {
+                // ⭐ NEW: Check if in a component directory
+                let in_component_dir = func.file.contains("/components/")
+                    || func.file.contains("/pages/")
+                    || func.file.contains("/hooks/");
+
+                if (is_component || is_hook) && (in_component_dir || is_exported) {
                     roots.insert(func.full_path.clone());
                     continue;
                 }
             }
 
-            // ⭐ Go init functions
+            // Go init functions - only in main packages or with init pattern
             if func.name == "init" && func.file.ends_with(".go") {
-                roots.insert(func.full_path.clone());
-                continue;
+                // Check if it's in a main package or has no callers
+                let idx = call_graph.name_index.get(&func.full_path);
+                if let Some(&idx) = idx {
+                    let callers = call_graph.get_callers(idx);
+                    if callers.is_empty() {
+                        roots.insert(func.full_path.clone());
+                    }
+                    continue;
+                }
             }
 
-            // ⭐ Java/Spring - check function annotations
+            // Java/Spring - check function annotations
             if func.file.ends_with(".java") {
                 if let Some(file) = files.iter().find(|f| f.path == func.file) {
                     if let Some(func_info) = file.functions.iter().find(|fi| fi.name == func.name) {
@@ -298,7 +358,7 @@ impl RootDetector {
                 }
             }
 
-            // ⭐ Python Flask/FastAPI - check decorators
+            // Python Flask/FastAPI - check decorators
             if let Some(file) = files.iter().find(|f| f.path == func.file) {
                 if let Some(func_info) = file.functions.iter().find(|fi| fi.name == func.name) {
                     for decorator in &func_info.decorators {
@@ -324,8 +384,6 @@ impl RootDetector {
         roots
     }
 }
-
-// Reachability Analysis
 
 #[derive(Debug, Clone)]
 pub struct ReachabilityMap {
