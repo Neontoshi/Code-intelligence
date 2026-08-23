@@ -10,7 +10,7 @@ use crate::graph::traits::GraphMetrics;
 use crate::graph::type_graph::TypeGraph;
 use std::collections::HashMap;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DeadCodeAnalysis {
     pub functions: Vec<DeadFunction>,
     pub types: DeadTypeReport,

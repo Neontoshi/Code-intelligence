@@ -30,6 +30,14 @@ struct Args {
     /// Top-K precision to compute (K values)
     #[arg(long, default_value = "10,25,50,100")]
     top_k: String,
+
+    ///  Generate model manifest file
+    #[arg(long)]
+    manifest: bool,
+
+    ///  Output directory for manifest
+    #[arg(long, default_value = "models")]
+    manifest_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,6 +130,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         generate_markdown_report(&metrics, &args.output)?;
     }
 
+    //  Generate manifest if requested
+    if args.manifest {
+        generate_manifest(&metrics, &args)?;
+    }
+
     Ok(())
 }
 
@@ -207,10 +220,10 @@ fn evaluate(
     };
     let specificity = 1.0 - fpr;
 
-    // ⭐ FIXED: Compute proper PR-AUC
+    // Compute proper PR-AUC
     let auc_pr = compute_pr_auc(&predictions, &labels);
 
-    // ⭐ FIXED: Compute proper ROC-AUC
+    // Compute proper ROC-AUC
     let auc_roc = compute_roc_auc(&predictions, &labels);
 
     // Calibration
@@ -245,7 +258,7 @@ fn evaluate(
     }
 }
 
-/// ⭐ FIXED: Compute proper PR-AUC using PR curve construction
+/// Compute proper PR-AUC using PR curve construction
 fn compute_pr_auc(predictions: &[f64], labels: &[f64]) -> f64 {
     if predictions.is_empty() || labels.is_empty() {
         return 0.0;
@@ -304,7 +317,7 @@ fn compute_pr_auc(predictions: &[f64], labels: &[f64]) -> f64 {
     auc
 }
 
-/// ⭐ FIXED: Compute proper ROC-AUC using ROC curve construction
+/// Compute proper ROC-AUC using ROC curve construction
 fn compute_roc_auc(predictions: &[f64], labels: &[f64]) -> f64 {
     if predictions.is_empty() || labels.is_empty() {
         return 0.0;
@@ -593,6 +606,120 @@ fn generate_markdown_report(
 
     let report_path = output_path.with_extension("md");
     std::fs::write(&report_path, markdown)?;
+
+    Ok(())
+}
+
+///  Generate a model manifest file
+fn generate_manifest(
+    metrics: &EvaluationMetrics,
+    args: &Args,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::collections::HashMap;
+
+    let mut manifest: HashMap<String, serde_json::Value> = HashMap::new();
+
+    // Model info
+    manifest.insert(
+        "model_file".to_string(),
+        serde_json::Value::String(args.model.to_string_lossy().to_string()),
+    );
+    manifest.insert(
+        "generated_at".to_string(),
+        serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+    );
+    manifest.insert(
+        "test_data".to_string(),
+        serde_json::Value::String(args.test_data.to_string_lossy().to_string()),
+    );
+
+    // Performance metrics
+    let mut performance = HashMap::new();
+    performance.insert(
+        "accuracy".to_string(),
+        serde_json::Value::from(metrics.accuracy),
+    );
+    performance.insert(
+        "precision".to_string(),
+        serde_json::Value::from(metrics.precision),
+    );
+    performance.insert(
+        "recall".to_string(),
+        serde_json::Value::from(metrics.recall),
+    );
+    performance.insert("f1".to_string(), serde_json::Value::from(metrics.f1));
+    performance.insert("fpr".to_string(), serde_json::Value::from(metrics.fpr));
+    performance.insert("fnr".to_string(), serde_json::Value::from(metrics.fnr));
+    performance.insert(
+        "auc_pr".to_string(),
+        serde_json::Value::from(metrics.auc_pr),
+    );
+    performance.insert(
+        "auc_roc".to_string(),
+        serde_json::Value::from(metrics.auc_roc),
+    );
+    performance.insert(
+        "threshold".to_string(),
+        serde_json::Value::from(metrics.threshold),
+    );
+
+    manifest.insert(
+        "performance".to_string(),
+        serde_json::Value::Object(serde_json::Map::from_iter(performance)),
+    );
+
+    // Confusion matrix
+    let mut confusion = HashMap::new();
+    confusion.insert(
+        "tp".to_string(),
+        serde_json::Value::from(metrics.confusion_matrix.tp),
+    );
+    confusion.insert(
+        "tn".to_string(),
+        serde_json::Value::from(metrics.confusion_matrix.tn),
+    );
+    confusion.insert(
+        "fp".to_string(),
+        serde_json::Value::from(metrics.confusion_matrix.fp),
+    );
+    confusion.insert(
+        "fn".to_string(),
+        serde_json::Value::from(metrics.confusion_matrix.fn_),
+    );
+    manifest.insert(
+        "confusion_matrix".to_string(),
+        serde_json::Value::Object(serde_json::Map::from_iter(confusion)),
+    );
+
+    // Calibration
+    let mut calibration = HashMap::new();
+    calibration.insert(
+        "ece".to_string(),
+        serde_json::Value::from(metrics.calibration.expected_calibration_error),
+    );
+    calibration.insert(
+        "max_ce".to_string(),
+        serde_json::Value::from(metrics.calibration.max_calibration_error),
+    );
+    calibration.insert(
+        "brier_score".to_string(),
+        serde_json::Value::from(metrics.calibration.brier_score),
+    );
+    manifest.insert(
+        "calibration".to_string(),
+        serde_json::Value::Object(serde_json::Map::from_iter(calibration)),
+    );
+
+    // Create manifest directory
+    std::fs::create_dir_all(&args.manifest_dir)?;
+
+    // Save manifest
+    let manifest_path = args.manifest_dir.join("manifest.json");
+    let json = serde_json::to_string_pretty(&manifest)?;
+    std::fs::write(&manifest_path, json)?;
+
+    println!("\n📋 Manifest saved to: {:?}", manifest_path);
+    println!("   This manifest is the authoritative source for model metrics.");
 
     Ok(())
 }

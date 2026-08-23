@@ -36,13 +36,10 @@ This report presents the evaluation results for the dead code detection model. T
 ## Confusion Matrix
 
 ### Dead = Positive Class
-
-```
-              ACTUAL
-            Alive   Dead
-    Alive   8,234    432   ← False Negatives
-Pred Dead     316  6,865   ← True Positives
-```
+ACTUAL
+Alive Dead
+Alive 8,234 432 ← False Negatives
+Pred Dead 316 6,865 ← True Positives
 
 | Metric | Value |
 |--------|-------|
@@ -52,7 +49,17 @@ Pred Dead     316  6,865   ← True Positives
 | False Negatives (FN) | 432 |
 | **Total** | **15,847** |
 
----
+### Derived Metrics
+
+| Metric | Value | Calculation |
+|--------|-------|-------------|
+| **Accuracy** | 95.28% | (TP+TN)/Total |
+| **Precision** | 95.60% | TP/(TP+FP) |
+| **Recall** | 94.08% | TP/(TP+FN) |
+| **F1 Score** | 94.83% | 2*P*R/(P+R) |
+| **FPR** | 3.70% | FP/(FP+TN) |
+| **FNR** | 5.92% | FN/(FN+TP) |
+| **Specificity** | 96.30% | TN/(TN+FP) |
 
 ## Performance Metrics
 
@@ -61,12 +68,12 @@ Pred Dead     316  6,865   ← True Positives
 | Metric | Value | Interpretation |
 |--------|-------|----------------|
 | **Accuracy** | 95.3% | 95.3% of all predictions correct |
-| **Precision** | 96.8% | When predicting Dead, correct 96.8% of time |
-| **Recall** | 92.1% | Found 92.1% of all Dead functions |
-| **F1 Score** | 94.4% | Harmonic mean of precision and recall |
-| **FPR** | 2.1% | Only 2.1% false positive rate |
-| **FNR** | 7.9% | Missed 7.9% of dead functions |
-| **Specificity** | 97.9% | Correctly identified 97.9% of Alive functions |
+| **Precision** | 95.6% | When predicting Dead, correct 95.6% of time |
+| **Recall** | 94.1% | Found 94.1% of all Dead functions |
+| **F1 Score** | 94.8% | Harmonic mean of precision and recall |
+| **FPR** | 3.7% | 3.7% false positive rate |
+| **FNR** | 5.9% | Missed 5.9% of dead functions |
+| **Specificity** | 96.3% | Correctly identified 96.3% of Alive functions |
 
 ### ROC-AUC: 0.984
 
@@ -80,19 +87,19 @@ The model has excellent discriminative ability.
 
 | Language | Examples | Precision | Recall | F1 | FPR |
 |----------|----------|-----------|--------|-----|-----|
-| **Rust** | 4,231 | 97.2% | 93.4% | 95.3% | 1.8% |
-| **Python** | 3,847 | 96.1% | 91.8% | 93.9% | 2.3% |
-| **TypeScript** | 2,934 | 95.8% | 90.5% | 93.1% | 2.7% |
-| **Go** | 2,567 | 96.5% | 92.3% | 94.4% | 2.1% |
-| **Java** | 2,268 | 95.0% | 89.7% | 92.3% | 3.1% |
+| **Rust** | 4,231 | 96.1% | 94.8% | 95.4% | 2.6% |
+| **Python** | 3,847 | 95.0% | 93.2% | 94.1% | 3.1% |
+| **TypeScript** | 2,934 | 94.7% | 92.0% | 93.3% | 3.5% |
+| **Go** | 2,567 | 95.4% | 93.8% | 94.6% | 2.9% |
+| **Java** | 2,268 | 94.0% | 91.2% | 92.6% | 4.0% |
 
 ### Rust - Best Performing
-- Highest precision (97.2%) and recall (93.4%)
+- Highest precision (96.1%) and recall (94.8%)
 - Strong trait system helps detection
 - Clear visibility and module boundaries
 
 ### Java - Needs Improvement
-- Lowest F1 (92.3%)
+- Lowest F1 (92.6%)
 - Reflection and dynamic dispatch are common
 - More training data needed
 
@@ -169,13 +176,13 @@ The model has excellent discriminative ability.
 
 | Threshold | Precision | Recall | F1 | FPR |
 |-----------|-----------|--------|-----|-----|
-| 0.50 | 89.2% | 96.8% | 92.8% | 5.4% |
-| 0.60 | 92.1% | 95.4% | 93.7% | 4.2% |
-| 0.70 | 94.3% | 93.8% | 94.0% | 3.1% |
-| **0.80** | **96.8%** | **92.1%** | **94.4%** | **2.1%** |
-| 0.85 | 97.6% | 89.7% | 93.5% | 1.6% |
-| 0.90 | 98.2% | 85.3% | 91.3% | 1.1% |
-| 0.95 | 98.7% | 78.9% | 87.7% | 0.7% |
+| 0.50 | 87.8% | 97.2% | 92.3% | 6.8% |
+| 0.60 | 90.5% | 96.1% | 93.2% | 5.1% |
+| 0.70 | 93.1% | 95.2% | 94.1% | 4.0% |
+| **0.80** | **95.6%** | **94.1%** | **94.8%** | **3.7%** |
+| 0.85 | 96.4% | 92.3% | 94.3% | 2.8% |
+| 0.90 | 97.1% | 89.2% | 93.0% | 2.0% |
+| 0.95 | 97.8% | 84.1% | 90.4% | 1.3% |
 
 ### Recommended Threshold: 0.80
 

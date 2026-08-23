@@ -1,7 +1,5 @@
 // tests/integration/adversarial_tests.rs
 
-//! Integration tests for adversarial dead-code fixtures
-
 use code_intelligence::analysis::dead_code::filters::is_never_dead;
 use code_intelligence::analysis::roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector};
 use code_intelligence::parser::tree_sitter::TreeSitterParser;

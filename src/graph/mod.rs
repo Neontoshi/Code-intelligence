@@ -1,5 +1,4 @@
 // src/graph/mod.rs
-// src/graph/mod.rs
 
 pub mod call_graph;
 pub mod dependency_graph;
@@ -25,6 +24,7 @@ pub use traits::{GraphIndex, GraphMetrics, Indexable};
 #[macro_export]
 macro_rules! define_graph {
     ($name:ident, $node_type:ty, $edge_type:ty) => {
+        #[derive(Debug)]
         pub struct $name {
             pub graph: DiGraph<$node_type, $edge_type>,
             pub node_index: HashMap<String, NodeIndex>,

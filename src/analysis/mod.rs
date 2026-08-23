@@ -8,8 +8,8 @@ pub mod git_analysis;
 pub mod importance;
 pub mod outcomes;
 pub mod roots;
+pub mod service;
 pub mod training_data;
-// pub mod verdict;  // REMOVED - using verdict_source instead
 pub mod verdict_source;
 
 pub use context::AnalysisIndexes;

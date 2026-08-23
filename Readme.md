@@ -12,43 +12,42 @@
 [![CI](https://github.com/neontoshi/Code-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/neontoshi/Code-intelligence/actions/workflows/ci.yml)
 [![Documentation](https://img.shields.io/badge/docs-passing-brightgreen)](docs/)
 
+`code-intelligence` is a fast, ML-powered static and dynamic semantic analysis platform designed to inspect, optimize, and map complex codebases. 
 
-`code-intelligence` is a fast, ML-powered static and dynamic semantic analysis platform designed to inspect, optimize, and map complex codebases. It features full AST analysis across multiple languages, ML-driven dead code detection, semantic duplicate elimination, call/import/type graph visualization, interactive terminal dashboards, and local/cloud LLM analysis.
+**Core Capabilities:**
+- Full AST analysis across multiple languages (Rust, Python, TypeScript, Go, Java)
+- ML-driven dead code detection with 95%+ accuracy
+- Semantic duplicate elimination and refactoring suggestions
+- Call/import/type graph visualization (interactive HTML)
+- Terminal dashboard for real-time review and decision management
+
+**Optional Extensions:**
+- Local/cloud LLM analysis for documentation, bug detection, and code understanding
 
 ---
 
 ## ⚡ Key Highlights & Capabilities
 
-* **Unified Verdict Engine**: Combines static reachability analysis, fan-in/fan-out graph metrics, dynamic reference detection, and calibrated ML models to determine if code is `Dead`, `Alive`, or needs review.
+### Core Analysis
 
+* **Unified Verdict Engine**: Combines static reachability analysis, fan-in/fan-out graph metrics, dynamic reference detection, and calibrated ML models to determine if code is `Dead`, `Alive`, or needs review.
 
 * **Multi-Language AST Parsing**: Full Tree-Sitter support for **Rust, TypeScript, JavaScript, Python, Go, and Java**.
 
-
 * **Safe False-Positive Filtering**: Built-in awareness for trait implementations, public framework decorators (React hooks/components, FastAPI/Flask routes, Spring annotations, NestJS controllers), and lifecycle entry points.
-
 
 * **Duplicate Code Detection**: Identifies identical and structurally similar code blocks using MinHash, AST hashing, and ML-based duplicate classification to suggest refactorings and estimate token savings.
 
-
 * **Interactive Graphs & UI**:
-* Full detailed interactive call graphs in HTML.
-
-
-* Circular architectural layer overviews designed for non-technical walk-throughs.
-
-
-* Terminal UI Dashboard (Ratatui/Crossterm) for real-time review, status tracking, and decision management.
-
-
-
-
-* **LLM Integration**: Works with local (Ollama) and cloud providers (OpenAI, Anthropic) to generate documentation, summarize function logic, and flag code smells.
-
+  * Full detailed interactive call graphs in HTML.
+  * Circular architectural layer overviews designed for non-technical walk-throughs.
+  * Terminal UI Dashboard (Ratatui/Crossterm) for real-time review, status tracking, and decision management.
 
 * **Outcome Management**: Built-in ledger tracking (`.code-intelligence-outcomes.json`) to confirm removals, track false positives, and continuously improve training datasets.
 
+### Optional Extensions
 
+* **LLM Integration** (optional): Works with local (Ollama) and cloud providers (OpenAI, Anthropic) to generate documentation, summarize function logic, and flag code smells. Enable with `--llm` flag.
 
 ---
 
@@ -58,10 +57,7 @@
 
 * [Rust & Cargo](https://rustup.rs/) (edition 2021)
 
-
 * (Optional) [Ollama](https://ollama.com/) running locally for offline LLM features
-
-
 
 ### 2. Build & Install Everything
 
@@ -71,7 +67,6 @@ To install the `ci` binary and all supporting evaluation and training tools to `
 git clone https://github.com/neontoshi/Code-intelligence
 cd code-intelligence
 cargo install --path .
-
 ```
 
 ### 3. Verify Installation
@@ -79,7 +74,6 @@ cargo install --path .
 ```bash
 ci --version
 ci --help
-
 ```
 
 ---
@@ -92,15 +86,14 @@ Set your default model and threshold in your global configuration (`~/.config/co
 
 ```bash
 # Point to your calibrated dead code model
-ci config set model models/dead_code_model_v2.bin
+ci config set model models/dead_code_model_v4_balanced_calibrated.bin
 
 # Set the default classification threshold (0.0 - 1.0)
-ci config set threshold 0.55
+ci config set threshold 0.80
 
-# Set preferred local/cloud LLM provider
+# Set preferred local/cloud LLM provider (optional)
 ci config set llm_provider ollama
 ci config set llm_model phi:2.7b
-
 ```
 
 ### Step 2: Analyze a Project
@@ -110,7 +103,6 @@ Navigate to any target codebase and trigger the analysis:
 ```bash
 cd ~/Documents/your-project
 ci analyze
-
 ```
 
 ### Step 3: Inspect & Manage Dead Code
@@ -127,7 +119,6 @@ ci remove unused_helper_function --commit abc1234
 
 # Mark a function as a false positive so it won't be flagged again
 ci keep renderCustomView "Required by third-party plugin"
-
 ```
 
 ---
@@ -142,14 +133,14 @@ The primary executable `ci` provides commands for code analysis, review, model o
 | --- | --- | --- |
 | `ci analyze [path]` | Scan project for dead functions, types, and modules
 
- | `ci analyze ~/project --threshold 0.55 --git`<br> |
+ | `ci analyze ~/project --threshold 0.80 --git`<br> |
 | `ci dedup [path]` | Find identical and structurally duplicate functions
 
  | `ci dedup . --threshold 0.85 --ml`<br> |
 | `ci graph [path]` | Generate HTML graph visualization (`interactive` or `overview`)
 
  | `ci graph . --mode overview --output map.html`<br> |
-| `ci llm [path]` | Run deep semantic review and bug scan via LLM
+| `ci llm [path]` | Run deep semantic review and bug scan via LLM (optional)
 
  | `ci llm . --provider openai --model gpt-4`<br> |
 | `ci dashboard [path]` | Launch interactive terminal UI (Ratatui)
@@ -189,7 +180,7 @@ The primary executable `ci` provides commands for code analysis, review, model o
 | `ci train-duplicate` | Train a classifier for code duplicate identification
 
  | `ci train-duplicate data/pairs.json --output dup_model.bin`<br> |
-| `ci calibrate` | Calibrate confidence scores (temperature scaling, isotonic)
+| `ci calibrate` | Calibrate confidence scores (temperature scaling, histogram)
 
  | `ci calibrate --method temperature --val-data data/val.json`<br> |
 | `ci tune` | Find the optimal decision threshold for target precision
@@ -208,7 +199,36 @@ The primary executable `ci` provides commands for code analysis, review, model o
 
  | `ci evaluate-lang --model model.bin --test-data data/test.json`<br> |
 
-### 4. Training Data Management
+### 4. LLM Analysis (Optional)
+
+> **Note**: LLM analysis is an optional extension. The core dead-code detection and duplicate detection work without it.
+
+#### `ci llm`
+
+Run LLM-powered analysis (requires Ollama or API key).
+
+```bash
+# With Ollama (local)
+ci llm . --provider ollama
+
+# With OpenAI (cloud)
+ci llm . --provider openai --model gpt-4 --api-key $OPENAI_API_KEY
+
+# With custom temperature
+ci llm . --temperature 0.5
+```
+
+**Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--provider` | ollama, openai, anthropic | ollama |
+| `--model` | Model name | phi:2.7b |
+| `--api-key` | API key | - |
+| `--temperature` | Temperature (0.0-1.0) | 0.3 |
+| `--max-tokens` | Max output tokens | 1000 |
+
+### 5. Training Data Management
 
 | Command | Description | Example |
 | --- | --- | --- |
@@ -228,7 +248,7 @@ The primary executable `ci` provides commands for code analysis, review, model o
 
  | `ci self-analyze --format full`<br> |
 
-### 5. Global Configuration
+### 6. Global Configuration
 
 | Command | Description | Example |
 | --- | --- | --- |
@@ -250,19 +270,18 @@ In addition to the `ci` driver, specialized binaries are available directly via 
 
 ```bash
 # Core analyzers
-cargo run --release --bin dead_code_check -- ./path/to/project --model models/dead_code_model_v2.bin[cite: 1]
-cargo run --release --bin dedup_check -- ./path/to/project --threshold 0.80[cite: 1]
-cargo run --release --bin dead_code_dashboard -- ./path/to/project[cite: 1]
+cargo run --release --bin dead_code_check -- ./path/to/project --model models/dead_code_model_v4_balanced_calibrated.bin
+cargo run --release --bin dedup_check -- ./path/to/project --threshold 0.80
+cargo run --release --bin dead_code_dashboard -- ./path/to/project
 
 # ML Pipeline & Data Engineering
-cargo run --release --bin collect_training_data[cite: 1]
-cargo run --release --bin merge_all_training_data[cite: 1]
-cargo run --release --bin train_model -- --train-data data/train.json --target-precision 0.95[cite: 1]
-cargo run --release --bin calibrate_model -- --model model.bin --val-data data/val.json[cite: 1]
-cargo run --release --bin tune_threshold -- --model model.bin --val-data data/val.json --target-precision 0.99[cite: 1]
-cargo run --release --bin evaluate_per_language -- --model model.bin --test-data data/test.json[cite: 1]
-cargo run --release --bin feature_ablation -- --train-data data/train.json --val-data data/val.json[cite: 1]
-
+cargo run --release --bin collect_training_data
+cargo run --release --bin merge_all_training_data
+cargo run --release --bin train_model -- --train-data data/train.json --target-precision 0.95
+cargo run --release --bin calibrate_model -- --model model.bin --val-data data/val.json
+cargo run --release --bin tune_threshold -- --model model.bin --val-data data/val.json --target-precision 0.99
+cargo run --release --bin evaluate_per_language -- --model model.bin --test-data data/test.json
+cargo run --release --bin feature_ablation -- --train-data data/train.json --val-data data/val.json
 ```
 
 ---
@@ -273,47 +292,29 @@ Launch a full-screen terminal UI built with `ratatui`:
 
 ```bash
 ci dashboard ~/Documents/my-project
-
 ```
 
 ### Dashboard Views & Navigation:
 
 * **Summary**: High-level metrics, health status, and estimated removable lines of code.
 
-
 * **Charts**: Visual distribution of dead code across modules, languages, and confidence intervals.
-
 
 * **List**: Sortable table of dead function candidates with line numbers and confidence scores.
 
-
 * **By File**: File-by-file grouped breakdown of dead functions and types.
-
 
 * **Priority**: Ordered step-by-step removal plan minimizing breakage risk.
 
-
 * **History**: Audit log of confirmed removals, false-positive dismissals, and user actions.
-
-
 
 **Keybindings**:
 
 * `Tab` / `Right` / `l`: Next tab
-
-
 * `BackTab` / `Left` / `h`: Previous tab
-
-
 * `Down` / `j` & `Up` / `k`: Scroll list items
-
-
 * `g` / `G`: Jump to top / bottom
-
-
 * `q` / `Esc`: Exit dashboard
-
-
 
 ---
 
@@ -327,7 +328,6 @@ ci graph . --mode interactive --output call_graph.html
 
 # 2. High-Level Architectural View (for presentations and non-tech stakeholders)
 ci graph . --mode overview --output call_graph_overview.html
-
 ```
 
 ---
@@ -364,8 +364,8 @@ jobs:
 
       - name: Run Dead Code Analysis
         run: |
-          ci config set model /tmp/ci/models/dead_code_model_v2.bin
-          ci config set threshold 0.70
+          ci config set model /tmp/ci/models/dead_code_model_v4_balanced_calibrated.bin
+          ci config set threshold 0.80
           ci analyze . --cache
 
       - name: Generate Reports
@@ -380,7 +380,6 @@ jobs:
           path: |
             dead_code_report.md
             dead_code_report.json
-
 ```
 
 ### 2. Pre-Commit Hook (Prevent Committing Dead Code)
@@ -395,7 +394,6 @@ if ci stats . 2>/dev/null | grep -q "Pending: [1-9]"; then
     echo "   Run 'ci remove <name>' if deleted, or 'ci keep <name> \"<reason>\"' to whitelist."
     exit 1
 fi
-
 ```
 
 ---
@@ -409,7 +407,7 @@ code-intelligence/
 │   │   ├── dead_code/        # Scorer, whitelist, type/module analysis, impact estimators
 │   │   ├── dynamic_refs.rs   # Reflection, framework callback, and string-dispatch detection
 │   │   ├── roots.rs          # Root detection & BFS reachability analysis
-│   │   └── verdict.rs        # Verdict decision engine combining static & ML signals
+│   │   └── verdict_source/   # Verdict decision engine combining static & ML signals
 │   ├── bin/                  # CLI tool (`ci`), dashboard, and ML training/eval binaries
 │   ├── engine/               # Indexer, file walking, disk caching, pipeline stages
 │   ├── graph/                # Call, dependency, import, and type graphs (Petgraph)
@@ -420,7 +418,6 @@ code-intelligence/
 │   └── parser/               # Tree-sitter parsers & semantic analyzers
 ├── models/                   # Pretrained and calibrated .bin models
 └── data/                     # Train, validation, and test datasets
-
 ```
 
 ---
@@ -436,7 +433,6 @@ cargo test --test integration
 
 # Run criterion compression and deduplication benchmarks
 cargo bench
-
 ```
 
 ---
@@ -444,3 +440,6 @@ cargo bench
 ## 📄 License
 
 This project is licensed under the **MIT License**.
+```
+
+---

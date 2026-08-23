@@ -49,7 +49,7 @@ pub struct CycleDetectionResult {
     pub max_nodes_limit: usize,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct CallGraph {
     pub graph: DiGraph<FunctionNode, CallEdge>,
     pub name_index: HashMap<String, NodeIndex>,

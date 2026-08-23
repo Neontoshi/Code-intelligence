@@ -252,18 +252,33 @@ async fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         None => (None, None),
     };
 
+    // Single source of truth - model manifest is authoritative
     let cli_threshold = if args.conservative {
         0.95
     } else {
         args.threshold
     };
+
+    // If model provides a threshold, use it; otherwise use CLI threshold
     let effective_threshold = model_threshold.unwrap_or(cli_threshold);
-    let threshold = effective_threshold;
+
+    // If the user explicitly set a threshold via CLI flag, it overrides the model
+    let threshold = if args.threshold != 0.92 {
+        args.threshold
+    } else {
+        effective_threshold
+    };
 
     println!(
-        "📊 Using threshold: {:.2} (calibrated for {:.1}% precision)",
+        "📊 Using threshold: {:.2} (source: {})",
         threshold,
-        if args.conservative { 99.5 } else { 99.0 }
+        if args.threshold != 0.92 {
+            "user-provided"
+        } else if model_threshold.is_some() {
+            "model manifest"
+        } else {
+            "default"
+        }
     );
 
     if let Some((model, _)) = &ml_model {

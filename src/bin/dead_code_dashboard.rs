@@ -5,8 +5,6 @@ mod dashboard_ui;
 use code_intelligence::analysis::dead_code::DeadCodeAnalysis;
 use code_intelligence::analysis::explainability::ExplainabilityEngine;
 use code_intelligence::analysis::git_analysis::GitAnalyzer;
-use code_intelligence::graph::GraphMetrics;
-use code_intelligence::Pipeline;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -233,140 +231,38 @@ impl App {
         );
         pb.enable_steady_tick(std::time::Duration::from_millis(80));
 
-        let pb_clone = pb.clone();
+        let path_clone = path.clone();
+
         let result = std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async {
-                let mut pipeline = Pipeline::new().with_progress_reporter(std::sync::Arc::new(
-                    move |msg: &str| {
-                        pb_clone.set_message(msg.to_string());
-                    },
-                ));
-                let analysis = pipeline
-                    .process_project(&path)
+                // ⭐ NEW: Use the shared AnalysisService
+                use code_intelligence::analysis::service::{
+                    AnalysisService, AnalysisServiceConfig,
+                };
+
+                // Build config for the service
+                let config = AnalysisServiceConfig {
+                    model_path: None,
+                    threshold: None,
+                    verbose: false,
+                    debug: false,
+                    cache: false,
+                    cache_dir: None,
+                    llm: false,
+                    git: false,
+                };
+
+                let mut service = AnalysisService::new(config);
+
+                // Run the analysis using the shared service
+                let result = service
+                    .analyze(&path_clone)
                     .await
                     .map_err(|e| e.to_string())?;
-                let _summary = pipeline.take_build_summary();
 
-                // Use VerdictEngine like the CLI does
-                use code_intelligence::analysis::{
-                    dead_code::{filters::is_never_dead, DeadCodeAnalyzer, DeadFunction},
-                    dynamic_refs::DynamicRefDetector,
-                    roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector},
-                    verdict_source::{VerdictConfig, VerdictEngine},
-                };
-
-                // 1. Detect roots
-                let root_config = RootDetectionConfig::default();
-                let root_set =
-                    RootDetector::detect_roots(&analysis.call_graph, &analysis.files, &root_config);
-
-                // 2. Compute reachability
-                let reachability =
-                    ReachabilityAnalyzer::compute_reachability(&analysis.call_graph, &root_set);
-
-                // 3. Create verdict engine
-                let mut verdict_engine = VerdictEngine::new(VerdictConfig::default());
-
-                // 4. Detect dynamic references
-                let dynamic_detector = DynamicRefDetector::new();
-                let dynamic_refs =
-                    dynamic_detector.detect_all(&analysis.call_graph, &analysis.files);
-                verdict_engine = verdict_engine.with_dynamic_refs(dynamic_refs);
-
-                // 5. Generate verdicts
-                let verdicts = verdict_engine.evaluate_all(&analysis.call_graph, &reachability);
-
-                // 6. Filter dead verdicts
-                let dead_verdicts: Vec<_> = verdict_engine.filter_dead(&verdicts);
-
-                // 7. Convert to DeadFunction with impact info
-                let mut impact_analyzer = DeadCodeAnalyzer::new();
-
-                let dead_functions =
-                    impact_analyzer.import_verdicts(&dead_verdicts, &analysis.call_graph);
-
-                // 8. ⭐ Filter using is_never_dead (same as CLI)
-                let filtered_functions: Vec<DeadFunction> = dead_functions
-                    .into_iter()
-                    .filter(|f| {
-                        !is_never_dead(
-                            &analysis
-                                .call_graph
-                                .name_index
-                                .get(&f.full_path)
-                                .map(|idx| &analysis.call_graph[*idx])
-                                .unwrap_or(&code_intelligence::graph::call_graph::FunctionNode {
-                                    name: f.name.clone(),
-                                    full_path: f.full_path.clone(),
-                                    file: f.file.clone(),
-                                    line: f.line,
-                                    body_start_line: 0,
-                                    body_end_line: 0,
-                                    is_public: false,
-                                    is_async: false,
-                                    params: Vec::new(),
-                                    returns: Vec::new(),
-                                    complexity: 0.0,
-                                    importance_score: 0.0,
-                                    doc_comment: None,
-                                    writes_to: Vec::new(),
-                                    reads_from: Vec::new(),
-                                    errors: Vec::new(),
-                                    fan_in: 0,
-                                    fan_out: 0,
-                                    is_cycle: false,
-                                    depth: 0,
-                                    layer: String::new(),
-                                    trait_impl: None,
-                                    is_test: false,
-                                    is_trait_method: false,
-                                    is_trait_default: false,
-                                }),
-                        )
-                    })
-                    .collect();
-
-                // 9. Build summary
-                let summary = code_intelligence::analysis::dead_code::AnalysisSummary {
-                    total_functions: analysis.call_graph.node_count(),
-                    dead_functions: filtered_functions.len(),
-                    dead_types: 0,
-                    dead_modules: 0,
-                    dead_files: 0,
-                    avg_confidence: if filtered_functions.is_empty() {
-                        0.0
-                    } else {
-                        filtered_functions
-                            .iter()
-                            .map(|f| f.score.score)
-                            .sum::<f64>()
-                            / filtered_functions.len() as f64
-                    },
-                    estimated_loc_removable: filtered_functions
-                        .iter()
-                        .map(|f| f.impact.lines_of_code)
-                        .sum(),
-                };
-
-                // Create DeadCodeAnalysis for the UI
-                let dead_analysis = DeadCodeAnalysis {
-                    functions: filtered_functions,
-                    types: code_intelligence::analysis::dead_code::DeadTypeReport {
-                        unused_structs: Vec::new(),
-                        unused_enums: Vec::new(),
-                        unused_traits: Vec::new(),
-                        unused_type_aliases: Vec::new(),
-                        unused_impl_blocks: Vec::new(),
-                    },
-                    modules: code_intelligence::analysis::dead_code::DeadModuleReport {
-                        unused_modules: Vec::new(),
-                        unused_files: Vec::new(),
-                        unused_imports: Vec::new(),
-                    },
-                    reachability,
-                    summary,
-                };
+                // Extract the dead code analysis from the result
+                let dead_analysis = result.dead_code_analysis;
 
                 Ok::<_, String>(dead_analysis)
             })
@@ -404,14 +300,14 @@ impl App {
                         full_path: func.full_path.clone(),
                         file: func.file.clone(),
                         line: func.line,
-                        body_start_line: 0,
-                        body_end_line: func.impact.lines_of_code,
-                        is_public: false,
+                        body_start_line: func.line,
+                        body_end_line: func.line + func.impact.lines_of_code,
+                        is_public: func.is_binary_only || false,
                         is_async: false,
                         params: Vec::new(),
                         returns: Vec::new(),
                         complexity: func.impact.complexity,
-                        importance_score: 0.0,
+                        importance_score: func.score.score,
                         doc_comment: None,
                         writes_to: Vec::new(),
                         reads_from: Vec::new(),

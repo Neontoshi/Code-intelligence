@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[derive(Clone, Debug)]
 pub struct ProjectAnalysis {
     pub root: PathBuf,
     pub files: Arc<Vec<ParsedFile>>,

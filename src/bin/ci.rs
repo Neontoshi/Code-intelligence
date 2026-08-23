@@ -442,7 +442,7 @@ enum Commands {
         fail_on_dead: bool,
 
         /// Threshold for dead code confidence
-        #[arg(long, default_value = "0.92")]
+        #[arg(long, default_value = "0.80")]
         threshold: f64,
 
         /// Disable memory limits (for CI with ample memory)

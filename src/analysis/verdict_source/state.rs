@@ -157,7 +157,7 @@ pub struct VerdictConfig {
 impl Default for VerdictConfig {
     fn default() -> Self {
         Self {
-            dead_threshold: 0.92,
+            dead_threshold: 0.80,
             alive_threshold: 0.15,
             enable_ml: true,
             enable_static: true,
@@ -186,6 +186,7 @@ impl VerdictStats {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct VerdictEngine {
     config: VerdictConfig,
     ml_model: Option<DeadCodeClassifier>,
