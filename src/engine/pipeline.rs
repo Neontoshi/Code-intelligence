@@ -35,9 +35,8 @@ pub struct BuildSummary {
     pub duplicates: usize,
 }
 
-#[allow(dead_code)]
 pub struct Pipeline {
-    parser: TreeSitterParser,
+    _parser: TreeSitterParser,
     scorer: ImportanceScorer,
     cache: FileCache,
     config: PipelineConfig,
@@ -54,7 +53,7 @@ pub struct Pipeline {
 impl Pipeline {
     pub fn new() -> Self {
         Self {
-            parser: TreeSitterParser::new(),
+            _parser: TreeSitterParser::new(),
             scorer: ImportanceScorer::new(),
             cache: FileCache::new(),
             config: PipelineConfig::default(),

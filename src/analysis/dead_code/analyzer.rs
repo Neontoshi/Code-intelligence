@@ -30,6 +30,7 @@ pub struct DeadFunction {
     pub removal_order: usize,
     pub is_binary_only: bool,
     pub is_internal_call: bool,
+    pub ml_probability: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -118,11 +119,13 @@ impl DeadCodeAnalyzer {
                                 explanation: s.explanation.clone(),
                             })
                             .collect(),
+                        ml_probability: verdict.dead_probability,
                     },
                     impact,
                     removal_order: 0,
                     is_binary_only,
                     is_internal_call,
+                    ml_probability: verdict.dead_probability,
                 });
             }
         }

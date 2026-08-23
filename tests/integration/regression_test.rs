@@ -1,9 +1,5 @@
 // tests/integration/regression_test.rs
 
-//! Regression tests for false positives and other issues
-//!
-//! These tests ensure that previously fixed false positives don't reappear.
-
 use code_intelligence::analysis::dead_code::filters::is_never_dead;
 use code_intelligence::analysis::roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector};
 use code_intelligence::analysis::verdict_source::state::{VerdictConfig, VerdictEngine};
@@ -135,8 +131,6 @@ pub fn process(handler: &dyn Handler, request: &str) -> String {
         }
     }
 
-    // ⭐ If we didn't find any trait implementations, the test should still pass
-    // because the filter might be working correctly (they're never dead)
     if !found_trait_impl {
         println!("⚠️ No trait implementations found in analysis - filter may be working correctly");
         // Check that the filter would mark them as never dead
@@ -152,8 +146,6 @@ pub fn process(handler: &dyn Handler, request: &str) -> String {
             }
         }
     }
-
-    // ⭐ Ensure we actually found something to test
     assert!(
         found_trait_impl,
         "No trait implementations found in the analysis"
@@ -430,8 +422,6 @@ fn test_is_never_dead_filter() {
 /// Test that previously fixed false positives don't reappear
 #[test]
 fn test_regression_previous_fixes() {
-    // This test runs all the regression scenarios
-    // and ensures they still pass
     test_regression_false_positive_ffi_function();
     test_regression_false_positive_trait_impl();
     test_regression_false_positive_flask_route();

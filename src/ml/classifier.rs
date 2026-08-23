@@ -62,13 +62,13 @@ impl LinearClassifier {
         Ok(())
     }
 
-    // ⭐ NEW: Predict with validation
+    // Predict with validation
     pub fn predict_validated(&self, features: &[f64]) -> Result<f64, String> {
         self.validate_features(features)?;
         Ok(self.predict(features))
     }
 
-    // ⭐ NEW: Predict label with validation
+    // Predict label with validation
     pub fn predict_label_validated(&self, features: &[f64]) -> Result<TrainingLabel, String> {
         self.validate_features(features)?;
         Ok(self.predict_label(features))
@@ -89,9 +89,6 @@ impl LinearClassifier {
             self.weights = vec![0.0; self.feature_count];
         }
 
-        // Fit the scaler on the raw training features before touching any
-        // weights, then use it for every example below (and keep it, so
-        // predict() applies the same transform later).
         let raw_vectors: Vec<Vec<f64>> = labeled
             .iter()
             .map(|e| e.features.to_feature_vector())
@@ -150,7 +147,15 @@ impl LinearClassifier {
             }
         }
 
-        self.calculate_accuracy(examples)
+        //  Clearly label this as TRAINING accuracy
+        let training_accuracy = self.calculate_accuracy(examples);
+        println!(
+            "\n   📊 Training Accuracy: {:.1}%",
+            training_accuracy * 100.0
+        );
+        println!("   ⚠️  Note: This is training-set accuracy. Use evaluate_metrics for validation/test metrics.");
+
+        training_accuracy
     }
 
     pub fn predict(&self, features: &[f64]) -> f64 {
@@ -276,7 +281,7 @@ pub struct DeadCodeClassifier {
     pub model: Option<LinearClassifier>,
     pub accuracy: f64,
     pub feature_count: usize,
-    pub calibration: Option<CalibrationParams>, // ⭐ NEW
+    pub calibration: Option<CalibrationParams>,
 }
 
 impl DeadCodeClassifier {
@@ -285,7 +290,7 @@ impl DeadCodeClassifier {
             model: None,
             accuracy: 0.0,
             feature_count: feature_count(),
-            calibration: None, // ⭐ NEW
+            calibration: None,
         }
     }
 
@@ -306,10 +311,17 @@ impl DeadCodeClassifier {
             .with_learning_rate(0.01)
             .with_epochs(50);
 
-        self.accuracy = classifier.train(examples);
+        // ⭐ FIX: Store training accuracy separately
+        let training_accuracy = classifier.train(examples);
+        self.accuracy = training_accuracy;
         self.model = Some(classifier);
 
-        println!("   Accuracy: {:.1}%", self.accuracy * 100.0);
+        // ⭐ FIX: Clearly label this as training accuracy
+        println!(
+            "\n   ✅ Training Accuracy: {:.1}%",
+            training_accuracy * 100.0
+        );
+        println!("   📌 For validation/test metrics, run evaluate_metrics binary.");
 
         Ok(())
     }

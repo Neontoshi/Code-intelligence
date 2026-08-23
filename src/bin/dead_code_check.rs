@@ -558,6 +558,10 @@ async fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         for func in dead_functions_with_impact.iter().take(5) {
             println!("\n   #{}: {}", func.removal_order, func.name);
             println!("      Confidence: {:.1}%", func.score.score * 100.0);
+            // Show raw ML probability if available
+            if let Some(dead_prob) = func.score.ml_probability {
+                println!("      ML Probability: {:.1}%", dead_prob * 100.0);
+            }
             println!("      File: {}", func.file);
             println!("      Complexity: {:.1}", func.impact.complexity);
             println!("      Impact: {}", func.impact.estimated_removal_impact);

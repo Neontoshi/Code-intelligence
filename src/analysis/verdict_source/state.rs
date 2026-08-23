@@ -9,9 +9,7 @@ use crate::graph::call_graph::{CallGraph, FunctionNode};
 use crate::graph::traits::GraphMetrics;
 use crate::ml::classifier::DeadCodeClassifier;
 
-// ============================================================================
 // Signal Types - Now defined here (moved from old verdict.rs)
-// ============================================================================
 
 #[derive(Debug, Clone)]
 pub struct Signal {
@@ -39,9 +37,7 @@ impl SignalDirection {
     }
 }
 
-// ============================================================================
 // Verdict Types - Now defined here (moved from old verdict.rs)
-// ============================================================================
 
 #[derive(Debug, Clone)]
 pub struct Verdict {
@@ -50,6 +46,7 @@ pub struct Verdict {
     pub label: TrainingLabel,
     pub state: VerdictState,
     pub confidence: f64,
+    pub dead_probability: Option<f64>,
     pub signals: Vec<Signal>,
     pub ml_probability: Option<f64>,
     pub static_score: Option<f64>,
@@ -90,6 +87,14 @@ impl Verdict {
         )
     }
 
+    pub fn get_dead_probability(&self) -> Option<f64> {
+        self.dead_probability
+    }
+
+    pub fn get_confidence(&self) -> f64 {
+        self.confidence
+    }
+
     pub fn mark_verified(&mut self, verified_by: &str) {
         self.verified = true;
         self.verified_by = Some(verified_by.to_string());
@@ -106,6 +111,14 @@ impl Verdict {
         output.push_str(&format!("Function: {}\n", self.function_name));
         output.push_str(&format!("Verdict: {:?}\n", self.label));
         output.push_str(&format!("Confidence: {:.1}%\n\n", self.confidence * 100.0));
+
+        // Show raw ML probability if available
+        if let Some(dead_prob) = self.dead_probability {
+            output.push_str(&format!(
+                "ML Probability (Dead): {:.1}%\n",
+                dead_prob * 100.0
+            ));
+        }
 
         output.push_str("Signals:\n");
         for signal in &self.signals {
@@ -131,10 +144,7 @@ impl Verdict {
     }
 }
 
-// ============================================================================
 // Verdict Config and Engine
-// ============================================================================
-
 #[derive(Debug, Clone)]
 pub struct VerdictConfig {
     pub dead_threshold: f64,
@@ -246,6 +256,7 @@ impl VerdictEngine {
                 label: TrainingLabel::Alive,
                 state: VerdictState::DefinitelyAlive,
                 confidence: 1.0,
+                dead_probability: None,
                 signals: vec![Signal {
                     name: "never_dead_filter".to_string(),
                     value: 1.0,
@@ -351,21 +362,18 @@ impl VerdictEngine {
         // 4. Dynamic references (if available)
         if let Some(dynamic_refs) = &self.dynamic_refs {
             let is_dynamically_referenced = dynamic_refs.iter().any(|r| {
-                r.target_function
+                r.target_full_path
                     .as_ref()
-                    .map(|f| f == &func.name)
+                    .map(|p| p == &func.full_path)
                     .unwrap_or(false)
+                    || r.target_function
+                        .as_ref()
+                        .map(|f| f == &func.name)
+                        .unwrap_or(false)
                     || r.target_pattern.contains(&func.name)
             });
 
             if is_dynamically_referenced {
-                signals.push(Signal {
-                    name: "dynamic_reference".to_string(),
-                    value: 1.0,
-                    direction: SignalDirection::SupportsAlive,
-                    weight: 0.4,
-                    explanation: "Referenced dynamically (reflection/callback)".to_string(),
-                });
                 evidence_sources.push(EvidenceSource::DynamicRefs);
             }
         }
@@ -395,6 +403,8 @@ impl VerdictEngine {
             VerdictState::Unknown => (TrainingLabel::Unknown, 0.5),
         };
 
+        let dead_probability = ml_probability;
+
         // 8. Generate explanation
         let explanation = self.generate_explanation(
             func,
@@ -410,6 +420,7 @@ impl VerdictEngine {
             label,
             state,
             confidence,
+            dead_probability,
             signals,
             ml_probability,
             static_score: Some(normalized_static),
@@ -535,6 +546,31 @@ impl VerdictEngine {
                 weight: 0.1,
                 explanation: "Has documentation".to_string(),
             });
+        }
+
+        // ⭐ NEW: Dynamic references signal (moved from evaluate_function)
+        if let Some(dynamic_refs) = &self.dynamic_refs {
+            let is_dynamically_referenced = dynamic_refs.iter().any(|r| {
+                r.target_full_path
+                    .as_ref()
+                    .map(|p| p == &func.full_path)
+                    .unwrap_or(false)
+                    || r.target_function
+                        .as_ref()
+                        .map(|f| f == &func.name)
+                        .unwrap_or(false)
+                    || r.target_pattern.contains(&func.name)
+            });
+
+            if is_dynamically_referenced {
+                signals.push(Signal {
+                    name: "dynamic_reference".to_string(),
+                    value: 1.0,
+                    direction: SignalDirection::SupportsAlive,
+                    weight: 0.4,
+                    explanation: "Referenced dynamically (reflection/callback)".to_string(),
+                });
+            }
         }
 
         signals

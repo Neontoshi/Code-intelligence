@@ -126,7 +126,68 @@ impl OutcomeTracker {
         Ok(())
     }
 
-    /// Track a new verdict - ⭐ FIXED: Now returns Result
+    ///  Generate a stable ID for a function
+    fn generate_stable_id(
+        project: &str,
+        full_path: &str,
+        function_name: &str,
+        line: usize,
+    ) -> String {
+        use sha2::{Digest, Sha256};
+
+        // Use a stable hash based on the function's identity
+        // This stays the same across commits as long as the function exists
+        let mut hasher = Sha256::new();
+        hasher.update(project.as_bytes());
+        hasher.update(b"::");
+        hasher.update(full_path.as_bytes());
+        hasher.update(b"::");
+        hasher.update(function_name.as_bytes());
+        hasher.update(b"::");
+        hasher.update(line.to_string().as_bytes());
+
+        // Include signature hash if available via full_path parsing
+        if let Some(sig_start) = full_path.rfind("::") {
+            if let Some(sig_end) = full_path.rfind('(') {
+                let signature = &full_path[sig_start + 2..sig_end];
+                hasher.update(b"::sig::");
+                hasher.update(signature.as_bytes());
+            }
+        }
+
+        let hash = hex::encode(hasher.finalize());
+        // Use first 16 chars for readable IDs
+        format!("outcome_{}", &hash[..16])
+    }
+
+    ///  Get the stable ID for a function without tracking it
+    pub fn get_stable_id(
+        project: &str,
+        full_path: &str,
+        function_name: &str,
+        line: usize,
+    ) -> String {
+        Self::generate_stable_id(project, full_path, function_name, line)
+    }
+
+    ///  Find a verdict by its stable ID
+    pub fn find_by_id(&self, id: &str) -> Option<&TrackedVerdict> {
+        self.verdicts.iter().find(|v| v.id == id)
+    }
+
+    ///  Find a verdict by function identity
+    pub fn find_by_function(
+        &self,
+        project: &str,
+        full_path: &str,
+        function_name: &str,
+        line: usize,
+    ) -> Option<&TrackedVerdict> {
+        let id = Self::generate_stable_id(project, full_path, function_name, line);
+        self.find_by_id(&id)
+    }
+
+    /// Track a new verdict - uses stable ID based on function identity
     pub fn track_verdict(
         &mut self,
         function_name: &str,
@@ -136,14 +197,26 @@ impl OutcomeTracker {
         confidence: f64,
         project: &str,
     ) -> Result<String, String> {
-        let id = format!(
-            "{}_{}",
-            function_name,
-            SystemTime::now()
+        // Generate stable ID based on function identity
+        let id = Self::generate_stable_id(project, full_path, function_name, line);
+
+        // Check if this verdict already exists (update instead of duplicate)
+        if let Some(existing) = self.verdicts.iter_mut().find(|v| v.id == id) {
+            // Update existing verdict with new confidence and date
+            existing.confidence = confidence;
+            existing.verdict_date = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_millis()
-        );
+                .as_secs();
+            // If it was previously resolved, reset to pending if new analysis
+            if existing.outcome != VerdictOutcome::Pending {
+                existing.outcome = VerdictOutcome::Pending;
+                existing.outcome_date = None;
+                existing.notes = Some("Re-evaluated by new analysis".to_string());
+            }
+            self.save()?;
+            return Ok(id);
+        }
 
         let verdict = TrackedVerdict {
             id: id.clone(),
@@ -164,7 +237,6 @@ impl OutcomeTracker {
         };
 
         self.verdicts.push(verdict);
-        // ⭐ FIXED: Now returns error if save fails
         self.save()?;
         Ok(id)
     }
@@ -251,7 +323,6 @@ impl OutcomeTracker {
     }
 
     /// Import verdicts from dead_code_check output and track them
-    /// ⭐ FIXED: Now returns Result
     pub fn import_verdicts(
         &mut self,
         dead_verdicts: &[&crate::analysis::verdict_source::state::Verdict],
@@ -259,11 +330,13 @@ impl OutcomeTracker {
     ) -> Result<usize, String> {
         let mut count = 0;
         for verdict in dead_verdicts {
+            // Use stable ID with line number from verdict if available
+            let line = verdict.static_score.map(|s| s as usize).unwrap_or(0);
             self.track_verdict(
                 &verdict.function_name,
                 &verdict.full_path,
                 &verdict.full_path,
-                0,
+                line,
                 verdict.confidence,
                 project,
             )?;

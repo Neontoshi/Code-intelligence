@@ -18,6 +18,7 @@ pub struct DeadScore {
     pub score: f64, // 0.0 - 1.0
     pub level: ConfidenceLevel,
     pub factors: Vec<ScoreFactor>,
+    pub ml_probability: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -274,6 +275,7 @@ impl ConfidenceScorer {
             score: final_score,
             level,
             factors,
+            ml_probability: None,
         }
     }
 

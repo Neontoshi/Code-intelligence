@@ -439,6 +439,7 @@ impl App {
                         label: TrainingLabel::Dead,
                         state: VerdictState::DefinitelyDead,
                         confidence: func.score.score,
+                        dead_probability: None,
                         signals: func
                             .score
                             .factors

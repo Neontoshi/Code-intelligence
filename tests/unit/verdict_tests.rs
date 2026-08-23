@@ -159,6 +159,7 @@ fn create_test_verdict(
         state,
         confidence: 0.5,
         signals: vec![],
+        dead_probability: None,
         ml_probability: None,
         static_score: Some(0.5),
         explanation: "Test verdict".to_string(),

@@ -126,12 +126,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Print feature importance
     classifier.print_feature_importance();
 
-    // Evaluate on validation set
-    println!("\n📊 Validation Set Performance:");
+    // Evaluate on validation set with clear labeling
+    println!("\n📊 Validation Set Performance (generalization check):");
     let val_accuracy = evaluate_classifier(&classifier, &val_examples);
+    let val_metrics = evaluate_at_threshold(&classifier, &val_examples, 0.5);
     println!("   Accuracy: {:.1}%", val_accuracy * 100.0);
+    println!("   Precision: {:.1}%", val_metrics.precision * 100.0);
+    println!("   Recall: {:.1}%", val_metrics.recall * 100.0);
+    println!("   F1: {:.1}%", val_metrics.f1 * 100.0);
+    println!("   FPR: {:.1}%", val_metrics.fpr * 100.0);
 
-    // ⭐ NEW: Tune threshold on validation set
+    // Compare training vs validation
+    if let Some(model) = classifier.get_model() {
+        let train_acc = model.calculate_accuracy(&train_examples);
+        let gap = train_acc - val_accuracy;
+        println!("\n   📊 Training vs Validation Gap: {:.1}%", gap * 100.0);
+        if gap > 0.10 {
+            println!("   ⚠️  Warning: Large gap indicates potential overfitting.");
+        } else {
+            println!("   ✅ Small gap - model generalizes well.");
+        }
+    }
+    // Tune threshold on validation set
     println!("\n🎯 Tuning threshold on validation set...");
     let best_threshold =
         tune_threshold_on_validation(&classifier, &val_examples, args.target_precision);
@@ -146,7 +162,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Recall: {:.1}%", test_metrics.recall * 100.0);
     println!("   F1: {:.1}%", test_metrics.f1 * 100.0);
     println!("   FPR: {:.1}%", test_metrics.fpr * 100.0);
-    // Create versioned model
     use code_intelligence::ml::{ModelPerformance, TrainingMetadata, VersionedModel};
 
     let metadata = TrainingMetadata {
@@ -172,7 +187,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         f1: test_metrics.f1,
         fpr: test_metrics.fpr,
         fnr: 1.0 - test_metrics.recall,
-        threshold: best_threshold, // ⭐ Use tuned threshold
+        threshold: best_threshold,
     };
 
     if let Some(inner_model) = classifier.model.clone() {
@@ -227,10 +242,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ============================================================================
 // Evaluation Helpers
-// ============================================================================
-
 #[derive(Debug, Clone)]
 struct FullMetrics {
     accuracy: f64,
