@@ -18,6 +18,110 @@ pub struct DynamicReference {
     pub resolved: bool,
 }
 
+impl DynamicReference {
+    /// Create a new framework dynamic reference (decorators, routes, etc.)
+    pub fn new_framework(
+        source_file: String,
+        source_function: Option<String>,
+        target_function: String,
+        target_full_path: Option<String>,
+        target_pattern: String,
+        confidence: f64,
+        context: String,
+    ) -> Self {
+        let resolved = target_full_path.is_some();
+        Self {
+            source_file,
+            source_function,
+            target_function: Some(target_function),
+            target_full_path,
+            target_pattern,
+            reference_type: DynamicRefType::Framework,
+            confidence,
+            context,
+            resolved,
+        }
+    }
+
+    /// Create a new dynamic import reference
+    pub fn new_dynamic_import(
+        source_file: String,
+        target_function: String,
+        target_full_path: Option<String>,
+        target_pattern: String,
+        confidence: f64,
+        context: String,
+    ) -> Self {
+        let resolved = target_full_path.is_some();
+        Self {
+            source_file,
+            source_function: None,
+            target_function: Some(target_function),
+            target_full_path,
+            target_pattern,
+            reference_type: DynamicRefType::DynamicImport,
+            confidence,
+            context,
+            resolved,
+        }
+    }
+
+    /// Create a new reflection reference
+    pub fn new_reflection(
+        source_file: String,
+        source_function: Option<String>,
+        target_function: String,
+        target_full_path: Option<String>,
+        target_pattern: String,
+        confidence: f64,
+        context: String,
+    ) -> Self {
+        let resolved = target_full_path.is_some();
+        Self {
+            source_file,
+            source_function,
+            target_function: Some(target_function),
+            target_full_path,
+            target_pattern,
+            reference_type: DynamicRefType::Reflection,
+            confidence,
+            context,
+            resolved,
+        }
+    }
+
+    /// Create from an extracted dynamic call
+    pub fn from_extracted(
+        file: &ParsedFile,
+        dyn_call: &ExtractedDynamicCall,
+        resolved_path: Option<String>,
+    ) -> Self {
+        let resolved = resolved_path.is_some();
+        let ref_type = dyn_call.ref_type.clone();
+        let confidence = dyn_call.confidence;
+        let context = dyn_call.context.clone();
+        let pattern = dyn_call.pattern.clone();
+        let target_name = dyn_call.target_name.clone();
+
+        Self {
+            source_file: file.path.clone(),
+            source_function: dyn_call.enclosing_function.clone(),
+            target_function: Some(target_name),
+            target_full_path: resolved_path,
+            target_pattern: pattern,
+            reference_type: ref_type,
+            confidence,
+            context,
+            resolved,
+        }
+    }
+
+    /// Check if this reference is resolved
+    pub fn is_resolved(&self) -> bool {
+        self.resolved
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DynamicRefType {
     Reflection,
@@ -81,17 +185,11 @@ impl DynamicRefDetector {
                     &unqualified_to_paths,
                 );
 
-                refs.push(DynamicReference {
-                    source_file: file.path.clone(),
-                    source_function: dyn_call.enclosing_function,
-                    target_function: Some(dyn_call.target_name.clone()),
-                    target_full_path: resolved_path.clone(),
-                    target_pattern: dyn_call.pattern,
-                    reference_type: dyn_call.ref_type,
-                    confidence: dyn_call.confidence,
-                    context: dyn_call.context,
-                    resolved: resolved_path.is_some(),
-                });
+                refs.push(DynamicReference::from_extracted(
+                    file,
+                    &dyn_call,
+                    resolved_path,
+                ));
             }
 
             for func_info in &file.functions {
@@ -116,17 +214,15 @@ impl DynamicRefDetector {
                         || d_lower.contains("blueprint");
 
                     if is_route {
-                        refs.push(DynamicReference {
-                            source_file: file.path.clone(),
-                            source_function: Some(func_info.name.clone()),
-                            target_function: Some(func_info.name.clone()),
-                            target_full_path: resolved_path.clone(),
-                            target_pattern: decorator.clone(),
-                            reference_type: DynamicRefType::Framework,
-                            confidence: 0.95,
-                            context: format!("Decorated endpoint: {}", decorator),
-                            resolved: resolved_path.is_some(),
-                        });
+                        refs.push(DynamicReference::new_framework(
+                            file.path.clone(),
+                            Some(func_info.name.clone()),
+                            func_info.name.clone(),
+                            resolved_path.clone(),
+                            decorator.clone(),
+                            0.95,
+                            format!("Decorated endpoint: {}", decorator),
+                        ));
                     }
                 }
 
@@ -149,27 +245,21 @@ impl DynamicRefDetector {
                             &unqualified_to_paths,
                         );
 
-                        refs.push(DynamicReference {
-                            source_file: file.path.clone(),
-                            source_function: Some(func_info.name.clone()),
-                            target_function: Some(func_info.name.clone()),
-                            target_full_path: resolved_path.clone(),
-                            target_pattern: if is_component {
-                                "JSXComponent"
-                            } else {
-                                "ReactHook"
-                            }
-                            .to_string(),
-                            reference_type: DynamicRefType::Framework,
-                            confidence: if is_component { 0.90 } else { 0.85 },
-                            context: if is_component {
-                                "React Component"
-                            } else {
-                                "React Hook"
-                            }
-                            .to_string(),
-                            resolved: resolved_path.is_some(),
-                        });
+                        let (pattern, confidence, context) = if is_component {
+                            ("JSXComponent", 0.90, "React Component")
+                        } else {
+                            ("ReactHook", 0.85, "React Hook")
+                        };
+
+                        refs.push(DynamicReference::new_framework(
+                            file.path.clone(),
+                            Some(func_info.name.clone()),
+                            func_info.name.clone(),
+                            resolved_path,
+                            pattern.to_string(),
+                            confidence,
+                            context.to_string(),
+                        ));
                     }
                 }
             }
@@ -188,17 +278,14 @@ impl DynamicRefDetector {
                         &unqualified_to_paths,
                     );
 
-                    refs.push(DynamicReference {
-                        source_file: file.path.clone(),
-                        source_function: None,
-                        target_function: Some(import.module.clone()),
-                        target_full_path: resolved.clone(),
-                        target_pattern: import.module.clone(),
-                        reference_type: DynamicRefType::DynamicImport,
-                        confidence: 0.80,
-                        context: format!("Dynamic import statement: {}", import.module),
-                        resolved: resolved.is_some(),
-                    });
+                    refs.push(DynamicReference::new_dynamic_import(
+                        file.path.clone(),
+                        import.module.clone(),
+                        resolved,
+                        import.module.clone(),
+                        0.80,
+                        format!("Dynamic import statement: {}", import.module),
+                    ));
                 }
             }
         }
@@ -470,7 +557,7 @@ impl DynamicRefDetector {
     }
 }
 
-struct ExtractedDynamicCall {
+pub struct ExtractedDynamicCall {
     enclosing_function: Option<String>,
     target_name: String,
     pattern: String,

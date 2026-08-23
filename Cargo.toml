@@ -123,7 +123,7 @@ name = "integration"
 path = "tests/integration.rs"
 
 # ============================================================
-# BINARIES - Cleaned up (13 total)
+# BINARIES - Unified (6 total)
 # ============================================================
 
 # Core CLI
@@ -144,41 +144,14 @@ path = "src/bin/dead_code_dashboard.rs"
 name = "dedup_check"
 path = "src/bin/dedup_check.rs"
 
-# Training & Model Management
 [[bin]]
-name = "train_model"
-path = "src/bin/train_model.rs"
+name = "evaluate"
+path = "src/bin/evaluate.rs"
 
 [[bin]]
-name = "calibrate_model"
-path = "src/bin/calibrate_model.rs"
+name = "train"
+path = "src/bin/train.rs"
 
 [[bin]]
-name = "tune_threshold"
-path = "src/bin/tune_threshold.rs"
-
-[[bin]]
-name = "train_duplicate_model"
-path = "src/bin/train_duplicate_model.rs"
-
-# Evaluation
-[[bin]]
-name = "evaluate_metrics"
-path = "src/bin/evaluate_metrics.rs"
-
-[[bin]]
-name = "evaluate_per_language"
-path = "src/bin/evaluate_per_language.rs"
-
-# Data Management
-[[bin]]
-name = "training_data_exporter"
-path = "src/bin/training_data_exporter.rs"
-
-[[bin]]
-name = "merge_all_training_data"
-path = "src/bin/merge_all_training_data.rs"
-
-[[bin]]
-name = "collect_training_data"
-path = "src/bin/collect_training_data.rs"
+name = "data"
+path = "src/bin/data.rs"
