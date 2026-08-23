@@ -197,8 +197,10 @@ impl RootDetector {
             let is_test = func.name.starts_with("test_")
                 || func.name.starts_with("Test")
                 || func.name.starts_with("bench_")
+                || func.name.starts_with("benchmark_")
                 || func.name.starts_with("Benchmark")
                 || func.file.contains("/tests/")
+                || func.file.contains("/benches/")
                 || func.file.ends_with("_test.rs")
                 || func.file.ends_with("_test.go");
 

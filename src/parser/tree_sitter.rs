@@ -30,7 +30,6 @@ pub struct FunctionInfo {
     pub purpose: String,
     pub trait_impl: Option<String>,
     pub decorators: Vec<String>,
-    // ⭐ NEW FLAGS
     pub is_test: bool,
     pub is_trait_method: bool,
     pub is_trait_default: bool,
@@ -479,6 +478,39 @@ impl TreeSitterParser {
         false
     }
 
+    /// Scan a macro's flat token_tree for call-shaped patterns (identifier chains
+    /// immediately followed by a parenthesized token_tree). tree-sitter-rust does
+    /// not parse macro bodies into call_expression/scoped_identifier nodes — it
+    /// emits them as raw tokens — so calls made inside json!/println!/format!/
+    /// vec![...]/write!/assert!/etc. are otherwise invisible to the call graph.
+    fn scan_token_tree_for_calls(node: &Node, source: &str, calls: &mut Vec<String>) {
+        let mut buf = String::new();
+
+        for child in node.children(&mut node.walk()) {
+            let kind = child.kind();
+            let text = child.utf8_text(source.as_bytes()).unwrap_or("").trim();
+
+            if kind == "identifier" || kind == "self" || text == "Self" {
+                buf.push_str(text);
+            } else if text == "::" {
+                buf.push_str("::");
+            } else if kind == "token_tree" && text.starts_with('(') {
+                // A parenthesized group right after an identifier chain = a call
+                if !buf.is_empty() && !buf.ends_with("::") {
+                    calls.push(buf.clone());
+                }
+                buf.clear();
+                // Recurse into the call's arguments — they may contain calls too
+                Self::scan_token_tree_for_calls(&child, source, calls);
+            } else {
+                buf.clear();
+                if kind == "token_tree" {
+                    Self::scan_token_tree_for_calls(&child, source, calls);
+                }
+            }
+        }
+    }
+
     // ⭐ NEW: Check if this is a trait method definition
     fn is_trait_method(node: &Node, _source: &str) -> bool {
         let mut current = node.parent();
@@ -671,6 +703,14 @@ impl TreeSitterParser {
                 }
                 "index_expression" => {
                     calls.push("op::index".to_string());
+                }
+                "macro_invocation" => {
+                    if let Some(token_tree) = child
+                        .children(&mut child.walk())
+                        .find(|c| c.kind() == "token_tree")
+                    {
+                        Self::scan_token_tree_for_calls(&token_tree, source, calls);
+                    }
                 }
                 "binary_expression" => {
                     if let Some(op_node) = child.child_by_field_name("operator") {

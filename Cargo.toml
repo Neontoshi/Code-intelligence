@@ -105,6 +105,7 @@ path = "benches/compression.rs"
 default = ["ml", "cli"]
 ml = []
 cli = []
+advanced = []
 
 [[test]]
 name = "property_tests"
@@ -129,7 +130,7 @@ path = "tests/integration.rs"
 # Core CLI
 [[bin]]
 name = "ci"
-path = "src/bin/ci.rs"
+path = "src/bin/ci/main.rs"
 
 # Core Analysis
 [[bin]]

@@ -324,11 +324,12 @@ impl VerdictEngine {
         self
     }
 
-    pub fn with_model_thresholds(self, model: &DeadCodeClassifier) -> Self {
-        if let Some(calibration) = &model.calibration {
-            if calibration.temperature != 1.0 {}
-        }
-        self
+    fn find_dynamic_ref<'a>(&'a self, func: &FunctionNode) -> Option<&'a DynamicReference> {
+        self.dynamic_refs.as_ref()?.iter().find(|r| {
+            r.target_full_path.as_deref() == Some(func.full_path.as_str())
+                || r.target_function.as_deref() == Some(func.name.as_str())
+                || r.target_pattern.contains(&func.name)
+        })
     }
 
     /// Set the Git commit SHA
@@ -402,31 +403,36 @@ impl VerdictEngine {
         let mut evidence_sources = Vec::new();
         let mut static_score = 0.0;
 
-        // 1. Collect static signals
-        let static_signals = self.collect_static_signals(func, reachability);
-        for signal in &static_signals {
-            if signal.direction == SignalDirection::SupportsDead {
-                static_score += signal.weight;
-            } else if signal.direction == SignalDirection::SupportsAlive {
-                static_score -= signal.weight;
+        // Look up dynamic-ref match once, reuse for both signals and evidence sources
+        let matched_dynamic_ref = self.find_dynamic_ref(func);
+
+        // 1. Collect static signals (only when static analysis is enabled)
+        let normalized_static = if self.config.enable_static {
+            let static_signals =
+                self.collect_static_signals(func, reachability, matched_dynamic_ref);
+            for signal in &static_signals {
+                if signal.direction == SignalDirection::SupportsDead {
+                    static_score += signal.weight;
+                } else if signal.direction == SignalDirection::SupportsAlive {
+                    static_score -= signal.weight;
+                }
             }
-        }
-        signals.extend(static_signals);
+            signals.extend(static_signals);
 
-        // Track evidence sources from static analysis
-        evidence_sources.push(EvidenceSource::StaticReachability);
-        evidence_sources.push(EvidenceSource::CallGraph);
+            evidence_sources.push(EvidenceSource::StaticReachability);
+            evidence_sources.push(EvidenceSource::CallGraph);
 
-        // 2. Normalize static score
-        let total_weight: f64 = signals.iter().map(|s| s.weight).sum();
-        let normalized_static = if total_weight > 0.0 {
-            (static_score / total_weight + 1.0) / 2.0
+            let total_weight: f64 = signals.iter().map(|s| s.weight).sum();
+            if total_weight > 0.0 {
+                ((static_score / total_weight + 1.0) / 2.0).clamp(0.0, 1.0)
+            } else {
+                0.5
+            }
         } else {
-            0.5
+            0.5 // neutral — let ML carry the verdict when static analysis is off
         };
-        let normalized_static = normalized_static.clamp(0.0, 1.0);
 
-        // 3. ML prediction (if enabled)
+        // 2. ML prediction (if enabled)
         let ml_probability = if self.config.enable_ml {
             if let Some(model) = &self.ml_model {
                 use crate::analysis::training_data::FunctionFeatures;
@@ -486,40 +492,26 @@ impl VerdictEngine {
             None
         };
 
-        // 4. Dynamic references (if available)
-        if let Some(dynamic_refs) = &self.dynamic_refs {
-            let is_dynamically_referenced = dynamic_refs.iter().any(|r| {
-                r.target_full_path
-                    .as_ref()
-                    .map(|p| p == &func.full_path)
-                    .unwrap_or(false)
-                    || r.target_function
-                        .as_ref()
-                        .map(|f| f == &func.name)
-                        .unwrap_or(false)
-                    || r.target_pattern.contains(&func.name)
-            });
-
-            if is_dynamically_referenced {
-                evidence_sources.push(EvidenceSource::DynamicRefs);
-            }
+        // 3. Dynamic references — reuse the match found at the top of this function
+        if matched_dynamic_ref.is_some() {
+            evidence_sources.push(EvidenceSource::DynamicRefs);
         }
 
-        // 5. Combined score
+        // 4. Combined score
         let combined_score = if let Some(ml) = ml_probability {
             normalized_static * 0.6 + ml * 0.4
         } else {
             normalized_static
         };
 
-        // 6. Determine state from combined_score
+        // 5. Determine state from combined_score
         let state = VerdictState::from_score(
             combined_score,
             self.config.dead_threshold,
             self.config.alive_threshold,
         );
 
-        // 7. Determine label from state
+        // 6. Determine label from state
         let (label, confidence) = match state {
             VerdictState::DefinitelyDead | VerdictState::ProbablyDead => {
                 (TrainingLabel::Dead, combined_score)
@@ -532,7 +524,7 @@ impl VerdictEngine {
 
         let dead_probability = ml_probability;
 
-        // 8. Generate explanation
+        // 7. Generate explanation
         let explanation = self.generate_explanation(
             func,
             &signals,
@@ -558,7 +550,6 @@ impl VerdictEngine {
             provenance: self.provenance.clone(),
         }
     }
-
     pub fn evaluate_all(
         &self,
         call_graph: &CallGraph,
@@ -581,6 +572,7 @@ impl VerdictEngine {
         &self,
         func: &FunctionNode,
         reachability: &ReachabilityMap,
+        matched_dynamic_ref: Option<&DynamicReference>,
     ) -> Vec<Signal> {
         let mut signals = Vec::new();
 
@@ -676,70 +668,31 @@ impl VerdictEngine {
             });
         }
 
-        // Dynamic references signal - uses resolved targets when available
-        if let Some(dynamic_refs) = &self.dynamic_refs {
-            let is_dynamically_referenced = dynamic_refs.iter().any(|r| {
-                //  PRIORITY 1: Check if we resolved the full path
-                if let Some(ref target_path) = r.target_full_path {
-                    if target_path == &func.full_path {
-                        return true;
-                    }
-                }
-                //  PRIORITY 2: Check if the function name matches
-                if let Some(ref target_name) = r.target_function {
-                    if target_name == &func.name {
-                        return true;
-                    }
-                }
-                //  PRIORITY 3: Check if the pattern contains the function name (fallback)
-                r.target_pattern.contains(&func.name)
+        // Dynamic references signal — uses the match passed in from evaluate_function
+        if let Some(r) = matched_dynamic_ref {
+            let explanation = if r.resolved {
+                format!(
+                    "Dynamically referenced via {:?} (resolved to this function)",
+                    r.reference_type
+                )
+            } else {
+                format!(
+                    "Dynamically referenced via {:?} (unresolved target: '{}')",
+                    r.reference_type, r.target_pattern
+                )
+            };
+
+            signals.push(Signal {
+                name: "dynamic_reference".to_string(),
+                value: 1.0,
+                direction: SignalDirection::SupportsAlive,
+                weight: 0.4,
+                explanation,
             });
-
-            if is_dynamically_referenced {
-                // Find the specific reference that matched for better explanation
-                let matched_ref = dynamic_refs.iter().find(|r| {
-                    if let Some(ref target_path) = r.target_full_path {
-                        if target_path == &func.full_path {
-                            return true;
-                        }
-                    }
-                    if let Some(ref target_name) = r.target_function {
-                        if target_name == &func.name {
-                            return true;
-                        }
-                    }
-                    r.target_pattern.contains(&func.name)
-                });
-
-                let explanation = if let Some(r) = matched_ref {
-                    if r.resolved {
-                        format!(
-                            "Dynamically referenced via {:?} (resolved to this function)",
-                            r.reference_type
-                        )
-                    } else {
-                        format!(
-                            "Dynamically referenced via {:?} (unresolved target: '{}')",
-                            r.reference_type, r.target_pattern
-                        )
-                    }
-                } else {
-                    "Referenced dynamically (reflection/callback)".to_string()
-                };
-
-                signals.push(Signal {
-                    name: "dynamic_reference".to_string(),
-                    value: 1.0,
-                    direction: SignalDirection::SupportsAlive,
-                    weight: 0.4,
-                    explanation,
-                });
-            }
         }
 
         signals
     }
-
     fn generate_explanation(
         &self,
         _func: &FunctionNode,
