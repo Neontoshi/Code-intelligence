@@ -14,9 +14,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-// ============================================================================
 // OpenAI API Types
-// ============================================================================
 
 #[derive(Debug, Serialize)]
 struct OpenAIChatRequest {
@@ -105,9 +103,7 @@ struct OpenAIModel {
     owned_by: String,
 }
 
-// ============================================================================
 // OpenAI Provider
-// ============================================================================
 
 pub struct OpenAIProvider {
     client: Client,
@@ -154,9 +150,7 @@ impl OpenAIProvider {
     }
 }
 
-// ============================================================================
 // LLMProvider Implementation
-// ============================================================================
 
 #[async_trait]
 impl LLMProvider for OpenAIProvider {

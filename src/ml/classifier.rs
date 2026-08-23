@@ -5,9 +5,7 @@ use crate::ml::features::FeatureScaler;
 use crate::ml::CalibrationParams;
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
 // Linear Classifier
-// ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinearClassifier {
@@ -272,9 +270,7 @@ impl Default for LinearClassifier {
     }
 }
 
-// ============================================================================
 // Dead Code Classifier (Wrapper)
-// ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeadCodeClassifier {
@@ -437,9 +433,7 @@ impl Default for DeadCodeClassifier {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

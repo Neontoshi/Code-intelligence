@@ -463,9 +463,7 @@ pub fn features_by_category(category: &FeatureCategory) -> Vec<&'static FeatureD
     FEATURE_SCHEMA.get_by_category(category)
 }
 
-// ============================================================================
 // Feature Vector Builder
-// ============================================================================
 
 #[derive(Debug, Clone)]
 pub struct FeatureVectorBuilder {

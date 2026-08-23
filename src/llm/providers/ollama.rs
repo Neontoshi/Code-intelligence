@@ -14,9 +14,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-// ============================================================================
 // Ollama API Types
-// ============================================================================
 
 #[derive(Debug, Serialize)]
 struct OllamaChatRequest {
@@ -76,9 +74,7 @@ pub struct OllamaModel {
     size: u64,
 }
 
-// ============================================================================
 // Ollama Provider
-// ============================================================================
 
 pub struct OllamaProvider {
     client: Client,
@@ -212,9 +208,7 @@ impl OllamaProvider {
     }
 }
 
-// ============================================================================
 // LLMProvider Implementation
-// ============================================================================
 
 #[async_trait]
 impl LLMProvider for OllamaProvider {
@@ -394,9 +388,7 @@ impl LLMProvider for OllamaProvider {
     }
 }
 
-// ============================================================================
 // Phi-2 Specific Optimizations
-// ============================================================================
 
 impl OllamaProvider {
     /// Create a provider specifically configured for phi-2

@@ -7,9 +7,7 @@
 
 use crate::graph::call_graph::FunctionNode;
 
-// ============================================================================
 // System Prompts
-// ============================================================================
 
 /// System prompts for different roles
 pub mod system {
@@ -42,9 +40,7 @@ pub mod system {
         "You are a technical writer. Generate professional, well-structured documentation.";
 }
 
-// ============================================================================
 // Prompt Builders
-// ============================================================================
 
 /// Build prompts for various code analysis tasks
 pub struct PromptBuilder;
@@ -606,9 +602,7 @@ Panic Analysis:"#,
     }
 }
 
-// ============================================================================
 // Prompt Templates (Structured)
-// ============================================================================
 
 /// Pre-defined prompt templates with placeholders
 pub mod templates {
@@ -666,9 +660,7 @@ Documentation:
 "#;
 }
 
-// ============================================================================
 // Helpers
-// ============================================================================
 
 impl PromptBuilder {
     /// Apply a template with variables

@@ -15,9 +15,7 @@ pub use openai::OpenAIProvider;
 use crate::llm::{LLMError, LLMProvider, Result};
 use std::sync::Arc;
 
-// ============================================================================
 // Provider Types
-// ============================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ProviderType {
@@ -50,9 +48,7 @@ impl std::fmt::Display for ProviderType {
     }
 }
 
-// ============================================================================
 // Provider Configuration
-// ============================================================================
 
 #[derive(Debug, Clone)]
 pub struct ProviderConfig {
@@ -100,9 +96,7 @@ impl Default for ProviderConfig {
     }
 }
 
-// ============================================================================
 // Factory Functions
-// ============================================================================
 
 pub async fn create_provider(
     provider_type: ProviderType,

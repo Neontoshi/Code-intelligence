@@ -9,9 +9,7 @@ use crate::parser::tree_sitter::ParsedFile;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// ============================================================================
 // Code Understanding Engine
-// ============================================================================
 
 /// Main engine for LLM-powered code understanding
 #[derive(Clone)]
@@ -828,9 +826,7 @@ Provide analysis in JSON format:
     }
 }
 
-// ============================================================================
 // Supporting Types
-// ============================================================================
 
 /// A code issue detected by the LLM
 #[derive(Debug, Clone)]

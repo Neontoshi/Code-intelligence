@@ -1,8 +1,6 @@
 use crate::graph::call_graph::FunctionNode;
 
-// ============================================================================
 // Core Types
-// ============================================================================
 
 #[derive(Debug, Clone)]
 pub struct DeduplicationResult {
@@ -44,9 +42,7 @@ pub struct AccuracyMetrics {
     pub confidence_score: f64,
 }
 
-// ============================================================================
 // Analysis Results
-// ============================================================================
 
 #[derive(Debug, Clone)]
 pub struct ASTSignature {
@@ -82,9 +78,7 @@ pub struct FileContext {
     pub module_path: String,
 }
 
-// ============================================================================
 // Configuration
-// ============================================================================
 
 #[derive(Debug, Clone)]
 pub struct DedupConfig {

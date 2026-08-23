@@ -9,9 +9,7 @@ use petgraph::visit::EdgeRef;
 use std::collections::HashMap;
 use std::path::PathBuf; // ⭐ ADD THIS
 
-// ============================================================================
 // Unified Node Types
-// ============================================================================
 
 #[derive(Debug, Clone)]
 pub enum ProjectNode {
@@ -58,9 +56,7 @@ impl ProjectNode {
     }
 }
 
-// ============================================================================
 // Unified Edge Types
-// ============================================================================
 
 #[derive(Debug, Clone)]
 pub enum ProjectEdge {
@@ -99,9 +95,7 @@ impl ProjectEdge {
     }
 }
 
-// ============================================================================
 // Unified Project Graph
-// ============================================================================
 #[derive(Debug)]
 pub struct ProjectGraph {
     graph: DiGraph<ProjectNode, ProjectEdge>,
@@ -553,9 +547,7 @@ impl ProjectGraph {
         dist
     }
 }
-// ============================================================================
 // Builder for ProjectGraph
-// ============================================================================
 
 pub struct ProjectGraphBuilder {
     graph: ProjectGraph,

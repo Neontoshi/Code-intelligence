@@ -22,9 +22,7 @@ use futures::Stream;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-// ============================================================================
 // Core Types
-// ============================================================================
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LLMMessage {
@@ -127,9 +125,7 @@ impl GenerationOptions {
     }
 }
 
-// ============================================================================
 // Provider Trait
-// ============================================================================
 
 #[async_trait]
 pub trait LLMProvider: Send + Sync {
@@ -162,9 +158,7 @@ pub trait LLMProvider: Send + Sync {
     }
 }
 
-// ============================================================================
 // Error Types
-// ============================================================================
 
 #[derive(Debug, thiserror::Error)]
 pub enum LLMError {
@@ -204,9 +198,7 @@ impl From<LLMError> for String {
     }
 }
 
-// ============================================================================
 // Utility Functions
-// ============================================================================
 
 pub fn extract_json_from_response(response: &str) -> Result<serde_json::Value> {
     use regex::Regex;

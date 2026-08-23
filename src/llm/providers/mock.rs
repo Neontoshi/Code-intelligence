@@ -11,9 +11,7 @@ use futures::stream::{self, Stream, StreamExt};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-// ============================================================================
 // Mock Provider
-// ============================================================================
 
 /// A mock LLM provider for testing
 pub struct MockProvider {
@@ -149,9 +147,7 @@ impl Default for MockProvider {
     }
 }
 
-// ============================================================================
 // LLMProvider Implementation
-// ============================================================================
 
 #[async_trait]
 impl LLMProvider for MockProvider {
@@ -238,9 +234,7 @@ impl LLMProvider for MockProvider {
     }
 }
 
-// ============================================================================
 // Pre-configured Mock Providers
-// ============================================================================
 
 impl MockProvider {
     /// Create a mock provider with predefined responses for code analysis
@@ -284,9 +278,7 @@ impl MockProvider {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -36,9 +36,7 @@ use std::sync::Arc;
 use crate::analysis::training_data::FunctionFeatures;
 use crate::ml::duplicate_classifier::DuplicateClassifier;
 
-// ============================================================================
 // Union-Find for cluster merging
-// ============================================================================
 
 struct UnionFind {
     parent: Vec<usize>,
@@ -558,9 +556,7 @@ impl Default for Deduplicator {
     }
 }
 
-// ============================================================================
 // Report Generation (Delegates to ReportGenerator)
-// ============================================================================
 
 impl Deduplicator {
     pub fn report(&self, result: &DeduplicationResult) -> String {

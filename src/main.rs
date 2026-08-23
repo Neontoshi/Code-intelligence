@@ -253,9 +253,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ============================================================================
 // LLM Setup
-// ============================================================================
 
 async fn setup_llm(args: &Args) -> Result<Arc<dyn code_intelligence::llm::LLMProvider>, String> {
     // Check if we should use the connection string format
@@ -320,9 +318,7 @@ async fn setup_llm(args: &Args) -> Result<Arc<dyn code_intelligence::llm::LLMPro
     Ok(provider)
 }
 
-// ============================================================================
 // Help Text Extension
-// ============================================================================
 
 /// Print extended help for LLM options
 pub fn print_llm_help() {
