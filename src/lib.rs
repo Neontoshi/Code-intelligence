@@ -30,38 +30,51 @@ pub use analysis::dead_code::DeadCodeDetector;
 pub use analysis::dynamic_refs::{DynamicRefDetector, DynamicRefType, DynamicReference};
 pub use analysis::git_analysis::GitAnalyzer;
 pub use analysis::importance::ImportanceScorer;
+pub use analysis::outcomes::{OutcomeStats, OutcomeTracker, TrackedVerdict, VerdictOutcome};
 pub use analysis::roots::{
     ReachabilityAnalyzer, ReachabilityMap, RootDetectionConfig, RootDetector, RootSet,
 };
-// Re-export from verdict_source instead of verdict
+pub use analysis::service::{AnalysisService, AnalysisServiceConfig};
+pub use analysis::training_data::{TrainingDataCollector, TrainingExample, TrainingLabel};
 pub use analysis::verdict_source::state::{VerdictConfig, VerdictEngine, VerdictStats};
 pub use analysis::verdict_source::{
-    EvidenceSource, LabelSource, Signal, SignalDirection, Verdict, VerdictState,
+    EvidenceSource, Signal, SignalDirection, Verdict, VerdictState,
 };
+
 pub use engine::cache::FileCache;
 pub use engine::indexer::IndexBuilder;
 pub use engine::{
     AnalyzedProject, OptimizedProject, ParsedProject, Pipeline, PipelineConfig,
     ProjectIntelligence, RawProject,
 };
+
 pub use graph::call_graph::CallGraph;
 pub use graph::call_graph::FunctionNode;
 pub use graph::dependency_graph::DependencyGraph;
 pub use graph::import_graph::ImportGraph;
 pub use graph::type_graph::TypeGraph;
-pub use ml::calibration::{CalibratedModel, CalibrationMethod, CalibrationStats};
+
+pub use ml::calibration::{
+    CalibratedModel, CalibrationMethod, CalibrationParams, CalibrationStats,
+};
 pub use ml::classifier::DeadCodeClassifier;
+pub use ml::duplicate_classifier::{DuplicateClassifier, DuplicateExample, DuplicateLabel};
 pub use ml::model_serialization::{ModelPerformance, TrainingMetadata, VersionedModel};
+
 pub use optimize::chunk::ChunkStrategy;
 pub use optimize::dedup::Deduplicator;
 pub use optimize::SemanticCompressor;
 pub use optimize::TokenEstimator;
+
 pub use output::interactive::InteractiveGraph;
 pub use output::json::JsonOutput;
 pub use output::markdown::MarkdownOutput;
 pub use output::overview::OverviewGraph;
 pub use output::rag::RAGGenerator;
+
 pub use parser::comments::CommentAnalyzer;
 pub use parser::semantic::SemanticAnalyzer;
+pub use parser::tree_sitter::TreeSitterParser;
+
 pub use utils::hashing::HashUtils;
 pub use utils::parallel::ParallelUtils;

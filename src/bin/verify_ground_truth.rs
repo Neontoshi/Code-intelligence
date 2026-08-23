@@ -14,6 +14,7 @@ use code_intelligence::analysis::{
     roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector},
     training_data::TrainingLabel,
 };
+use code_intelligence::error::Result;
 use code_intelligence::graph::GraphMetrics;
 use code_intelligence::ml::classifier::DeadCodeClassifier;
 use code_intelligence::Pipeline;
@@ -73,7 +74,7 @@ pub struct VerificationSession {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let args = Args::parse();
 
     if !args.project_dir.is_dir() {
@@ -217,7 +218,7 @@ fn verify_with_git(
 fn verify_interactive(
     analysis: &code_intelligence::analysis::context::ProjectAnalysis,
     candidates: &[code_intelligence::analysis::verdict_source::Verdict],
-) -> Result<Vec<VerifiedEntry>, Box<dyn std::error::Error>> {
+) -> Result<Vec<VerifiedEntry>> {
     let mut verified = Vec::new();
     let mut idx = 0;
 
@@ -300,7 +301,7 @@ fn generate_review_file(
     analysis: &code_intelligence::analysis::context::ProjectAnalysis,
     candidates: &[code_intelligence::analysis::verdict_source::Verdict],
     output_path: &PathBuf,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     let mut markdown = String::new();
 
     markdown.push_str("# 🧹 Ground Truth Verification Review\n\n");

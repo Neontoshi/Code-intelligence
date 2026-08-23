@@ -6,6 +6,7 @@
 
 use clap::Parser;
 use code_intelligence::analysis::training_data::{TrainingExample, TrainingLabel};
+use code_intelligence::error::Result;
 use code_intelligence::ml::classifier::LinearClassifier;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -42,7 +43,7 @@ struct ModelResult {
     inference_time_ms: u64,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     println!("🧠 Model Comparison");
@@ -216,10 +217,7 @@ fn evaluate_classifier_full(
     }
 }
 
-fn save_results(
-    results: &[ModelResult],
-    output_dir: &PathBuf,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn save_results(results: &[ModelResult], output_dir: &PathBuf) -> Result<()> {
     let json_path = output_dir.join("model_comparison.json");
     std::fs::write(&json_path, serde_json::to_string_pretty(results)?)?;
     println!("\n📁 Results saved to: {:?}", json_path);

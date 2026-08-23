@@ -11,6 +11,7 @@ use crate::analysis::roots::{
     ReachabilityAnalyzer, ReachabilityMap, RootDetectionConfig, RootDetector, RootSet,
 };
 use crate::analysis::verdict_source::state::{Verdict, VerdictConfig, VerdictEngine};
+use crate::error::{err, Result};
 use crate::graph::call_graph::CallGraph;
 use crate::ml::classifier::DeadCodeClassifier;
 use crate::parser::tree_sitter::ParsedFile;
@@ -125,10 +126,13 @@ impl AnalysisService {
     }
 
     /// Load the ML model if configured
-    pub fn load_model(&mut self) -> Result<(), String> {
+    pub fn load_model(&mut self) -> Result<()> {
         if let Some(model_path) = &self.config.model_path {
             if !model_path.exists() {
-                return Err(format!("Model file not found: {:?}", model_path));
+                return Err(err::model(format!(
+                    "Model file not found: {:?}",
+                    model_path
+                )));
             }
 
             // Try loading versioned model first
@@ -170,7 +174,7 @@ impl AnalysisService {
                             }
                             Ok(())
                         }
-                        Err(e) => Err(format!("Failed to load model: {}", e)),
+                        Err(e) => Err(err::model(format!("Failed to load model: {}", e))),
                     }
                 }
             }
@@ -222,10 +226,7 @@ impl AnalysisService {
     }
 
     /// Run the full analysis
-    pub async fn analyze(
-        &mut self,
-        project_path: &PathBuf,
-    ) -> Result<AnalysisServiceResult, String> {
+    pub async fn analyze(&mut self, project_path: &PathBuf) -> Result<AnalysisServiceResult> {
         // 1. Load model if configured
         if self.config.model_path.is_some() {
             self.load_model()?;
@@ -236,7 +237,7 @@ impl AnalysisService {
             .pipeline
             .process_project(project_path)
             .await
-            .map_err(|e| format!("Pipeline failed: {}", e))?;
+            .map_err(|e| err::analysis(format!("Pipeline failed: {}", e)))?;
 
         let call_graph = analysis.call_graph.clone();
         let files = analysis.files.clone();

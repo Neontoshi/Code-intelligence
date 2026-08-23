@@ -1,14 +1,10 @@
 // src/bin/hard_negative_dataset.rs
 
-//! Hard-negative dataset generation
-//!
-//! This tool creates a dataset of functions that LOOK dead but are actually alive.
-//! These are the most valuable training examples for improving the model.
-
 use clap::Parser;
 use code_intelligence::analysis::dead_code::filters::is_never_dead;
 use code_intelligence::analysis::roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector};
 use code_intelligence::analysis::training_data::TrainingExample;
+use code_intelligence::error::Result;
 use code_intelligence::graph::GraphMetrics;
 use code_intelligence::Pipeline;
 use serde::{Deserialize, Serialize};
@@ -76,7 +72,7 @@ pub struct HardNegative {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let args = Args::parse();
 
     if !args.project_dir.is_dir() {

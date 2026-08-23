@@ -7,6 +7,7 @@
 
 use clap::Parser;
 use code_intelligence::analysis::training_data::{TrainingExample, TrainingLabel};
+use code_intelligence::error::Result;
 use code_intelligence::ml::classifier::DeadCodeClassifier;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -62,7 +63,7 @@ pub struct TemporalResult {
     pub train_accuracy: f64,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     println!("📊 Temporal Evaluation");
@@ -424,10 +425,7 @@ fn evaluate(classifier: &DeadCodeClassifier, examples: &[TrainingExample]) -> Ev
 }
 
 /// Generate a markdown report from results
-fn generate_markdown_report(
-    results: &[TemporalResult],
-    output_dir: &PathBuf,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn generate_markdown_report(results: &[TemporalResult], output_dir: &PathBuf) -> Result<()> {
     let mut markdown = String::new();
 
     markdown.push_str("# 📊 Temporal Generalization Report\n\n");

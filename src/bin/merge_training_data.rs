@@ -1,9 +1,10 @@
 // src/bin/merge_training_data.rs
 
 use code_intelligence::analysis::training_data::TrainingExample;
+use code_intelligence::error::Result;
 use std::path::PathBuf;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 3 {

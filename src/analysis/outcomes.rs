@@ -1,6 +1,6 @@
 use crate::analysis::training_data::FunctionFeatures;
+use crate::analysis::verdict_source::LabelSource;
 use crate::analysis::{TrainingExample, TrainingLabel};
-use crate::LabelSource;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};

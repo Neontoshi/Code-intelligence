@@ -5,6 +5,7 @@
 
 use clap::Parser;
 use code_intelligence::analysis::training_data::{TrainingExample, TrainingLabel};
+use code_intelligence::error::Result;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -23,7 +24,7 @@ struct Args {
     output: PathBuf,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     // Check if data file exists

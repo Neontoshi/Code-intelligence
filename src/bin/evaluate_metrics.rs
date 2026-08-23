@@ -1,7 +1,7 @@
 // src/bin/evaluate_metrics.rs
-
 use clap::Parser;
 use code_intelligence::analysis::training_data::{TrainingExample, TrainingLabel};
+use code_intelligence::error::{err, Result};
 use code_intelligence::ml::classifier::DeadCodeClassifier;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -30,11 +30,11 @@ struct Args {
     #[arg(long, default_value = "10,25,50,100")]
     top_k: String,
 
-    ///  Generate model manifest file
+    /// Generate model manifest file
     #[arg(long)]
     manifest: bool,
 
-    ///  Output directory for manifest
+    /// Output directory for manifest
     #[arg(long, default_value = "models")]
     manifest_dir: PathBuf,
 
@@ -101,7 +101,7 @@ pub struct CalibrationBin {
     pub avg_confidence: f64,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     println!("📊 Model Evaluation");
@@ -109,7 +109,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load model
     println!("📊 Loading model from: {:?}", args.model);
-    let classifier = DeadCodeClassifier::load(&*args.model.to_string_lossy())?;
+    let classifier = DeadCodeClassifier::load(&*args.model.to_string_lossy())
+        .map_err(|e| err::model(format!("Failed to load model: {}", e)))?;
     println!("   Model loaded successfully");
 
     // Load test data
@@ -141,7 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         generate_markdown_report(&metrics, &args.output)?;
     }
 
-    //  Generate manifest if requested
+    // Generate manifest if requested
     if args.manifest {
         generate_manifest(&metrics, &args)?;
     }
@@ -527,10 +528,7 @@ fn print_summary(metrics: &EvaluationMetrics, _detailed: bool) {
     }
 }
 
-fn generate_markdown_report(
-    metrics: &EvaluationMetrics,
-    output_path: &PathBuf,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn generate_markdown_report(metrics: &EvaluationMetrics, output_path: &PathBuf) -> Result<()> {
     let mut markdown = String::new();
 
     markdown.push_str("# 📊 Model Evaluation Report\n\n");
@@ -627,10 +625,7 @@ fn generate_markdown_report(
 }
 
 ///  Generate a model manifest file
-fn generate_manifest(
-    metrics: &EvaluationMetrics,
-    args: &Args,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn generate_manifest(metrics: &EvaluationMetrics, args: &Args) -> Result<()> {
     use std::collections::HashMap;
 
     let mut manifest: HashMap<String, serde_json::Value> = HashMap::new();
@@ -741,10 +736,7 @@ fn generate_manifest(
 }
 
 /// ⭐ NEW: Generate an evaluation report from metrics
-fn generate_evaluation_report(
-    metrics: &EvaluationMetrics,
-    args: &Args,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn generate_evaluation_report(metrics: &EvaluationMetrics, args: &Args) -> Result<()> {
     // Create report directory
     fs::create_dir_all(&args.report_dir)?;
 

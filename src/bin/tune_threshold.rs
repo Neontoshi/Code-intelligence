@@ -5,6 +5,7 @@
 use clap::Parser;
 use code_intelligence::analysis::training_data::{TrainingExample, TrainingLabel};
 use code_intelligence::bin::common::metrics::EvaluationMetrics;
+use code_intelligence::error::Result;
 use code_intelligence::ml::classifier::DeadCodeClassifier;
 use std::path::PathBuf;
 
@@ -23,7 +24,7 @@ struct Args {
     target_precision: f64,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     println!("🔬 Loading model from: {:?}", args.model);

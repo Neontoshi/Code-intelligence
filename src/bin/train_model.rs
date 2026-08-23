@@ -2,6 +2,7 @@
 
 use clap::Parser;
 use code_intelligence::analysis::training_data::TrainingLabel;
+use code_intelligence::error::{err, Result};
 use code_intelligence::ml::classifier::DeadCodeClassifier;
 use std::path::PathBuf;
 
@@ -29,7 +30,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let args = Args::parse();
 
     println!("🔬 Training Model with Repository-Level Split");
@@ -121,7 +122,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Train model on TRAINING set only
     println!("\n🧠 Training model on training set...");
     let mut classifier = DeadCodeClassifier::new();
-    classifier.train(&train_examples)?;
+    classifier
+        .train(&train_examples)
+        .map_err(|e| err::training(e))?;
 
     // Print feature importance
     classifier.print_feature_importance();
@@ -200,7 +203,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             versioned.set_calibration(calibration);
         }
         let versioned_path = args.output.with_extension("v2.json");
-        versioned.save(&versioned_path.to_string_lossy())?;
+        versioned
+            .save(&versioned_path.to_string_lossy())
+            .map_err(|e| err::model(e))?;
         println!("\n✅ Versioned model saved to: {:?}", versioned_path);
         println!("   Threshold: {:.2}", versioned.get_threshold());
         if let Some(perf) = versioned.get_performance() {
@@ -209,7 +214,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Also save legacy format for backward compatibility
-    classifier.save(&*args.output.to_string_lossy())?;
+    classifier
+        .save(&*args.output.to_string_lossy())
+        .map_err(|e| err::model(e.to_string()))?;
     println!("✅ Legacy model saved to: {:?}", args.output);
 
     // Show predictions on test set

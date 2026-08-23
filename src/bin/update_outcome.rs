@@ -2,6 +2,7 @@
 
 use clap::{Parser, Subcommand};
 use code_intelligence::analysis::OutcomeTracker;
+use code_intelligence::error::{err, Result};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -37,18 +38,22 @@ enum Command {
     Stats,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     let mut tracker = OutcomeTracker::new(&args.project_dir);
 
     match args.command {
         Command::Removed { id, commit } => {
-            tracker.mark_removed(&id, commit.as_deref())?;
+            tracker
+                .mark_removed(&id, commit.as_deref())
+                .map_err(|e| err::internal(e))?;
             println!("✅ Marked {} as removed", id);
         }
         Command::FalsePositive { id, reason } => {
-            tracker.mark_false_positive(&id, &reason)?;
+            tracker
+                .mark_false_positive(&id, &reason)
+                .map_err(|e| err::internal(e))?;
             println!("✅ Marked {} as false positive: {}", id, reason);
         }
         Command::List => {

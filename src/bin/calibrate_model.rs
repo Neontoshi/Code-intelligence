@@ -4,6 +4,7 @@
 
 use clap::Parser;
 use code_intelligence::analysis::training_data::TrainingExample;
+use code_intelligence::error::{err, Result};
 use code_intelligence::ml::calibration::CalibratedModel;
 use code_intelligence::ml::calibration::CalibrationMethod;
 use code_intelligence::ml::classifier::DeadCodeClassifier;
@@ -28,7 +29,7 @@ struct Args {
     method: String,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     println!("🔬 Model Calibration");
@@ -36,9 +37,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load model
     println!("📊 Loading model from: {:?}", args.model);
-    let classifier = DeadCodeClassifier::load(&*args.model.to_string_lossy())?;
+    let classifier = DeadCodeClassifier::load(&*args.model.to_string_lossy())
+        .map_err(|e| err::model(e.to_string()))?;
 
-    let model = classifier.model.ok_or("No model found")?;
+    let model = classifier
+        .model
+        .ok_or_else(|| err::model("No model found"))?;
 
     // Load validation data
     println!("📊 Loading validation data from: {:?}", args.val_data);
@@ -53,9 +57,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "histogram" => CalibrationMethod::HistogramBinning,
         "none" => CalibrationMethod::None,
         _ => {
-            eprintln!("Unknown method: {}", args.method);
-            eprintln!("Available: temperature, histogram, none");
-            std::process::exit(1);
+            return Err(err::config(format!(
+                "Unknown method: {}. Available: temperature, histogram, none",
+                args.method
+            )));
         }
     };
 
@@ -70,7 +75,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut new_classifier = DeadCodeClassifier::new();
     new_classifier.model = Some(calibrated.classifier);
-    new_classifier.save(&*args.output.to_string_lossy())?;
+    new_classifier
+        .save(&*args.output.to_string_lossy())
+        .map_err(|e| err::model(e.to_string()))?;
     println!("\n✅ Calibrated model saved to: {:?}", args.output);
 
     Ok(())

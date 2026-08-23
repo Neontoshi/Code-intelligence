@@ -1,5 +1,6 @@
 // src/bin/train_duplicate_model.rs
 
+use code_intelligence::error::Result;
 use code_intelligence::{
     analysis::training_data::{FunctionFeatures, TrainingExample},
     graph::call_graph::FunctionNode,
@@ -17,7 +18,7 @@ fn get_similarity_score(a: &FunctionNode, b: &FunctionNode) -> f64 {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {

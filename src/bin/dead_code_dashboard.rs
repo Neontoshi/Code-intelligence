@@ -1,10 +1,10 @@
 // src/bin/dead_code_dashboard.rs
-
 mod dashboard_ui;
 
 use code_intelligence::analysis::dead_code::DeadCodeAnalysis;
 use code_intelligence::analysis::explainability::ExplainabilityEngine;
 use code_intelligence::analysis::git_analysis::GitAnalyzer;
+use code_intelligence::error::{err, Result};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -163,14 +163,16 @@ impl App {
         }
     }
 
-    fn save_decision(&self, decision: &DashboardDecision) -> Result<(), String> {
+    fn save_decision(&self, decision: &DashboardDecision) -> Result<()> {
         let path = self.project_path.join(".code-intelligence-decisions.json");
         let mut decisions = self.load_decisions();
         decisions.push(decision.clone());
 
         let json = serde_json::to_string_pretty(&decisions)
-            .map_err(|e| format!("Failed to serialize decisions: {}", e))?;
-        std::fs::write(&path, json).map_err(|e| format!("Failed to write decisions file: {}", e))
+            .map_err(|e| err::internal(format!("Failed to serialize decisions: {}", e)))?;
+        std::fs::write(&path, json)
+            .map_err(|e| err::internal(format!("Failed to write decisions file: {}", e)))?;
+        Ok(())
     }
 
     fn get_analysis_id(&self) -> String {
@@ -391,7 +393,7 @@ impl App {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let path = if args.len() >= 2 {
         PathBuf::from(&args[1])
@@ -399,23 +401,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         PathBuf::from(".")
     };
 
-    enable_raw_mode()?;
+    enable_raw_mode().map_err(|e| err::internal(format!("Failed to enable raw mode: {}", e)))?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)
+        .map_err(|e| err::internal(format!("Failed to setup terminal: {}", e)))?;
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = Terminal::new(backend)
+        .map_err(|e| err::internal(format!("Failed to create terminal: {}", e)))?;
 
     let mut app = App::new(path.clone());
     app.load_data(path);
     let res = run_app(&mut terminal, &mut app);
 
-    disable_raw_mode()?;
+    disable_raw_mode().map_err(|e| err::internal(format!("Failed to disable raw mode: {}", e)))?;
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
+    )
+    .map_err(|e| err::internal(format!("Failed to restore terminal: {}", e)))?;
+    terminal
+        .show_cursor()
+        .map_err(|e| err::internal(format!("Failed to show cursor: {}", e)))?;
 
     if let Err(err) = res {
         println!("{:?}", err);
@@ -423,7 +430,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// UI Rendering (thin wrapper that calls dashboard_ui)
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<()> {
     terminal.clear()?;
     loop {

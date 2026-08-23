@@ -1,9 +1,10 @@
 use code_intelligence::analysis::training_data::TrainingExample;
 use code_intelligence::analysis::verdict_source::label_source::LabelSource;
+use code_intelligence::error::{err, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let training_dir = PathBuf::from("training_data");
 
     // Create output directory if it doesn't exist
@@ -301,10 +302,7 @@ fn deduplicate_examples(by_repo: &HashMap<String, Vec<TrainingExample>>) -> Vec<
     deduped
 }
 
-fn parse_legacy_json_file(
-    data: &str,
-    repo_name: &str,
-) -> Result<Vec<TrainingExample>, Box<dyn std::error::Error>> {
+fn parse_legacy_json_file(data: &str, repo_name: &str) -> Result<Vec<TrainingExample>> {
     use serde_json::Value;
 
     let json: Vec<Value> = serde_json::from_str(data)?;
@@ -323,7 +321,7 @@ fn parse_legacy_json_file(
 fn convert_legacy_to_training_example(
     item: serde_json::Value,
     repo_name: &str,
-) -> Result<TrainingExample, String> {
+) -> Result<TrainingExample> {
     use code_intelligence::analysis::training_data::{FunctionFeatures, TrainingLabel};
 
     // Extract fields with defaults
@@ -472,8 +470,8 @@ fn convert_legacy_to_training_example(
 }
 
 // ⭐ NEW: Parse legacy single line
-fn parse_legacy_example(line: &str) -> Result<TrainingExample, String> {
-    let value: serde_json::Value =
-        serde_json::from_str(line).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+fn parse_legacy_example(line: &str) -> Result<TrainingExample> {
+    let value: serde_json::Value = serde_json::from_str(line)
+        .map_err(|e| err::internal(format!("Failed to parse JSON: {}", e)))?;
     convert_legacy_to_training_example(value, "legacy")
 }

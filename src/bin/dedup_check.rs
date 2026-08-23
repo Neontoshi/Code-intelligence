@@ -1,12 +1,15 @@
 // src/bin/dedup_check.rs
 
 use code_intelligence::{
-    ml::duplicate_classifier::DuplicateClassifier, optimize::Deduplicator, Pipeline,
+    error::{err, Result},
+    ml::duplicate_classifier::DuplicateClassifier,
+    optimize::Deduplicator,
+    Pipeline,
 };
 use std::path::PathBuf;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
@@ -16,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("  dedup_check ~/Documents/Kyma");
         eprintln!("  dedup_check . --threshold 0.80");
         eprintln!("  dedup_check . --duplicate-model models/duplicate_model.bin");
-        std::process::exit(1);
+        return Err(err::config("Missing project path argument"));
     }
 
     let project_path = PathBuf::from(&args[1]);
@@ -29,11 +32,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match args[i].as_str() {
             "--threshold" | "-t" => {
                 if i + 1 < args.len() {
-                    threshold = args[i + 1].parse().unwrap_or(0.85);
+                    threshold = args[i + 1]
+                        .parse()
+                        .map_err(|e| err::config(format!("Invalid threshold: {}", e)))?;
                     i += 2;
                 } else {
-                    eprintln!("Error: --threshold requires a float value between 0.0 and 1.0");
-                    std::process::exit(1);
+                    return Err(err::config(
+                        "--threshold requires a float value between 0.0 and 1.0",
+                    ));
                 }
             }
             "--duplicate-model" | "-m" => {
@@ -41,20 +47,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     model_path = Some(PathBuf::from(&args[i + 1]));
                     i += 2;
                 } else {
-                    eprintln!("Error: --duplicate-model requires a file path");
-                    std::process::exit(1);
+                    return Err(err::config("--duplicate-model requires a file path"));
                 }
             }
             _ => {
-                eprintln!("Unknown argument: {}", args[i]);
-                std::process::exit(1);
+                return Err(err::config(format!("Unknown argument: {}", args[i])));
             }
         }
     }
 
     if !project_path.is_dir() {
-        eprintln!("Error: {} is not a directory", project_path.display());
-        std::process::exit(1);
+        return Err(err::analysis(format!(
+            "{} is not a directory",
+            project_path.display()
+        )));
     }
 
     println!("🔍 Analyzing project: {:?}\n", project_path);

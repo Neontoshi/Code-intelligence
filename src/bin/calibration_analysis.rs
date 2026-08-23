@@ -1,12 +1,8 @@
 // src/bin/calibrate_with_metrics.rs
 
-//! Model calibration with comprehensive metrics
-//!
-//! This tool calibrates the model and provides detailed calibration
-//! metrics including reliability diagrams.
-
 use clap::Parser;
 use code_intelligence::analysis::training_data::{TrainingExample, TrainingLabel};
+use code_intelligence::error::{err, Result};
 use code_intelligence::ml::calibration::{CalibratedModel, CalibrationMethod};
 use code_intelligence::ml::classifier::DeadCodeClassifier;
 use serde::{Deserialize, Serialize};
@@ -72,7 +68,7 @@ pub struct CalibrationBinDetail {
     pub calibration_error: f64,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     println!("🔬 Model Calibration with Metrics");
@@ -80,8 +76,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load model
     println!("📊 Loading model from: {:?}", args.model);
-    let classifier = DeadCodeClassifier::load(&*args.model.to_string_lossy())?;
-    let model = classifier.model.ok_or("No model found")?;
+    let classifier = DeadCodeClassifier::load(&*args.model.to_string_lossy())
+        .map_err(|e| err::model(e.to_string()))?;
+    let model = classifier
+        .model
+        .ok_or_else(|| err::model("No model found"))?;
     println!("   Model loaded successfully");
 
     // Load validation data
@@ -268,10 +267,7 @@ fn print_metrics(metrics: &CalibrationMetrics) {
     }
 }
 
-fn generate_markdown_report(
-    report: &CalibrationReport,
-    output_dir: &PathBuf,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn generate_markdown_report(report: &CalibrationReport, output_dir: &PathBuf) -> Result<()> {
     let mut markdown = String::new();
 
     markdown.push_str("# 🔬 Calibration Report\n\n");

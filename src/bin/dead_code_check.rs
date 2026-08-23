@@ -1,7 +1,5 @@
 // src/bin/dead_code_check.rs
 
-// src/bin/dead_code_check.rs
-
 use clap::Parser;
 use code_intelligence::analysis::dead_code::DeadCodeAnalyzer;
 use code_intelligence::analysis::dynamic_refs::DynamicRefDetector;
@@ -14,6 +12,7 @@ use code_intelligence::bin::common::error_handler::{ErrorHandler, ErrorSeverity}
 use code_intelligence::bin::common::exit_codes::ExitCode;
 use code_intelligence::bin::common::monitor::MetricsCollector;
 use code_intelligence::bin::common::reporter::Reporter;
+use code_intelligence::error::{err, Result};
 use code_intelligence::graph::GraphMetrics;
 use code_intelligence::ml::classifier::DeadCodeClassifier;
 use code_intelligence::Pipeline;
@@ -86,7 +85,7 @@ fn get_current_commit(project_dir: &Path) -> String {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let args = Args::parse();
     let handler = ErrorHandler::new(args.verbose, false);
 
@@ -96,9 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// src/bin/dead_code_check.rs
-
-async fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+async fn run(args: &Args) -> Result<()> {
     // Initialize metrics collector
     let metrics = if args.metrics {
         Some(Arc::new(MetricsCollector::new()))
@@ -650,9 +647,8 @@ async fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         reporter.print_report();
     }
 
-    // Save report if output specified
     if let Some(output_path) = &args.output_report {
-        let json = reporter.to_json()?;
+        let json = reporter.to_json().map_err(|e| err::internal(e))?;
         std::fs::write(output_path, json)?;
         println!("📄 Report saved to: {:?}", output_path);
     }

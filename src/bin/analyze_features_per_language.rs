@@ -1,11 +1,12 @@
 // src/bin/analyze_features_per_language.rs
 
 use code_intelligence::analysis::training_data::{TrainingExample, TrainingLabel};
+use code_intelligence::error::Result;
 use code_intelligence::ml::feature_schema::FEATURE_SCHEMA;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     let data_file = if args.len() >= 2 {

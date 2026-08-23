@@ -11,6 +11,7 @@ use crate::engine::incremental::{FileTracker, IncrementalResult, RebuildScope};
 use crate::engine::indexer::IndexBuilder;
 use crate::engine::llm_analysis::{LLMAnalysis, LLMAnalyzer};
 use crate::engine::stages::{AnalyzedProject, OptimizedProject, ParsedProject, RawProject};
+use crate::error::{err, Result};
 use crate::graph::call_graph::CallGraph;
 use crate::graph::project_graph::ProjectGraphBuilder;
 use crate::graph::traits::GraphMetrics;
@@ -202,7 +203,7 @@ impl Pipeline {
         self.last_build_summary.take()
     }
 
-    pub async fn with_ollama_phi2(mut self) -> Result<Self, String> {
+    pub async fn with_ollama_phi2(mut self) -> Result<Self> {
         match create_ollama_phi2().await {
             Ok(provider) => {
                 self.llm_provider = Some(provider.clone());
@@ -395,10 +396,7 @@ impl Pipeline {
             .build()
     }
 
-    pub async fn process_project(
-        &mut self,
-        root: &Path,
-    ) -> Result<ProjectAnalysis, Box<dyn std::error::Error>> {
+    pub async fn process_project(&mut self, root: &Path) -> Result<ProjectAnalysis> {
         let start_time = std::time::Instant::now();
         let project_hash = self.cache.hash_content(&format!("{:?}", root));
 
@@ -503,7 +501,7 @@ impl Pipeline {
             let engine = self
                 .code_understanding
                 .as_mut()
-                .ok_or_else(|| "LLM engine not initialized".to_string())?;
+                .ok_or_else(|| err::analysis("LLM engine not initialized"))?;
             let analysis = LLMAnalyzer::analyze(engine, &call_graph, &optimized.files).await;
             analysis.ok()
         } else {
@@ -523,15 +521,13 @@ impl Pipeline {
 
         Ok(analysis)
     }
+
     fn load_from_cache(&self, _project_hash: &str) -> Option<ProjectAnalysis> {
         // Implementation to load cached analysis
         None // Placeholder
     }
 
-    pub async fn process_project_with_git(
-        &mut self,
-        root: &Path,
-    ) -> Result<ProjectAnalysis, Box<dyn std::error::Error>> {
+    pub async fn process_project_with_git(&mut self, root: &Path) -> Result<ProjectAnalysis> {
         let mut intelligence = self.process_project(root).await?;
 
         if self.config.enable_git {
@@ -571,7 +567,7 @@ impl Pipeline {
         project_hash: &str,
         root: &Path,
         analysis: &ProjectAnalysis,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<()> {
         if let Some(cache_mgr) = &self.analysis_cache {
             let file_entries = self.collect_file_hashes(root);
 
@@ -599,11 +595,10 @@ impl Pipeline {
         Ok(())
     }
 
-    pub fn check_memory(&self) -> Result<(), String> {
+    pub fn check_memory(&self) -> Result<()> {
         if let Some(limit_mb) = self.config.max_memory_mb {
             let current = self.get_current_memory_usage_mb();
 
-            // Log warning at 85%
             if current > limit_mb as f64 * 0.85 {
                 eprintln!(
                     "⚠️ Memory usage {:.1}MB is approaching limit {}MB ({}%)",
@@ -613,21 +608,19 @@ impl Pipeline {
                 );
             }
 
-            // Error at 95%
             if current > limit_mb as f64 * 0.95 {
-                return Err(format!(
+                return Err(err::analysis(format!(
                     "Memory limit {}MB nearly exceeded (current: {:.1}MB). \
                      Try reducing --max-files or --max-file-size",
                     limit_mb, current
-                ));
+                )));
             }
 
-            // Hard limit
             if current > limit_mb as f64 {
-                return Err(format!(
+                return Err(err::analysis(format!(
                     "Memory limit {}MB exceeded (current: {:.1}MB)",
                     limit_mb, current
-                ));
+                )));
             }
         }
         Ok(())

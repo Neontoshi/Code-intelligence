@@ -2,12 +2,13 @@
 
 use code_intelligence::analysis::roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector};
 use code_intelligence::analysis::training_data::{TrainingDataCollector, TrainingLabel};
+use code_intelligence::error::Result;
 use code_intelligence::graph::GraphMetrics;
 use code_intelligence::Pipeline;
 use std::path::PathBuf;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let path = if args.len() >= 2 {
         PathBuf::from(&args[1])

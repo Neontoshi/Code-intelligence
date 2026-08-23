@@ -1,257 +1,91 @@
 // src/error.rs
 
-//! Error taxonomy for the code-intelligence engine
+//! Error handling for code-intelligence
 //!
-//! This module defines all error types used throughout the codebase.
+//! This module provides a unified error handling strategy using `anyhow`.
+//! All library functions should return `Result<T, anyhow::Error>`.
+//! CLI binaries convert to exit codes at the top level.
 
 use std::path::PathBuf;
-use thiserror::Error;
 
-/// Main error type for the code-intelligence engine
-#[derive(Error, Debug)]
-pub enum CodeIntelError {
-    // ============================================================
-    // Parse Errors
-    // ============================================================
-    #[error("Failed to parse file: {path} - {source}")]
-    ParseError {
+/// Main Result type for the code-intelligence library
+pub type Result<T> = anyhow::Result<T>;
+
+/// Common error helpers for creating errors
+pub mod err {
+    use super::*;
+
+    /// Create a parse error
+    pub fn parse(
         path: PathBuf,
-        source: Box<dyn std::error::Error + Send + Sync>,
-    },
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> anyhow::Error {
+        anyhow::anyhow!("Failed to parse file {}: {}", path.display(), source)
+    }
 
-    #[error("Unsupported language: {lang}")]
-    UnsupportedLanguage { lang: String },
+    /// Create a graph error
+    pub fn graph(message: impl Into<String>) -> anyhow::Error {
+        anyhow::anyhow!("Graph error: {}", message.into())
+    }
 
-    #[error("Failed to parse tree-sitter: {source}")]
-    TreeSitterError {
-        #[from]
-        source: tree_sitter::LanguageError,
-    },
+    /// Create a model error
+    pub fn model(message: impl Into<String>) -> anyhow::Error {
+        anyhow::anyhow!("Model error: {}", message.into())
+    }
 
-    // ============================================================
-    // Graph Errors
-    // ============================================================
-    #[error("Call graph error: {message}")]
-    GraphError { message: String },
+    /// Create a config error
+    pub fn config(message: impl Into<String>) -> anyhow::Error {
+        anyhow::anyhow!("Configuration error: {}", message.into())
+    }
 
-    #[error("Cycle detected in graph: {nodes:?}")]
-    CycleDetected { nodes: Vec<String> },
+    /// Create an IO error with context
+    pub fn io(
+        path: PathBuf,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> anyhow::Error {
+        anyhow::anyhow!("IO error on {}: {}", path.display(), source)
+    }
 
-    #[error("Node not found: {node}")]
-    NodeNotFound { node: String },
+    /// Create an analysis error
+    pub fn analysis(message: impl Into<String>) -> anyhow::Error {
+        anyhow::anyhow!("Analysis error: {}", message.into())
+    }
 
-    // ============================================================
-    // Model Errors
-    // ============================================================
-    #[error("Model error: {message}")]
-    ModelError { message: String },
+    /// Create an LLM error
+    pub fn llm(message: impl Into<String>) -> anyhow::Error {
+        anyhow::anyhow!("LLM error: {}", message.into())
+    }
 
-    #[error("Model file not found: {path}")]
-    ModelNotFound { path: PathBuf },
+    /// Create a training error
+    pub fn training(message: impl Into<String>) -> anyhow::Error {
+        anyhow::anyhow!("Training error: {}", message.into())
+    }
 
-    #[error("Model schema mismatch: expected {expected}, got {got}")]
-    ModelSchemaMismatch { expected: usize, got: usize },
+    /// Create a feature extraction error
+    pub fn feature(message: impl Into<String>) -> anyhow::Error {
+        anyhow::anyhow!("Feature error: {}", message.into())
+    }
 
-    #[error("Model version mismatch: {message}")]
-    ModelVersionMismatch { message: String },
+    /// Create a dataset error
+    pub fn dataset(message: impl Into<String>) -> anyhow::Error {
+        anyhow::anyhow!("Dataset error: {}", message.into())
+    }
 
-    // ============================================================
-    // Dataset Errors
-    // ============================================================
-    #[error("Dataset error: {message}")]
-    DatasetError { message: String },
+    /// Create a cache error
+    pub fn cache(message: impl Into<String>) -> anyhow::Error {
+        anyhow::anyhow!("Cache error: {}", message.into())
+    }
 
-    #[error("Missing repository ID for example: {function}")]
-    MissingRepositoryId { function: String },
+    /// Create a git error
+    pub fn git(message: impl Into<String>) -> anyhow::Error {
+        anyhow::anyhow!("Git error: {}", message.into())
+    }
 
-    #[error("Dataset split error: {message}")]
-    SplitError { message: String },
-
-    // ============================================================
-    // Cache Errors
-    // ============================================================
-    #[error("Cache error: {message}")]
-    CacheError { message: String },
-
-    #[error("Cache miss: {key}")]
-    CacheMiss { key: String },
-
-    #[error("Cache corruption: {path}")]
-    CacheCorruption { path: PathBuf },
-
-    // ============================================================
-    // Config Errors
-    // ============================================================
-    #[error("Config error: {message}")]
-    ConfigError { message: String },
-
-    #[error("Config file not found: {path}")]
-    ConfigNotFound { path: PathBuf },
-
-    #[error("Invalid config value: {key} = {value}")]
-    InvalidConfigValue { key: String, value: String },
-
-    // ============================================================
-    // Git Errors
-    // ============================================================
-    #[error("Git error: {message}")]
-    GitError { message: String },
-
-    #[error("Not a git repository: {path}")]
-    NotGitRepo { path: PathBuf },
-
-    // ============================================================
-    // IO Errors
-    // ============================================================
-    #[error("IO error: {source}")]
-    IoError {
-        #[from]
-        source: std::io::Error,
-    },
-
-    #[error("File not found: {path}")]
-    FileNotFound { path: PathBuf },
-
-    #[error("Permission denied: {path}")]
-    PermissionDenied { path: PathBuf },
-
-    // ============================================================
-    // Analysis Errors
-    // ============================================================
-    #[error("Analysis error: {message}")]
-    AnalysisError { message: String },
-
-    #[error("Analysis timeout: {duration}s exceeded")]
-    AnalysisTimeout { duration: u64 },
-
-    #[error("Analysis cancelled")]
-    AnalysisCancelled,
-
-    #[error("Memory limit exceeded: {limit}MB")]
-    MemoryLimitExceeded { limit: usize },
-
-    // ============================================================
-    // Serialization Errors
-    // ============================================================
-    #[error("Serialization error: {source}")]
-    SerializationError {
-        #[from]
-        source: serde_json::Error,
-    },
-
-    #[error("Deserialization error: {message}")]
-    DeserializationError { message: String },
-
-    // ============================================================
-    // LLM Errors
-    // ============================================================
-    #[error("LLM error: {message}")]
-    LlmError { message: String },
-
-    #[error("LLM provider not available: {provider}")]
-    LlmProviderUnavailable { provider: String },
-
-    #[error("LLM rate limit exceeded")]
-    LlmRateLimitExceeded,
-
-    // ============================================================
-    // Feature Extraction Errors
-    // ============================================================
-    #[error("Feature extraction error: {message}")]
-    FeatureError { message: String },
-
-    #[error("Feature not found: {name}")]
-    FeatureNotFound { name: String },
-
-    #[error("Feature vector length mismatch: expected {expected}, got {got}")]
-    FeatureLengthMismatch { expected: usize, got: usize },
-
-    // ============================================================
-    // Training Errors
-    // ============================================================
-    #[error("Training error: {message}")]
-    TrainingError { message: String },
-
-    #[error("Insufficient training data: {message}")]
-    InsufficientTrainingData { message: String },
-
-    #[error("Training data imbalance: alive={alive}, dead={dead}")]
-    DataImbalance { alive: usize, dead: usize },
-
-    // ============================================================
-    // Internal Errors
-    // ============================================================
-    #[error("Internal error: {message}")]
-    InternalError { message: String },
-
-    #[error("Unreachable code reached: {message}")]
-    Unreachable { message: String },
-
-    #[error("Not implemented: {feature}")]
-    NotImplemented { feature: String },
-}
-
-/// Result type alias for the code-intelligence engine
-pub type Result<T> = std::result::Result<T, CodeIntelError>;
-
-/// Context for errors - adds source location
-#[derive(Debug, Clone)]
-pub struct ErrorContext {
-    pub file: &'static str,
-    pub line: u32,
-    pub column: u32,
-    pub function: &'static str,
-}
-
-impl ErrorContext {
-    pub fn new(file: &'static str, line: u32, column: u32, function: &'static str) -> Self {
-        Self {
-            file,
-            line,
-            column,
-            function,
-        }
+    /// Create an internal error
+    pub fn internal(message: impl Into<String>) -> anyhow::Error {
+        anyhow::anyhow!("Internal error: {}", message.into())
     }
 }
 
-/// Macro for creating errors with context
-#[macro_export]
-macro_rules! context_err {
-    ($err:expr, $file:expr, $line:expr, $column:expr, $function:expr) => {
-        $crate::error::ErrorWithContext {
-            error: Box::new($err),
-            context: $crate::error::ErrorContext::new($file, $line, $column, $function),
-        }
-    };
-}
-
-/// Error with context for better debugging
-#[derive(Debug)]
-pub struct ErrorWithContext {
-    pub error: Box<CodeIntelError>,
-    pub context: ErrorContext,
-}
-
-impl std::fmt::Display for ErrorWithContext {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{} (at {}:{}:{})",
-            self.error, self.context.file, self.context.line, self.context.column
-        )
-    }
-}
-
-impl std::error::Error for ErrorWithContext {}
-
-impl From<ErrorWithContext> for CodeIntelError {
-    fn from(err: ErrorWithContext) -> Self {
-        *err.error
-    }
-}
-
-impl From<CodeIntelError> for String {
-    fn from(err: CodeIntelError) -> Self {
-        err.to_string()
-    }
-}
+// Re-export anyhow macros for convenience
+pub use anyhow::{anyhow, bail, Context, Context as _};

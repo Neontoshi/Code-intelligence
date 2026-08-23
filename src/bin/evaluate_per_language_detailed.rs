@@ -4,6 +4,7 @@
 
 use clap::Parser;
 use code_intelligence::analysis::training_data::{TrainingExample, TrainingLabel};
+use code_intelligence::error::Result;
 use code_intelligence::ml::classifier::DeadCodeClassifier;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -73,7 +74,7 @@ pub struct LanguageSummary {
     pub languages_needing_improvement: Vec<String>,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     println!("📊 Per-Language Evaluation");
@@ -361,10 +362,7 @@ fn print_summary(results: &PerLanguageResults, detailed: bool) {
     }
 }
 
-fn generate_markdown_report(
-    results: &PerLanguageResults,
-    output_path: &PathBuf,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn generate_markdown_report(results: &PerLanguageResults, output_path: &PathBuf) -> Result<()> {
     let mut markdown = String::new();
 
     markdown.push_str("# 📊 Per-Language Evaluation Report\n\n");

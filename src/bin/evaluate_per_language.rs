@@ -3,6 +3,7 @@
 use clap::Parser;
 use code_intelligence::analysis::training_data::TrainingExample;
 use code_intelligence::bin::common::metrics::evaluate;
+use code_intelligence::error::Result;
 use code_intelligence::DeadCodeClassifier;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -26,7 +27,7 @@ struct EvalArgs {
     detailed: bool,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let args = EvalArgs::parse();
 
     println!("🔬 Loading model from: {:?}", args.model);

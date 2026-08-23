@@ -1,9 +1,10 @@
 // src/bin/collect_training_data.rs
+use code_intelligence::error::Result;
 use std::path::PathBuf;
 use std::process::Command;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let repos = vec![
         // Rust repositories
         "https://github.com/rust-lang/rust.git",

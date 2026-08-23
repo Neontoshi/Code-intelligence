@@ -2,6 +2,7 @@
 
 use clap::Parser;
 use code_intelligence::analysis::training_data::{TrainingExample, TrainingLabel};
+use code_intelligence::error::Result;
 use code_intelligence::ml::classifier::LinearClassifier;
 use code_intelligence::ml::feature_schema::{FeatureCategory, FEATURE_SCHEMA};
 use std::path::PathBuf;
@@ -32,7 +33,7 @@ struct AblationResult {
     feature_count: usize,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     println!("🔬 Feature Ablation Study");
@@ -287,10 +288,7 @@ fn train_and_evaluate(
     }
 }
 
-fn save_results(
-    results: &[AblationResult],
-    output_dir: &PathBuf,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn save_results(results: &[AblationResult], output_dir: &PathBuf) -> Result<()> {
     // Save as JSON
     let json_path = output_dir.join("ablation_results.json");
     std::fs::write(&json_path, serde_json::to_string_pretty(results)?)?;

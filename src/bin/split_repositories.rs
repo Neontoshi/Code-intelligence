@@ -8,6 +8,7 @@
 
 use clap::Parser;
 use code_intelligence::analysis::training_data::TrainingExample;
+use code_intelligence::error::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -68,7 +69,7 @@ pub struct RepoList {
     pub test: Vec<String>,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     // Validate ratios
