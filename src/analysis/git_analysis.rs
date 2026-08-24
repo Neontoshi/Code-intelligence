@@ -46,7 +46,7 @@ impl GitAnalyzer {
             root,
             &[
                 "ls-files", "--", "*.rs", "*.py", "*.js", "*.ts", "*.go", "*.java", "*.dart",
-                "*.php", "*.cpp", "*.cc", "*.cxx", "*.hpp", "*.h",
+                "*.php", "*.cpp", "*.cs",
             ],
         )?;
         let tracked_files: Vec<&str> = files_output.lines().collect();

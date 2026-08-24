@@ -387,6 +387,32 @@ impl TreeSitterParser {
             },
         );
 
+        // C# / .NET
+        langs.insert(
+            "cs".to_string(),
+            LanguageConfig {
+                name: "CSharp".to_string(),
+                extensions: vec!["cs".to_string()],
+                language_fn: || tree_sitter_c_sharp::LANGUAGE.into(),
+                function_kinds: vec![
+                    "method_declaration".to_string(),
+                    "constructor_declaration".to_string(),
+                    "destructor_declaration".to_string(),
+                    "local_function_statement".to_string(),
+                    "operator_declaration".to_string(),
+                    "conversion_operator_declaration".to_string(),
+                ],
+                import_kinds: vec!["using_directive".to_string()],
+                type_kinds: vec![
+                    "class_declaration".to_string(),
+                    "interface_declaration".to_string(),
+                    "struct_declaration".to_string(),
+                    "enum_declaration".to_string(),
+                    "record_declaration".to_string(),
+                ],
+            },
+        );
+
         langs
     }
 
@@ -1181,6 +1207,14 @@ impl TreeSitterParser {
                     true
                 }
             }
+            "CSharp" => {
+                if let Ok(text) = node.utf8_text(source.as_bytes()) {
+                    text.contains("public ") || text.contains("protected ")
+                } else {
+                    false
+                }
+            }
+
             "JavaScript" | "TypeScript" => {
                 let mut curr = Some(*node);
                 while let Some(n) = curr {

@@ -229,7 +229,7 @@ impl Pipeline {
         let mut entries = Vec::new();
         let supported_extensions = [
             "rs", "py", "js", "jsx", "ts", "tsx", "go", "java", "dart", "php", "cpp", "cc", "cxx",
-            "hpp", "h",
+            "hpp", "h", "cs",
         ];
 
         for entry in walkdir::WalkDir::new(root)

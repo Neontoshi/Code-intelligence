@@ -140,6 +140,12 @@ impl RootDetector {
                 continue;
             }
 
+            // C# top-level entry files (Program.cs, Startup.cs)
+            if func.file.ends_with("Program.cs") || func.file.ends_with("Startup.cs") {
+                roots.insert(func.full_path.clone());
+                continue;
+            }
+
             // For generic names like "run", "start", "init", "setup"
             if app_entry_names.contains(&func.name.as_str()) {
                 let is_entry = Self::is_likely_entry_point(func, call_graph);
@@ -406,6 +412,30 @@ impl RootDetector {
                 if is_widget && func.is_public {
                     roots.insert(func.full_path.clone());
                     continue;
+                }
+            }
+            // C# / ASP.NET Core Attributes & MediatR Handlers
+            if func.file.ends_with(".cs") {
+                if let Some(file) = files.iter().find(|f| f.path == func.file) {
+                    if let Some(func_info) = file.functions.iter().find(|fi| fi.name == func.name) {
+                        for decorator in &func_info.decorators {
+                            let d = decorator.to_lowercase();
+                            if d.contains("httpget")
+                                            || d.contains("httppost")
+                                            || d.contains("httpput")
+                                            || d.contains("httpdelete")
+                                            || d.contains("route")
+                                            || d.contains("apicontroller")
+                                            || d.contains("authorize")
+                                            || d.contains("fact")      // xUnit test
+                                            || d.contains("test")
+                            // NUnit test
+                            {
+                                roots.insert(func.full_path.clone());
+                                break;
+                            }
+                        }
+                    }
                 }
             }
 

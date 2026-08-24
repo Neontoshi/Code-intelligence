@@ -185,6 +185,33 @@ pub fn get_protection_level(func: &FunctionNode) -> ProtectionLevel {
         }
     }
 
+    // C# / .NET ASP.NET Core & Blazor lifecycle
+    if func.file.ends_with(".cs") {
+        let dotnet_lifecycle = [
+            "Main",
+            "ConfigureServices",
+            "Configure",
+            "OnInitialized",
+            "OnInitializedAsync",
+            "OnParametersSet",
+            "OnParametersSetAsync",
+            "Dispose",
+            "DisposeAsync",
+            "ToString",
+            "GetHashCode",
+            "Equals",
+        ];
+        if dotnet_lifecycle.contains(&func.name.as_str()) {
+            return ProtectionLevel::Protected;
+        }
+
+        // ASP.NET Core Action verbs / Handler prefixes
+        let action_prefixes = ["Get", "Post", "Put", "Delete", "Patch", "OnGet", "OnPost"];
+        if action_prefixes.iter().any(|p| func.name.starts_with(p)) && func.is_public {
+            return ProtectionLevel::LikelyAlive;
+        }
+    }
+
     // Go Test & Benchmark conventions (e.g., TestXxx, BenchmarkXxx, ExampleXxx)
     if func.file.ends_with(".go") {
         if func.name.starts_with("Test")

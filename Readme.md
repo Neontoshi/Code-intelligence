@@ -1,3 +1,4 @@
+```markdown
 # Code Intelligence
 
 [![Build Status](https://img.shields.io/github/actions/workflow/status/neontoshi/Code-intelligence/ci.yml?branch=main)](https://github.com/neontoshi/Code-intelligence/actions)
@@ -9,28 +10,29 @@
 
 **Semantic Code Intelligence Engine for AI Dead Code Detection, Duplicate Detection, and Codebase Analysis**
 
-`code-intelligence` is a fast, multi-language semantic analysis platform designed to map call graphs, detect dead code with high precision, eliminate structural duplication, and streamline refactoring across large polyglot codebases.
+`code-intelligence` is a fast, multi-language semantic analysis platform designed to map call graphs, detect dead code with high precision, eliminate structural duplication, and streamline refactoring across large polyglot codebases[cite: 1, 2].
 
 ---
 
 ## ⚡ Core Capabilities & Highlights
 
-* **Unified Verdict Engine**: Combines static reachability analysis, fan-in/fan-out graph metrics, dynamic reference detection, and calibrated linear ML models to categorize symbols into `DefinitelyAlive`, `ProbablyAlive`, `Unknown`, `ProbablyDead`, or `DefinitelyDead`[cite: 1].
-* **Polyglot AST Support**: Native Tree-Sitter parsing and resolution across **9 languages**:
-  * **Rust**: `impl` blocks, traits, operator overloads, FFI, and macros.
-  * **TypeScript / TSX / JavaScript**: ES6 modules, barrel exports, React component lifecycle methods, hooks (`use*`), and UI event handlers[cite: 1, 3].
-  * **Python**: Decorators (FastAPI, Flask, Pytest, Celery), dunder magic methods, `self.`/`cls.` invocations, and `getattr()` string dispatches[cite: 1].
-  * **Go**: Export capitalization, receiver methods (`func (r *Repo)`), `init()` hooks, `Test*`/`Benchmark*` suites, and `reflect.MethodByName`[cite: 1].
-  * **Java**: Access modifiers, class methods (`this.`), record types, and Spring/Jakarta annotations (`@GetMapping`, `@Service`, `@Repository`)[cite: 1, 3].
-  * **Dart / Flutter**: Widget lifecycle methods (`build`, `initState`, `dispose`), state handlers, and `lib/main.dart` application roots.
-  * **PHP**: Magic methods, Laravel/Symfony controller attributes, and dynamic execution (`call_user_func`).
-  * **C++**: Destructors, special member functions, entry macros, and header file declarations.
-* **Smart Dynamic Reference Detection**: AST pattern extractors track reflection, dynamic imports (`import()`, `require()`), IPC bridges (Tauri `invoke(...)`, Electron `ipcRenderer.send(...)`), and string-based routing dispatches[cite: 1].
-* **Structural Duplicate Elimination**: Identifies duplicate blocks and clones using MinHash, AST hashing, and ML-based duplicate classification to calculate token savings and refactoring suggestions[cite: 1].
-* **Outcome Management**: Built-in tracking ledger (`.code-intelligence-outcomes.json`) records removals and false-positive dismissals to continuously fine-tune training datasets[cite: 1].
-* **Interactive Terminal Dashboard**: Full-featured TUI built with Ratatui and Crossterm for live inspection, graph metrics, file-by-file categorization, and decision management[cite: 1].
-* **Visual Graph Output**: Exports interactive D3.js call graphs and circular architectural layer overviews in standalone HTML[cite: 1].
-* **Optional LLM Integration**: Pluggable provider support (Ollama, OpenAI, Anthropic) for documentation generation, automated function summarization, and issue auditing[cite: 1].
+* **Unified Verdict Engine**: Combines static reachability analysis, fan-in/fan-out graph metrics, dynamic reference detection, and calibrated linear ML models to categorize symbols into `DefinitelyAlive`, `ProbablyAlive`, `Unknown`, `ProbablyDead`, or `DefinitelyDead`[cite: 1, 2].
+* **Polyglot AST Support**: Native Tree-Sitter parsing and resolution across **10 languages**:
+  * **Rust**: `impl` blocks, traits, operator overloads, FFI, and macros[cite: 2].
+  * **TypeScript / TSX / JavaScript**: ES6 modules, barrel exports, React component lifecycle methods, hooks (`use*`), and UI event handlers[cite: 1, 2].
+  * **Python**: Decorators (FastAPI, Flask, Pytest, Celery), dunder magic methods, `self.`/`cls.` invocations, and `getattr()` string dispatches[cite: 1, 2].
+  * **Go**: Export capitalization, receiver methods (`func (r *Repo)`), `init()` hooks, `Test*`/`Benchmark*` suites, and `reflect.MethodByName`[cite: 1, 2].
+  * **Java**: Access modifiers, class methods (`this.`), record types, and Spring/Jakarta annotations (`@GetMapping`, `@Service`, `@Repository`)[cite: 1, 2].
+  * **C# / .NET**: ASP.NET Core controllers, routes (`[HttpGet]`, `[HttpPost]`), MediatR handlers, and `Program.cs` / `Startup.cs` entry points[cite: 2].
+  * **Dart / Flutter**: Widget lifecycle methods (`build`, `initState`, `dispose`), state handlers, and `lib/main.dart` application roots[cite: 2].
+  * **PHP**: Magic methods, Laravel/Symfony controller attributes, and dynamic execution (`call_user_func`)[cite: 2].
+  * **C++**: Destructors, special member functions, entry macros, and header file declarations[cite: 2].
+* **Smart Dynamic Reference Detection**: AST pattern extractors track reflection, dynamic imports (`import()`, `require()`), IPC bridges (Tauri `invoke(...)`, Electron `ipcRenderer.send(...)`), and string-based routing dispatches[cite: 1, 2].
+* **Structural Duplicate Elimination**: Identifies duplicate blocks and clones using MinHash, AST hashing, and ML-based duplicate classification to calculate token savings and refactoring suggestions[cite: 1, 2].
+* **Outcome Management**: Built-in tracking ledger (`.code-intelligence-outcomes.json`) records removals and false-positive dismissals to continuously fine-tune training datasets[cite: 1, 2].
+* **Interactive Terminal Dashboard**: Full-featured TUI built with Ratatui and Crossterm for live inspection, graph metrics, file-by-file categorization, and decision management[cite: 1, 2].
+* **Visual Graph Output**: Exports interactive D3.js call graphs and circular architectural layer overviews in standalone HTML[cite: 1, 2].
+* **Optional LLM Integration**: Pluggable provider support (Ollama, OpenAI, Anthropic) for documentation generation, automated function summarization, and issue auditing[cite: 1, 2].
 
 ---
 
@@ -38,8 +40,8 @@
 
 ### Prerequisites
 
-* [Rust & Cargo](https://rustup.rs/) (1.70+)
-* (Optional) [Ollama](https://ollama.com/) running locally for offline LLM features[cite: 1]
+* [Rust & Cargo](https://rustup.rs/) (1.70+)[cite: 1, 2]
+* (Optional) [Ollama](https://ollama.com/) running locally for offline LLM features[cite: 1, 2]
 
 ### Build & Install
 
@@ -111,10 +113,10 @@ ci dashboard ~/Documents/my-project
  | `ci dedup . --threshold 0.85`<br> |
 | `ci dashboard [path]` | Launch interactive terminal UI (Ratatui)
 
- | `ci dashboard .` |
+ | `ci dashboard .`<br> |
 | `ci graph [path]` | Generate HTML call graphs (`interactive` or `overview`)
 
- | `ci graph . --output graph.html` |
+ | `ci graph . --output graph.html`<br> |
 | `ci llm [path]` | Run deep semantic review and bug scan via LLM
 
  | `ci llm . --provider openai --model gpt-4`<br> |
@@ -125,19 +127,19 @@ ci dashboard ~/Documents/my-project
 | --- | --- | --- |
 | `ci list [path]` | List detected dead code candidates
 
- | `ci list --all` |
+ | `ci list --all`<br> |
 | `ci remove <name>` | Mark dead candidate as deleted in the repo
 
- | `ci remove processOrder --commit 8f3d1b` |
+ | `ci remove processOrder --commit 8f3d1b`<br> |
 | `ci keep <name> "<reason>"` | Mark candidate as false positive / intentionally kept
 
- | `ci keep handlePing "Health check callback"` |
+ | `ci keep handlePing "Health check callback"`<br> |
 | `ci stats [path]` | View removal rates and false-positive metrics
 
- | `ci stats --detailed` |
+ | `ci stats --detailed`<br> |
 | `ci report [path]` | Export markdown, JSON, or HTML analysis summaries
 
- | `ci report --format markdown --output report.md` |
+ | `ci report --format markdown --output report.md`<br> |
 
 ### 3. ML Training, Calibration & Experimentation
 
@@ -148,13 +150,13 @@ ci dashboard ~/Documents/my-project
  | `ci train --train-data data/train.json`<br> |
 | `ci train-duplicate` | Train classifier for duplicate code detection
 
- | `ci train-duplicate data/pairs.json` |
+ | `ci train-duplicate data/pairs.json`<br> |
 | `ci calibrate` | Calibrate confidence scores (temperature scaling)
 
  | `ci calibrate --method temperature --val-data data/val.json`<br> |
 | `ci compare` | Compare accuracy and F1 across model configurations
 
- | `ci compare --train-data data/train.json` |
+ | `ci compare --train-data data/train.json`<br> |
 | `ci features` | Display top differentiating features per language
 
  | `ci features --data combined_training.json`<br> |
@@ -175,7 +177,9 @@ ci dashboard ~/Documents/my-project
 | `ci collect` | Clone public repositories and generate bulk training sets
 
  | `ci collect --max-repos 25`<br> |
-| `ci self-analyze` | Run full analysis pipeline on `code-intelligence` itself | `ci self-analyze --format full` |
+| `ci self-analyze` | Run full analysis pipeline on `code-intelligence` itself
+
+ | `ci self-analyze --format full`<br> |
 
 ---
 
@@ -190,11 +194,9 @@ cargo run --release --bin dedup_check -- ./path/to/project --threshold 0.85
 cargo run --release --bin dead_code_dashboard -- ./path/to/project
 
 # ML Pipeline & Calibration
-cargo run --release --bin merge_all_training_data
+cargo run --release --bin data
 cargo run --release --bin train -- --train-data data/train.json
-cargo run --release --bin calibration_analysis -- --model model.bin --val-data data/val.json --method temperature
 cargo run --release --bin evaluate -- detailed --model model.bin --test-data data/test.json
-cargo run --release --bin feature_ablation -- --train-data data/train.json --val-data data/val.json
 
 ```
 
@@ -206,8 +208,14 @@ cargo run --release --bin feature_ablation -- --train-data data/train.json --val
 
 
 * **Charts Tab**: Visual distribution of dead code across modules, languages, and confidence intervals.
+
+
 * **List Tab**: Interactive table of candidate functions with detail inspection and evidence breakdown.
+
+
 * **By File Tab**: File-by-file grouped breakdown of dead functions and types.
+
+
 * **Priority Tab**: Ordered step-by-step removal plan minimizing breakage risk.
 
 
@@ -218,13 +226,29 @@ cargo run --release --bin feature_ablation -- --train-data data/train.json --val
 **Keybindings**:
 
 * `Tab` / `Right` / `l`: Next tab
+
+
 * `BackTab` / `Left` / `h`: Previous tab
+
+
 * `Down` / `j` & `Up` / `k`: Navigate list items
+
+
 * `g` / `G`: Jump to top / bottom
+
+
 * `d`: Mark candidate as confirmed Dead
+
+
 * `f`: Mark candidate as False Positive (prompts for reason)
+
+
 * `s`: Defer candidate review
+
+
 * `q` / `Esc`: Exit dashboard
+
+
 
 ---
 

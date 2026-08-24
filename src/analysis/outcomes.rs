@@ -686,6 +686,8 @@ impl OutcomeTracker {
             "dart".to_string()
         } else if file.ends_with(".php") {
             "php".to_string()
+        } else if file.ends_with(".cs") {
+            "csharp".to_string()
         } else if file.ends_with(".cpp")
             || file.ends_with(".cc")
             || file.ends_with(".cxx")

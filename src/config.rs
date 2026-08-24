@@ -112,6 +112,19 @@ pub fn detect_project_type(path: &Path) -> Option<String> {
     let has_dart = path.join("pubspec.yaml").exists();
     let has_php = path.join("composer.json").exists();
     let has_cpp = path.join("CMakeLists.txt").exists() || path.join("Makefile").exists();
+    let has_csharp = path
+        .read_dir()
+        .map(|mut entries| {
+            entries.any(|e| {
+                if let Ok(entry) = e {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    name.ends_with(".sln") || name.ends_with(".csproj")
+                } else {
+                    false
+                }
+            })
+        })
+        .unwrap_or(false);
 
     let lang_count = [
         has_rust,
@@ -122,6 +135,7 @@ pub fn detect_project_type(path: &Path) -> Option<String> {
         has_dart,
         has_php,
         has_cpp,
+        has_csharp,
     ]
     .iter()
     .filter(|&&x| x)
@@ -147,6 +161,8 @@ pub fn detect_project_type(path: &Path) -> Option<String> {
         Some("php".to_string())
     } else if has_cpp {
         Some("cpp".to_string())
+    } else if has_csharp {
+        Some("csharp".to_string())
     } else {
         None
     }
