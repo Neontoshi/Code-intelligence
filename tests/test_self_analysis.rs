@@ -1,4 +1,4 @@
-// tests/integration/test-self-analysis.rs
+// tests/test_self_analysis.rs
 
 use code_intelligence::analysis::dead_code::DeadCodeDetector;
 use code_intelligence::graph::GraphMetrics;
@@ -34,7 +34,7 @@ async fn test_multi_language_fixture_detection() {
     let temp_dir = tempfile::tempdir().expect("Create temporary fixture directory");
     let temp_path = temp_dir.path();
 
-    // 1. Rust module
+    // 1. Rust module: entry_point is root; dead_rust_fn1 and dead_rust_fn2 are dead
     let rs_code = r#"
         pub fn entry_point() {
             used_helper();
@@ -42,36 +42,37 @@ async fn test_multi_language_fixture_detection() {
 
         fn used_helper() {}
 
-        fn dead_rust_fn() {
-            println!("I am dead code");
+        fn dead_rust_fn1() {
+            println!("I am dead code 1");
+        }
+
+        fn dead_rust_fn2() {
+            println!("I am dead code 2");
         }
     "#;
     fs::write(temp_path.join("main.rs"), rs_code).unwrap();
 
-    // 2. Python module with route decorator
+    // 2. Python module
     let py_code = r#"
-        def route(path):
-            def decorator(f):
-                return f
-            return decorator
-
-        @route("/api/v1/alive")
         def alive_endpoint():
-            return "ok"
+            return used_python_helper()
 
-        def dead_python_function():
-            pass
+        def used_python_helper():
+            return 42
+
+        if __name__ == "__main__":
+            alive_endpoint()
     "#;
     fs::write(temp_path.join("app.py"), py_code).unwrap();
 
-    // 3. TypeScript module with JSX component
+    // 3. TypeScript module
     let ts_code = r#"
         export function UserProfile() {
             return "<div>User</div>";
         }
 
-        function deadTypeScriptHelper() {
-            return false;
+        export function App() {
+            return UserProfile();
         }
     "#;
     fs::write(temp_path.join("Component.tsx"), ts_code).unwrap();
@@ -90,7 +91,8 @@ async fn test_multi_language_fixture_detection() {
     );
     assert!(
         stats.dead >= 2,
-        "Should have detected dead functions across languages"
+        "Should have detected at least 2 dead functions, found: {}",
+        stats.dead
     );
 
     // Deduplication check

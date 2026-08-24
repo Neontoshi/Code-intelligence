@@ -117,6 +117,7 @@ fn create_test_function(name: &str, is_public: bool, is_async: bool) -> Function
 }
 
 fn create_test_file() -> ParsedFile {
+    let source = "fn func1() {\n    // body 1\n}\n\nfn func2() {\n    // body 2\n}\n".to_string();
     ParsedFile {
         path: "test.rs".to_string(),
         language: "rust".to_string(),
@@ -130,11 +131,11 @@ fn create_test_file() -> ParsedFile {
                 return_type: None,
                 doc_comment: None,
                 calls: vec![],
-                body_range: (0, 10),
+                body_range: (0, 25),
                 body_start_line: 1,
-                body_end_line: 10,
+                body_end_line: 3,
                 container: None,
-                role: FunctionRole::Unknown, // ⭐ Use imported FunctionRole
+                role: FunctionRole::Unknown,
                 purpose: "test".to_string(),
                 trait_impl: None,
                 decorators: vec![],
@@ -144,18 +145,18 @@ fn create_test_file() -> ParsedFile {
             },
             FunctionInfo {
                 name: "func2".to_string(),
-                line: 12,
+                line: 5,
                 is_public: false,
                 is_async: true,
                 params: vec![],
                 return_type: None,
                 doc_comment: None,
                 calls: vec![],
-                body_range: (10, 20),
-                body_start_line: 12,
-                body_end_line: 20,
+                body_range: (27, 52),
+                body_start_line: 5,
+                body_end_line: 7,
                 container: None,
-                role: FunctionRole::Unknown, // ⭐ Use imported FunctionRole
+                role: FunctionRole::Unknown,
                 purpose: "test".to_string(),
                 trait_impl: None,
                 decorators: vec![],
@@ -166,6 +167,6 @@ fn create_test_file() -> ParsedFile {
         ],
         imports: vec![],
         types: vec![],
-        source: "test source".to_string(),
+        source,
     }
 }

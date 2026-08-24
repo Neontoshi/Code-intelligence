@@ -1,6 +1,6 @@
 // tests/integration/dynamic_ref_test.rs
 
-//! Tests for dynamic reference detection
+//! Comprehensive multi-language tests for dynamic reference detection
 
 use code_intelligence::analysis::dynamic_refs::{DynamicRefDetector, DynamicRefType};
 use code_intelligence::graph::call_graph::CallGraph;
@@ -30,7 +30,6 @@ fn test_detect_python_reflection() {
     let detector = DynamicRefDetector::new();
     let refs = detector.detect_all(&call_graph, &files);
 
-    // Should detect dynamic imports and decorators
     let dynamic_refs: Vec<_> = refs
         .iter()
         .filter(|r| r.reference_type == DynamicRefType::Reflection)
@@ -38,7 +37,7 @@ fn test_detect_python_reflection() {
 
     assert!(
         !dynamic_refs.is_empty(),
-        "Should detect reflection/getattr usage"
+        "Should detect reflection/getattr usage in Python"
     );
 
     let framework_refs: Vec<_> = refs
@@ -48,10 +47,8 @@ fn test_detect_python_reflection() {
 
     assert!(
         !framework_refs.is_empty(),
-        "Should detect framework decorators"
+        "Should detect framework decorators in Python"
     );
-
-    println!("✅ Python dynamic reference detection test passed");
 }
 
 #[test]
@@ -71,7 +68,6 @@ fn test_detect_javascript_dynamic_imports() {
             return useState(0);
         }
 
-        // Normal function
         function helper() {
             return 'helper';
         }
@@ -82,22 +78,25 @@ fn test_detect_javascript_dynamic_imports() {
     let detector = DynamicRefDetector::new();
     let refs = detector.detect_all(&call_graph, &files);
 
-    // Should detect framework (React) components and hooks
     let framework_refs: Vec<_> = refs
         .iter()
         .filter(|r| r.reference_type == DynamicRefType::Framework)
         .collect();
 
-    assert!(!framework_refs.is_empty(), "Should detect React components");
+    assert!(
+        !framework_refs.is_empty(),
+        "Should detect React components and hooks in TypeScript/JavaScript"
+    );
 
     let dynamic_refs: Vec<_> = refs
         .iter()
         .filter(|r| r.reference_type == DynamicRefType::DynamicImport)
         .collect();
 
-    assert!(!dynamic_refs.is_empty(), "Should detect dynamic imports");
-
-    println!("✅ JavaScript dynamic reference detection test passed");
+    assert!(
+        !dynamic_refs.is_empty(),
+        "Should detect dynamic imports in TypeScript/JavaScript"
+    );
 }
 
 #[test]
@@ -115,14 +114,6 @@ fn test_detect_rust_dynamic_dispatch() {
             }
         }
 
-        struct DynamicHandler;
-
-        impl Handler for DynamicHandler {
-            fn handle(&self) {
-                println!("Dynamic");
-            }
-        }
-
         fn process(handler: &dyn Handler) {
             handler.handle();
         }
@@ -135,10 +126,17 @@ fn test_detect_rust_dynamic_dispatch() {
     let (_, files) = create_files_from_source(source, "rust");
     let call_graph = CallGraph::new();
     let detector = DynamicRefDetector::new();
-    let _refs = detector.detect_all(&call_graph, &files);
+    let refs = detector.detect_all(&call_graph, &files);
 
-    // The detector should identify trait methods as potential dynamic dispatch
-    println!("✅ Rust dynamic dispatch detection test passed");
+    let dyn_refs: Vec<_> = refs
+        .iter()
+        .filter(|r| r.reference_type == DynamicRefType::DynamicDispatch)
+        .collect();
+
+    assert!(
+        !dyn_refs.is_empty(),
+        "Should detect dyn Trait dynamic dispatch in Rust"
+    );
 }
 
 #[test]
@@ -169,7 +167,6 @@ fn test_detect_go_reflection() {
     let detector = DynamicRefDetector::new();
     let refs = detector.detect_all(&call_graph, &files);
 
-    // Should detect reflection usage
     let reflection_refs: Vec<_> = refs
         .iter()
         .filter(|r| r.reference_type == DynamicRefType::Reflection)
@@ -177,10 +174,28 @@ fn test_detect_go_reflection() {
 
     assert!(
         !reflection_refs.is_empty(),
-        "Should detect reflect package usage"
+        "Should detect reflect package usage in Go"
     );
+}
 
-    println!("✅ Go reflection detection test passed");
+#[test]
+fn test_detect_php_reflection() {
+    let source = r#"
+        <?php
+        class Processor {
+            public function execute() {
+                $action = "computeData";
+                call_user_func($action, 123);
+            }
+        }
+    "#;
+
+    let (_, files) = create_files_from_source(source, "php");
+    let call_graph = CallGraph::new();
+    let detector = DynamicRefDetector::new();
+    let refs = detector.detect_all(&call_graph, &files);
+
+    assert!(!refs.is_empty(), "Should detect dynamic calls in PHP");
 }
 
 // ============================================================
@@ -200,8 +215,11 @@ fn create_files_from_source(
         "rust" => "rs",
         "python" => "py",
         "typescript" => "tsx",
+        "javascript" => "jsx",
         "go" => "go",
         "java" => "java",
+        "csharp" => "cs",
+        "php" => "php",
         _ => "txt",
     });
     std::fs::write(&path, source).unwrap();

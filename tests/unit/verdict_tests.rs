@@ -63,14 +63,12 @@ fn test_verdict_is_high_confidence() {
     assert!(!verdict.is_high_confidence());
 }
 
-// tests/unit/verdict_tests.rs
-
 #[test]
 fn test_verdict_needs_review() {
     let verdict = create_test_verdict(VerdictState::Unknown);
     assert!(verdict.needs_review());
 
-    // All other states should NOT need review
+    // All resolved states do NOT need review
     let verdict = create_test_verdict(VerdictState::DefinitelyDead);
     assert!(!verdict.needs_review());
 
@@ -152,16 +150,24 @@ fn create_test_function(name: &str) -> FunctionNode {
 fn create_test_verdict(
     state: VerdictState,
 ) -> code_intelligence::analysis::verdict_source::Verdict {
+    let (label, confidence) = match state {
+        VerdictState::DefinitelyDead => (TrainingLabel::Dead, 0.95),
+        VerdictState::ProbablyDead => (TrainingLabel::Dead, 0.80),
+        VerdictState::Unknown => (TrainingLabel::Unknown, 0.50),
+        VerdictState::ProbablyAlive => (TrainingLabel::Alive, 0.80),
+        VerdictState::DefinitelyAlive => (TrainingLabel::Alive, 0.95),
+    };
+
     code_intelligence::analysis::verdict_source::Verdict {
         function_name: "test".to_string(),
         full_path: "test::test".to_string(),
-        label: TrainingLabel::Unknown,
+        label,
         state,
-        confidence: 0.5,
+        confidence,
         signals: vec![],
         dead_probability: None,
         ml_probability: None,
-        static_score: Some(0.5),
+        static_score: Some(confidence),
         explanation: "Test verdict".to_string(),
         evidence_sources: vec![],
         verified: false,

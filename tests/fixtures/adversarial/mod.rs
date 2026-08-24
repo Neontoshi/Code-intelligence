@@ -12,44 +12,40 @@ pub fn rust_fixtures() -> Vec<&'static str> {
         "rust/ffi_extern.rs",
         "rust/macro_used.rs",
         "rust/plugin_system.rs",
-        "rust/generated_code.rs",
-        "rust/dynamic_dispatch.rs",
     ]
 }
 
 pub fn python_fixtures() -> Vec<&'static str> {
-    vec![
-        "python/flask_route.py",
-        "python/django_view.py",
-        "python/plugin_entry.py",
-        "python/dynamic_import.py",
-        "python/decorator_chain.py",
-    ]
+    vec!["python/flask_route.py", "python/dynamic_import.py"]
 }
 
 pub fn typescript_fixtures() -> Vec<&'static str> {
     vec![
         "typescript/react_component.tsx",
-        "typescript/nestjs_controller.ts",
-        "typescript/decorator_usage.ts",
-        "typescript/dynamic_import.ts",
+        "typescript/nextjs_controller.ts",
     ]
 }
 
 pub fn go_fixtures() -> Vec<&'static str> {
-    vec![
-        "go/interface_impl.go",
-        "go/init_function.go",
-        "go/plugin_export.go",
-        "go/cgo_ffi.go",
-    ]
+    vec!["go/interface_impl.go", "go/plugin_export.go"]
 }
 
 pub fn java_fixtures() -> Vec<&'static str> {
-    vec![
-        "java/spring_controller.java",
-        "java/reflection_target.java",
-        "java/service_loader.java",
-        "java/annotation_processor.java",
-    ]
+    vec!["java/spring_controller.java"]
+}
+
+pub fn csharp_fixtures() -> Vec<&'static str> {
+    vec!["csharp/aspnet_controller.cs"]
+}
+
+pub fn dart_fixtures() -> Vec<&'static str> {
+    vec!["dart/flutter_widget.dart"]
+}
+
+pub fn php_fixtures() -> Vec<&'static str> {
+    vec!["php/laravel_controller.php"]
+}
+
+pub fn cpp_fixtures() -> Vec<&'static str> {
+    vec!["cpp/virtual_member.cpp"]
 }

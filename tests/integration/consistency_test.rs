@@ -218,9 +218,7 @@ edition = "2021"
     );
 }
 
-// ============================================================================
 // Helper Functions
-// ============================================================================
 
 /// Run CLI analysis and return summary
 fn run_cli_analysis(path: &Path) -> AnalysisSummary {

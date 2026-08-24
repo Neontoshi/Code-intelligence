@@ -3,7 +3,7 @@
 use crate::helpers::get_default_model;
 use code_intelligence::analysis::dead_code::DeadCodeAnalyzer;
 use code_intelligence::analysis::service::{AnalysisService, AnalysisServiceConfig};
-use code_intelligence::error::{err, Result};
+use code_intelligence::error::Result;
 use std::path::PathBuf;
 
 pub async fn run_deadcode(
@@ -17,22 +17,12 @@ pub async fn run_deadcode(
     println!("📊 Threshold: {:.2}", threshold);
     println!();
 
-    // Get model path
-    let model_path = model_path
-        .or_else(get_default_model)
-        .map(PathBuf::from)
-        .ok_or_else(|| err::config("No model configured. Run: ci config set model <path>"))?;
-
-    if !model_path.exists() {
-        return Err(err::model(format!(
-            "Model file not found: {:?}",
-            model_path
-        )));
-    }
+    // Resolve optional custom model path (falls back to embedded if None)
+    let model_path = model_path.or_else(get_default_model).map(PathBuf::from);
 
     // Build config
     let config = AnalysisServiceConfig {
-        model_path: Some(model_path),
+        model_path,
         threshold: Some(threshold),
         verbose,
         debug: verbose,
@@ -43,15 +33,11 @@ pub async fn run_deadcode(
     };
 
     let mut service = AnalysisService::new(config);
-    service.load_model()?;
     let result = service.analyze(&path).await?;
 
-    // service.analyze() already computed root detection, reachability,
-    // dynamic refs, verdicts, and the structural dead-code analysis at the
-    // requested threshold — reuse it instead of rebuilding it here.
     let dead_analysis = &result.dead_code_analysis;
 
-    // Generate report (generate_report is stateless — a fresh analyzer is fine)
+    // Generate report
     let report = DeadCodeAnalyzer::new().generate_report(dead_analysis);
 
     // Print to terminal

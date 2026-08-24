@@ -3,8 +3,9 @@
 use crate::helpers::{detect_project_type, get_default_model, save_project_config};
 use crate::types::ProjectConfig;
 use code_intelligence::analysis::service::{AnalysisService, AnalysisServiceConfig};
-use code_intelligence::error::{err, Result};
+use code_intelligence::error::Result;
 use code_intelligence::graph::GraphMetrics;
+use code_intelligence::optimize::Deduplicator;
 use std::path::PathBuf;
 
 pub async fn run_analyze(
@@ -17,14 +18,6 @@ pub async fn run_analyze(
     cache_dir: Option<PathBuf>,
     model_path: Option<PathBuf>,
 ) -> Result<()> {
-    use code_intelligence::analysis::dead_code::DeadCodeAnalyzer;
-    use code_intelligence::analysis::dynamic_refs::DynamicRefDetector;
-    use code_intelligence::analysis::roots::{
-        ReachabilityAnalyzer, RootDetectionConfig, RootDetector,
-    };
-    use code_intelligence::analysis::verdict_source::state::{VerdictConfig, VerdictEngine};
-    use code_intelligence::optimize::Deduplicator;
-
     println!("🔍 Analyzing project: {:?}", path);
     println!("{}", "=".repeat(60));
     println!();
@@ -34,22 +27,12 @@ pub async fn run_analyze(
         println!("📊 Detected project type: {}", pt);
     }
 
-    // Get model path
-    let model_path = model_path
-        .or_else(get_default_model)
-        .map(PathBuf::from)
-        .ok_or_else(|| err::config("No model configured. Run: ci config set model <path>"))?;
-
-    if !model_path.exists() {
-        return Err(err::model(format!(
-            "Model file not found: {:?}",
-            model_path
-        )));
-    }
+    // Resolve optional custom model path (falls back to embedded if None)
+    let model_path = model_path.or_else(get_default_model).map(PathBuf::from);
 
     // Build service config
     let config = AnalysisServiceConfig {
-        model_path: Some(model_path),
+        model_path,
         threshold,
         verbose,
         debug: verbose,
@@ -60,40 +43,14 @@ pub async fn run_analyze(
     };
 
     let mut service = AnalysisService::new(config);
-    service.load_model()?;
     let result = service.analyze(&path).await?;
 
-    // 1. DEAD CODE ANALYSIS
+    // 1. DEAD CODE ANALYSIS (Reusing canonical service result)
     println!("\n{}", "═".repeat(60));
     println!("🔍 DEAD CODE ANALYSIS");
     println!("{}", "═".repeat(60));
 
-    // Get verdicts
-    let root_config = RootDetectionConfig::default();
-    let root_set = RootDetector::detect_roots(&result.call_graph, &result.files, &root_config);
-    let reachability = ReachabilityAnalyzer::compute_reachability(&result.call_graph, &root_set);
-
-    let dynamic_detector = DynamicRefDetector::new();
-    let dynamic_refs = dynamic_detector.detect_all(&result.call_graph, &result.files);
-
-    let effective_threshold = threshold.unwrap_or(0.92);
-    let verdict_engine = VerdictEngine::new(VerdictConfig::default())
-        .with_dead_threshold(effective_threshold)
-        .with_dynamic_refs(dynamic_refs);
-
-    let verdicts = verdict_engine.evaluate_all(&result.call_graph, &reachability);
-    let dead_verdicts: Vec<_> = verdict_engine.filter_dead(&verdicts);
-
-    // Generate dead code analysis
-    let mut analyzer = DeadCodeAnalyzer::new();
-    let dead_functions = analyzer.import_verdicts(&dead_verdicts, &result.call_graph);
-    let dead_analysis = analyzer.analyze_structural_components(
-        dead_functions,
-        reachability,
-        &result.call_graph,
-        &result.project_analysis.type_graph,
-        &result.project_analysis.import_graph,
-    );
+    let dead_analysis = &result.dead_code_analysis;
 
     // Print dead code summary
     println!("\n📊 Dead Code Summary:");
@@ -101,10 +58,14 @@ pub async fn run_analyze(
     println!("   Dead functions: {}", dead_analysis.functions.len());
     println!("   Alive functions: {}", result.alive_verdicts.len());
     println!("   Unknown: {}", result.unknown_verdicts.len());
-    println!("   Effective threshold: {:.2}", effective_threshold);
+    println!("   Effective threshold: {:.2}", result.effective_threshold);
     println!(
         "   Dead code ratio: {:.1}%",
-        dead_analysis.functions.len() as f64 / result.call_graph.node_count() as f64 * 100.0
+        if result.call_graph.node_count() > 0 {
+            dead_analysis.functions.len() as f64 / result.call_graph.node_count() as f64 * 100.0
+        } else {
+            0.0
+        }
     );
     println!(
         "   Estimated LOC removable: {}",
@@ -234,7 +195,7 @@ pub async fn run_analyze(
             "📄"
         };
         println!(
-            "   {} {:<38} {:.2}       {:<10}",
+            "   {} {:<38} {:.2}        {:<10}",
             emoji,
             &name[..name.len().min(37)],
             score,

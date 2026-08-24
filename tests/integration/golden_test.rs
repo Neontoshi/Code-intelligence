@@ -1,7 +1,5 @@
 // tests/integration/golden_test.rs
 
-//! Golden tests - compare analysis results against expected outputs
-
 use code_intelligence::analysis::dead_code::DeadCodeDetector;
 use code_intelligence::analysis::roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector};
 use code_intelligence::graph::GraphMetrics;

@@ -23,40 +23,38 @@ pub async fn run_dedup_report(
     }
     println!();
 
-    // Get duplicate model if ML enabled (custom path -> default config path -> embedded fallback)
+    // Resolve duplicate model: custom CLI flag -> config path -> embedded binary
     let model = if ml {
-        if let Some(custom_path) = duplicate_model {
-            if !custom_path.exists() {
-                return Err(err::model(format!(
-                    "Specified duplicate model not found: {:?}",
-                    custom_path
-                )));
+        let loaded_model = match (duplicate_model, get_default_duplicate_model()) {
+            (Some(custom_path), _) => {
+                if !custom_path.exists() {
+                    return Err(err::model(format!(
+                        "Specified duplicate model not found: {:?}",
+                        custom_path
+                    )));
+                }
+                if verbose {
+                    println!("✅ Loaded custom duplicate model from: {:?}", custom_path);
+                }
+                DuplicateClassifier::load(&custom_path).map_err(|e| err::model(e))?
             }
-            if verbose {
-                println!("✅ Loaded custom duplicate model from: {:?}", custom_path);
-            }
-            Some(DuplicateClassifier::load(&custom_path).map_err(|e| err::model(e))?)
-        } else if let Some(config_path) = get_default_duplicate_model() {
-            if config_path.exists() {
+            (None, Some(config_path)) if config_path.exists() => {
                 if verbose {
                     println!(
                         "✅ Loaded configured duplicate model from: {:?}",
                         config_path
                     );
                 }
-                Some(DuplicateClassifier::load(&config_path).map_err(|e| err::model(e))?)
-            } else {
+                DuplicateClassifier::load(&config_path).map_err(|e| err::model(e))?
+            }
+            _ => {
                 if verbose {
-                    println!("🧠 Falling back to embedded duplicate model");
+                    println!("🧠 Using built-in embedded duplicate model");
                 }
-                Some(DuplicateClassifier::load_embedded().map_err(|e| err::model(e))?)
+                DuplicateClassifier::load_embedded().map_err(|e| err::model(e))?
             }
-        } else {
-            if verbose {
-                println!("🧠 Using built-in embedded duplicate model");
-            }
-            Some(DuplicateClassifier::load_embedded().map_err(|e| err::model(e))?)
-        }
+        };
+        Some(loaded_model)
     } else {
         None
     };
@@ -65,7 +63,7 @@ pub async fn run_dedup_report(
     let mut pipeline = Pipeline::new();
     let analysis = pipeline.process_project(&path).await?;
 
-    // Find duplicates
+    // Execute deduplication
     let mut dedup = if let Some(model) = model {
         Deduplicator::new_with_ml(Some(model))
     } else {
@@ -75,19 +73,15 @@ pub async fn run_dedup_report(
 
     let result = dedup.find_duplicates(&analysis.call_graph, &analysis.files);
 
-    // Generate report
+    // Output and save
     let report = dedup.report(&result);
-
-    // Print to terminal
     println!("{}", report);
 
-    // Save to file if output specified
     if let Some(output_path) = output {
         std::fs::write(&output_path, &report)?;
         println!("\n✅ Report saved to: {:?}", output_path);
     }
 
-    // Print summary
     println!("\n📊 Summary:");
     println!("   Duplicate groups: {}", result.duplicate_groups.len());
     println!("   Total token savings: ~{}", result.total_saved_tokens);
