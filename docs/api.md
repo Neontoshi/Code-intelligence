@@ -1,11 +1,8 @@
-## Document 4: `docs/api.md`
-
-```markdown
 # API Documentation
 
 ## Overview
 
-This document describes the public API of `code-intelligence`. The API is designed to be used programmatically for integrating dead code detection into other tools and workflows.
+This document describes the public API of `code-intelligence`. The API is designed to be used programmatically, for integrating dead code detection into other tools and workflows.
 
 ---
 
@@ -13,7 +10,7 @@ This document describes the public API of `code-intelligence`. The API is design
 
 ### ProjectAnalysis
 
-The main analysis result containing all extracted information.
+The main analysis result, containing all extracted information.
 
 ```rust
 pub struct ProjectAnalysis {
@@ -35,7 +32,7 @@ pub struct ProjectAnalysis {
 }
 ```
 
-### Methods
+#### Methods
 
 ```rust
 impl ProjectAnalysis {
@@ -54,31 +51,31 @@ impl ProjectAnalysis {
     /// Get all file paths
     pub fn file_paths(&self) -> Vec<String>;
 
-    /// Check if a function exists
+    /// Check whether a function exists
     pub fn has_function(&self, full_path: &str) -> bool;
 
-    /// Get total function count
+    /// Get the total function count
     pub fn function_count(&self) -> usize;
 
-    /// Get total file count
+    /// Get the total file count
     pub fn file_count(&self) -> usize;
 
-    /// Get call edge count
+    /// Get the call edge count
     pub fn call_edge_count(&self) -> usize;
 
-    /// Generate markdown report
+    /// Generate a Markdown report
     pub fn to_markdown(&self) -> String;
 
-    /// Generate JSON report
+    /// Generate a JSON report
     pub fn to_json(&self) -> String;
 
-    /// Generate training data JSON
+    /// Generate training data as JSON
     pub fn to_training_json(&self) -> String;
 
     /// Generate GraphViz DOT format
     pub fn to_graphviz(&self) -> String;
 
-    /// Generate full report with LLM analysis
+    /// Generate a full report, including LLM analysis
     pub fn to_full_report(&self) -> String;
 }
 ```
@@ -103,17 +100,17 @@ pub struct CallGraph {
 }
 ```
 
-### Methods
+#### Methods
 
 ```rust
 impl CallGraph {
-    /// Create a new empty call graph
+    /// Create a new, empty call graph
     pub fn new() -> Self;
 
     /// Add a function to the graph
     pub fn add_function(&mut self, func: FunctionNode) -> NodeIndex;
 
-    /// Add a call edge between functions
+    /// Add a call edge between two functions
     pub fn add_call(&mut self, caller: NodeIndex, callee: NodeIndex, edge: CallEdge);
 
     /// Get all functions with a given name
@@ -128,16 +125,16 @@ impl CallGraph {
     /// Get all async functions
     pub fn get_async_functions(&self) -> Vec<&FunctionNode>;
 
-    /// Get callees of a function
+    /// Get the callees of a function
     pub fn get_callees(&self, func: NodeIndex) -> Vec<&FunctionNode>;
 
-    /// Get callers of a function
+    /// Get the callers of a function
     pub fn get_callers(&self, func: NodeIndex) -> Vec<&FunctionNode>;
 
-    /// Get resolution confidence for a call
+    /// Get the resolution confidence for a call
     pub fn get_resolution_confidence(&self, caller: &str, callee: &str) -> ResolutionConfidence;
 
-    /// Get unresolved calls for a function
+    /// Get the unresolved calls for a function
     pub fn get_unresolved_calls(&self, full_path: &str) -> Vec<&str>;
 
     /// Get resolution statistics
@@ -146,7 +143,7 @@ impl CallGraph {
     /// Generate DOT format
     pub fn to_dot(&self) -> String;
 
-    /// Calculate fan-in/fan-out metrics
+    /// Calculate fan-in / fan-out metrics
     pub fn calculate_fan_metrics(&mut self);
 
     /// Detect and mark cycle members
@@ -158,7 +155,7 @@ impl CallGraph {
     /// Calculate call depth from entry points
     pub fn calculate_call_depth(&mut self);
 
-    /// Get top important nodes
+    /// Get the top important nodes
     pub fn top_important_nodes(&self, max_nodes: usize, min_importance: f64) -> Vec<NodeIndex>;
 }
 ```
@@ -222,23 +219,23 @@ pub struct Verdict {
 }
 ```
 
-### Methods
+#### Methods
 
 ```rust
 impl Verdict {
-    /// Check if the function is dead
+    /// Check whether the function is dead
     pub fn is_dead(&self) -> bool;
 
-    /// Check if the function is alive
+    /// Check whether the function is alive
     pub fn is_alive(&self) -> bool;
 
-    /// Check if the function needs review
+    /// Check whether the function needs review
     pub fn needs_review(&self) -> bool;
 
-    /// Check if high confidence
+    /// Check whether the verdict is high confidence
     pub fn is_high_confidence(&self) -> bool;
 
-    /// Mark as verified by a user
+    /// Mark the verdict as verified by a user
     pub fn mark_verified(&mut self, verified_by: &str);
 
     /// Format the verdict state
@@ -263,7 +260,7 @@ pub struct VerdictEngine {
 }
 ```
 
-### Methods
+#### Methods
 
 ```rust
 impl VerdictEngine {
@@ -276,10 +273,10 @@ impl VerdictEngine {
     /// Set dynamic references
     pub fn with_dynamic_refs(mut self, refs: Vec<DynamicReference>) -> Self;
 
-    /// Set dead threshold
+    /// Set the dead threshold
     pub fn with_dead_threshold(mut self, threshold: f64) -> Self;
 
-    /// Set alive threshold
+    /// Set the alive threshold
     pub fn with_alive_threshold(mut self, threshold: f64) -> Self;
 
     /// Evaluate a single function
@@ -297,16 +294,16 @@ impl VerdictEngine {
         reachability: &ReachabilityMap,
     ) -> Vec<Verdict>;
 
-    /// Filter dead verdicts
+    /// Filter to dead verdicts
     pub fn filter_dead<'a>(&self, verdicts: &'a [Verdict]) -> Vec<&'a Verdict>;
 
-    /// Filter alive verdicts
+    /// Filter to alive verdicts
     pub fn filter_alive<'a>(&self, verdicts: &'a [Verdict]) -> Vec<&'a Verdict>;
 
-    /// Filter unknown verdicts
+    /// Filter to unknown verdicts
     pub fn filter_unknown<'a>(&self, verdicts: &'a [Verdict]) -> Vec<&'a Verdict>;
 
-    /// Get statistics
+    /// Get summary statistics
     pub fn stats(&self, verdicts: &[Verdict]) -> VerdictStats;
 }
 ```
@@ -315,7 +312,7 @@ impl VerdictEngine {
 
 ### Pipeline
 
-Main pipeline for processing projects.
+The main pipeline for processing projects.
 
 ```rust
 pub struct Pipeline {
@@ -333,14 +330,14 @@ pub struct Pipeline {
 }
 ```
 
-### Methods
+#### Methods
 
 ```rust
 impl Pipeline {
     /// Create a new pipeline
     pub fn new() -> Self;
 
-    /// Set configuration
+    /// Set the configuration
     pub fn with_config(mut self, config: PipelineConfig) -> Self;
 
     /// Enable LLM analysis
@@ -349,34 +346,34 @@ impl Pipeline {
     /// Enable Git analysis
     pub fn enable_git(mut self) -> Self;
 
-    /// Enable disk cache
+    /// Enable disk cache, at the given directory
     pub fn with_cache_dir(mut self, cache_dir: PathBuf) -> Self;
 
     /// Enable incremental analysis
     pub fn enable_incremental(mut self) -> Self;
 
-    /// Set progress reporter
+    /// Set the progress reporter
     pub fn with_progress_reporter(mut self, f: ProgressFn) -> Self;
 
-    /// Set logging
+    /// Set the logger
     pub fn with_logging(mut self, logger: StructuredLogger) -> Self;
 
-    /// Use Ollama phi-2
+    /// Use Ollama phi-2 as the LLM provider
     pub async fn with_ollama_phi2(mut self) -> Result<Self, String>;
 
     /// Process a project
     pub async fn process_project(&mut self, root: &Path) -> Result<ProjectAnalysis, Box<dyn Error>>;
 
-    /// Process a project with Git analysis
+    /// Process a project, including Git analysis
     pub async fn process_project_with_git(&mut self, root: &Path) -> Result<ProjectAnalysis, Box<dyn Error>>;
 
-    /// Check memory usage
+    /// Check current memory usage against the configured limit
     pub fn check_memory(&self) -> Result<(), String>;
 
-    /// Get current memory usage
+    /// Get current memory usage, in MB
     pub fn get_current_memory_usage_mb(&self) -> f64;
 
-    /// Take build summary
+    /// Take the build summary
     pub fn take_build_summary(&mut self) -> Option<BuildSummary>;
 }
 ```
@@ -391,7 +388,7 @@ High-level dead code detection API.
 pub struct DeadCodeDetector;
 ```
 
-### Methods
+#### Methods
 
 ```rust
 impl DeadCodeDetector {
@@ -401,7 +398,7 @@ impl DeadCodeDetector {
     /// Find dead modules
     pub fn find_dead_modules(files: &[ParsedFile]) -> Vec<String>;
 
-    /// Full analysis
+    /// Run a full analysis
     pub fn analyze(
         call_graph: &CallGraph,
         type_graph: &TypeGraph,
@@ -411,10 +408,10 @@ impl DeadCodeDetector {
         git_analysis: Option<&GitAnalysis>,
     ) -> DeadCodeAnalysis;
 
-    /// Generate report
+    /// Generate a report
     pub fn generate_report(analysis: &DeadCodeAnalysis) -> String;
 
-    /// Calculate dead code ratio
+    /// Calculate the dead code ratio
     pub fn dead_code_ratio(call_graph: &CallGraph, files: &[ParsedFile]) -> f64;
 }
 ```
@@ -434,7 +431,7 @@ pub struct DeadCodeClassifier {
 }
 ```
 
-### Methods
+#### Methods
 
 ```rust
 impl DeadCodeClassifier {
@@ -444,19 +441,19 @@ impl DeadCodeClassifier {
     /// Train the model
     pub fn train(&mut self, examples: &[TrainingExample]) -> Result<(), String>;
 
-    /// Predict label
+    /// Predict a label
     pub fn predict(&self, example: &TrainingExample) -> TrainingLabel;
 
-    /// Predict probability (alive)
+    /// Predict the probability of being alive
     pub fn predict_probability(&self, example: &TrainingExample) -> f64;
 
-    /// Predict probability (dead)
+    /// Predict the probability of being dead
     pub fn predict_dead_probability(&self, example: &TrainingExample) -> f64;
 
-    /// Predict from feature vector
+    /// Predict from a raw feature vector
     pub fn predict_features(&self, features: &[f64]) -> f64;
 
-    /// Validate features
+    /// Validate a feature vector
     pub fn validate_features(&self, features: &[f64]) -> Result<(), String>;
 
     /// Check schema compatibility
@@ -465,34 +462,34 @@ impl DeadCodeClassifier {
     /// Get schema info
     pub fn schema_info(&self) -> String;
 
-    /// Get accuracy
+    /// Get model accuracy
     pub fn get_accuracy(&self) -> f64;
 
-    /// Check if trained
+    /// Check whether the model is trained
     pub fn is_trained(&self) -> bool;
 
-    /// Get model reference
+    /// Get a reference to the underlying model
     pub fn get_model(&self) -> Option<&LinearClassifier>;
 
     /// Calibrate the model
     pub fn calibrate(&mut self, val_examples: &[TrainingExample]) -> Result<(), String>;
 
-    /// Predict with calibration
+    /// Predict with calibration applied
     pub fn predict_calibrated(&self, features: &[f64]) -> f64;
 
-    /// Predict alive calibrated
+    /// Predict calibrated probability of being alive
     pub fn predict_alive_calibrated(&self, example: &TrainingExample) -> f64;
 
-    /// Predict dead calibrated
+    /// Predict calibrated probability of being dead
     pub fn predict_dead_calibrated(&self, example: &TrainingExample) -> f64;
 
     /// Print feature importance
     pub fn print_feature_importance(&self);
 
-    /// Save model
+    /// Save the model to disk
     pub fn save(&self, path: &str) -> Result<(), String>;
 
-    /// Load model
+    /// Load a model from disk
     pub fn load(path: &str) -> Result<Self, String>;
 }
 ```
@@ -512,7 +509,7 @@ pub struct DuplicateClassifier {
 }
 ```
 
-### Methods
+#### Methods
 
 ```rust
 impl DuplicateClassifier {
@@ -522,19 +519,19 @@ impl DuplicateClassifier {
     /// Train the model
     pub fn train(&mut self, examples: &[DuplicateExample]) -> f64;
 
-    /// Predict probability
+    /// Predict the probability that two functions are duplicates
     pub fn predict(&self, a: &FunctionFeatures, b: &FunctionFeatures) -> f64;
 
-    /// Check if duplicates
+    /// Check whether two functions are duplicates
     pub fn is_duplicate(&self, a: &FunctionFeatures, b: &FunctionFeatures) -> bool;
 
     /// Evaluate on test data
     pub fn evaluate(&self, examples: &[DuplicateExample]) -> f64;
 
-    /// Save model
+    /// Save the model to disk
     pub fn save(&self, path: &str) -> Result<(), String>;
 
-    /// Load model
+    /// Load a model from disk
     pub fn load(path: &str) -> Result<Self, String>;
 }
 ```
@@ -543,7 +540,7 @@ impl DuplicateClassifier {
 
 ### OutcomeTracker
 
-Track outcomes of dead code verdicts.
+Tracks outcomes of dead code verdicts.
 
 ```rust
 pub struct OutcomeTracker {
@@ -552,7 +549,7 @@ pub struct OutcomeTracker {
 }
 ```
 
-### Methods
+#### Methods
 
 ```rust
 impl OutcomeTracker {
@@ -570,7 +567,7 @@ impl OutcomeTracker {
         project: &str,
     ) -> String;
 
-    /// Update outcome
+    /// Update an outcome
     pub fn update_outcome(
         &mut self,
         id: &str,
@@ -579,10 +576,10 @@ impl OutcomeTracker {
         removed_commit: Option<String>,
     ) -> Result<(), String>;
 
-    /// Mark as removed
+    /// Mark a verdict as removed
     pub fn mark_removed(&mut self, id: &str, commit_hash: Option<&str>) -> Result<(), String>;
 
-    /// Mark as false positive
+    /// Mark a verdict as a false positive
     pub fn mark_false_positive(&mut self, id: &str, reason: &str) -> Result<(), String>;
 
     /// Get all verdicts
@@ -600,10 +597,10 @@ impl OutcomeTracker {
     /// Get statistics
     pub fn get_stats(&self) -> OutcomeStats;
 
-    /// Import verdicts from analysis
+    /// Import verdicts from an analysis
     pub fn import_verdicts(&mut self, dead_verdicts: &[&Verdict], project: &str) -> usize;
 
-    /// Generate report
+    /// Generate a report
     pub fn generate_report(&self) -> String;
 }
 ```
@@ -612,13 +609,13 @@ impl OutcomeTracker {
 
 ### ExplainabilityEngine
 
-Generate explanations for verdicts.
+Generates explanations for verdicts.
 
 ```rust
 pub struct ExplainabilityEngine;
 ```
 
-### Methods
+#### Methods
 
 ```rust
 impl ExplainabilityEngine {
@@ -709,17 +706,18 @@ use code_intelligence::Pipeline;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut pipeline = Pipeline::new();
     let analysis = pipeline.process_project(Path::new("./my-project")).await?;
-    
+
     println!("Found {} functions", analysis.function_count());
-    println!("Dead code ratio: {:.1}%", 
+    println!(
+        "Dead code ratio: {:.1}%",
         DeadCodeDetector::dead_code_ratio(&analysis.call_graph, &analysis.files) * 100.0
     );
-    
+
     Ok(())
 }
 ```
 
-### With ML Model
+### With an ML Model
 
 ```rust
 use code_intelligence::{Pipeline, ml::DeadCodeClassifier};
@@ -727,12 +725,12 @@ use code_intelligence::{Pipeline, ml::DeadCodeClassifier};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model = DeadCodeClassifier::load("models/dead_code_model_v2.bin")?;
-    
+
     let mut pipeline = Pipeline::new();
     let analysis = pipeline.process_project(Path::new("./my-project")).await?;
-    
+
     // ... use model with analysis ...
-    
+
     Ok(())
 }
 ```
@@ -749,13 +747,13 @@ use code_intelligence::{
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let provider = create_ollama_phi2().await?;
     let mut pipeline = Pipeline::new().with_llm(provider);
-    
+
     let analysis = pipeline.process_project(Path::new("./my-project")).await?;
-    
+
     if let Some(llm_analysis) = analysis.llm_analysis {
         println!("LLM Documentation: {}", llm_analysis.documentation.unwrap_or_default());
     }
-    
+
     Ok(())
 }
 ```
@@ -764,7 +762,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Error Handling
 
-All API functions return `Result<T, CodeIntelError>`:
+> **Note:** the method signatures above return a mix of error types — `Box<dyn Error>` (`Pipeline`), `String` (`DeadCodeClassifier`, `DuplicateClassifier`, `OutcomeTracker`), and no `Result` at all in places. `CodeIntelError` below doesn't appear as a return type anywhere else in this document, so treat it as the target error type for the crate rather than something every function currently returns.
 
 ```rust
 pub enum CodeIntelError {
@@ -797,4 +795,3 @@ pub enum CodeIntelError {
 The API follows semantic versioning. Breaking changes will result in a major version bump.
 
 **Current Version**: 0.1.0
-```
