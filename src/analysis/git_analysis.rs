@@ -45,7 +45,8 @@ impl GitAnalyzer {
         let files_output = Self::run_git(
             root,
             &[
-                "ls-files", "--", "*.rs", "*.py", "*.js", "*.ts", "*.go", "*.java",
+                "ls-files", "--", "*.rs", "*.py", "*.js", "*.ts", "*.go", "*.java", "*.dart",
+                "*.php", "*.cpp", "*.cc", "*.cxx", "*.hpp", "*.h",
             ],
         )?;
         let tracked_files: Vec<&str> = files_output.lines().collect();

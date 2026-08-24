@@ -126,6 +126,65 @@ pub fn get_protection_level(func: &FunctionNode) -> ProtectionLevel {
         return ProtectionLevel::Protected;
     }
 
+    // Flutter / Dart Widget lifecycle and handlers
+    if func.file.ends_with(".dart") {
+        let flutter_lifecycle = [
+            "build",
+            "initState",
+            "dispose",
+            "didUpdateWidget",
+            "didChangeDependencies",
+            "setState",
+            "createState",
+            "reassemble",
+            "deactivate",
+        ];
+        if flutter_lifecycle.contains(&func.name.as_str()) {
+            return ProtectionLevel::Protected;
+        }
+        if func.name.starts_with("on")
+            || func.name.starts_with("handle")
+            || func.name.starts_with("_on")
+        {
+            return ProtectionLevel::LikelyAlive;
+        }
+    }
+
+    // PHP Magic Methods & Laravel / Symfony conventions
+    if func.file.ends_with(".php") {
+        if func.name.starts_with("__") {
+            return ProtectionLevel::Protected;
+        }
+        let php_framework = [
+            "handle",
+            "boot",
+            "register",
+            "authorize",
+            "rules",
+            "up",
+            "down",
+            "index",
+            "show",
+            "store",
+            "update",
+            "destroy",
+        ];
+        if php_framework.contains(&func.name.as_str()) {
+            return ProtectionLevel::LikelyAlive;
+        }
+    }
+
+    // C++ Special Member Functions & Destructors
+    if func.file.ends_with(".cpp")
+        || func.file.ends_with(".cc")
+        || func.file.ends_with(".hpp")
+        || func.file.ends_with(".h")
+    {
+        if func.name.starts_with('~') || func.name == "main" || func.name == "operator=" {
+            return ProtectionLevel::Protected;
+        }
+    }
+
     // Go Test & Benchmark conventions (e.g., TestXxx, BenchmarkXxx, ExampleXxx)
     if func.file.ends_with(".go") {
         if func.name.starts_with("Test")

@@ -381,6 +381,17 @@ impl TrainingExample {
             "typescript".to_string()
         } else if file.ends_with(".java") {
             "java".to_string()
+        } else if file.ends_with(".dart") {
+            "dart".to_string()
+        } else if file.ends_with(".php") {
+            "php".to_string()
+        } else if file.ends_with(".cpp")
+            || file.ends_with(".cc")
+            || file.ends_with(".cxx")
+            || file.ends_with(".hpp")
+            || file.ends_with(".h")
+        {
+            "cpp".to_string()
         } else {
             "unknown".to_string()
         }

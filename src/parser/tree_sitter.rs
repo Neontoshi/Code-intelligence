@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
-use tree_sitter::{Language, Node, Parser, Tree};
+use tree_sitter::{Node, Parser, Tree};
 
 #[derive(Debug, Clone)]
 pub struct ParsedFile {
@@ -84,11 +84,13 @@ pub struct TreeSitterParser {
     languages: HashMap<String, LanguageConfig>,
 }
 
+// In LanguageConfig definition:
+#[derive(Clone)]
 struct LanguageConfig {
     name: String,
     #[allow(dead_code)]
     extensions: Vec<String>,
-    language_fn: fn() -> Language,
+    language_fn: fn() -> tree_sitter::Language,
     function_kinds: Vec<String>,
     import_kinds: Vec<String>,
     type_kinds: Vec<String>,
@@ -110,7 +112,7 @@ impl TreeSitterParser {
             LanguageConfig {
                 name: "Rust".to_string(),
                 extensions: vec!["rs".to_string()],
-                language_fn: tree_sitter_rust::language,
+                language_fn: || tree_sitter_rust::LANGUAGE.into(),
                 function_kinds: vec!["function_item".to_string(), "method_item".to_string()],
                 import_kinds: vec!["use_declaration".to_string()],
                 type_kinds: vec![
@@ -129,7 +131,7 @@ impl TreeSitterParser {
             LanguageConfig {
                 name: "Python".to_string(),
                 extensions: vec!["py".to_string()],
-                language_fn: tree_sitter_python::language,
+                language_fn: || tree_sitter_python::LANGUAGE.into(),
                 function_kinds: vec![
                     "function_definition".to_string(),
                     "async_function_definition".to_string(),
@@ -149,7 +151,7 @@ impl TreeSitterParser {
             LanguageConfig {
                 name: "JavaScript".to_string(),
                 extensions: vec!["js".to_string(), "jsx".to_string()],
-                language_fn: tree_sitter_javascript::language,
+                language_fn: || tree_sitter_javascript::LANGUAGE.into(),
                 function_kinds: vec![
                     "function_declaration".to_string(),
                     "function_expression".to_string(),
@@ -171,7 +173,7 @@ impl TreeSitterParser {
             LanguageConfig {
                 name: "TypeScript".to_string(),
                 extensions: vec!["ts".to_string()],
-                language_fn: tree_sitter_typescript::language_typescript,
+                language_fn: || tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
                 function_kinds: vec![
                     "function_declaration".to_string(),
                     "function_expression".to_string(),
@@ -203,7 +205,7 @@ impl TreeSitterParser {
             LanguageConfig {
                 name: "TypeScript".to_string(),
                 extensions: vec!["tsx".to_string()],
-                language_fn: tree_sitter_typescript::language_tsx,
+                language_fn: || tree_sitter_typescript::LANGUAGE_TSX.into(),
                 function_kinds: vec![
                     "function_declaration".to_string(),
                     "function_expression".to_string(),
@@ -242,7 +244,7 @@ impl TreeSitterParser {
             LanguageConfig {
                 name: "Go".to_string(),
                 extensions: vec!["go".to_string()],
-                language_fn: tree_sitter_go::language,
+                language_fn: || tree_sitter_go::LANGUAGE.into(),
                 function_kinds: vec![
                     "function_declaration".to_string(),
                     "method_declaration".to_string(),
@@ -258,7 +260,7 @@ impl TreeSitterParser {
             LanguageConfig {
                 name: "Java".to_string(),
                 extensions: vec!["java".to_string()],
-                language_fn: tree_sitter_java::language,
+                language_fn: || tree_sitter_java::LANGUAGE.into(),
                 function_kinds: vec![
                     "method_declaration".to_string(),
                     "constructor_declaration".to_string(),
@@ -271,6 +273,117 @@ impl TreeSitterParser {
                     "enum_declaration".to_string(),
                     "record_declaration".to_string(),
                 ],
+            },
+        );
+
+        // Dart / Flutter
+        langs.insert(
+            "dart".to_string(),
+            LanguageConfig {
+                name: "Dart".to_string(),
+                extensions: vec!["dart".to_string()],
+                language_fn: || tree_sitter_dart::LANGUAGE.into(),
+                function_kinds: vec![
+                    "function_signature".to_string(),
+                    "method_signature".to_string(),
+                    "function_declaration".to_string(),
+                    "method_declaration".to_string(),
+                    "getter_signature".to_string(),
+                    "setter_signature".to_string(),
+                ],
+                import_kinds: vec!["import_or_export".to_string(), "library_import".to_string()],
+                type_kinds: vec![
+                    "class_definition".to_string(),
+                    "mixin_declaration".to_string(),
+                    "extension_declaration".to_string(),
+                    "enum_declaration".to_string(),
+                ],
+            },
+        );
+
+        // PHP
+        langs.insert(
+            "php".to_string(),
+            LanguageConfig {
+                name: "PHP".to_string(),
+                extensions: vec!["php".to_string()],
+                language_fn: || tree_sitter_php::LANGUAGE_PHP.into(),
+                function_kinds: vec![
+                    "function_definition".to_string(),
+                    "method_declaration".to_string(),
+                    "arrow_function".to_string(),
+                    "anonymous_function_creation_expression".to_string(),
+                ],
+                import_kinds: vec![
+                    "namespace_use_declaration".to_string(),
+                    "require_expression".to_string(),
+                    "include_expression".to_string(),
+                ],
+                type_kinds: vec![
+                    "class_declaration".to_string(),
+                    "interface_declaration".to_string(),
+                    "trait_declaration".to_string(),
+                    "enum_declaration".to_string(),
+                ],
+            },
+        );
+
+        // C++ (cpp, cc, cxx, hpp, h)
+        let cpp_config = LanguageConfig {
+            name: "CPP".to_string(),
+            extensions: vec![
+                "cpp".to_string(),
+                "cc".to_string(),
+                "cxx".to_string(),
+                "hpp".to_string(),
+                "h".to_string(),
+            ],
+            language_fn: || tree_sitter_cpp::LANGUAGE.into(),
+            function_kinds: vec![
+                "function_definition".to_string(),
+                "declaration".to_string(),
+                "template_declaration".to_string(),
+                "field_declaration".to_string(),
+            ],
+            import_kinds: vec![
+                "preproc_include".to_string(),
+                "using_declaration".to_string(),
+            ],
+            type_kinds: vec![
+                "class_specifier".to_string(),
+                "struct_specifier".to_string(),
+                "enum_specifier".to_string(),
+                "type_definition".to_string(),
+            ],
+        };
+
+        langs.insert("cpp".to_string(), cpp_config);
+        langs.insert(
+            "cc".to_string(),
+            LanguageConfig {
+                extensions: vec!["cc".to_string()],
+                ..langs.get("cpp").unwrap().clone()
+            },
+        );
+        langs.insert(
+            "cxx".to_string(),
+            LanguageConfig {
+                extensions: vec!["cxx".to_string()],
+                ..langs.get("cpp").unwrap().clone()
+            },
+        );
+        langs.insert(
+            "hpp".to_string(),
+            LanguageConfig {
+                extensions: vec!["hpp".to_string()],
+                ..langs.get("cpp").unwrap().clone()
+            },
+        );
+        langs.insert(
+            "h".to_string(),
+            LanguageConfig {
+                extensions: vec!["h".to_string()],
+                ..langs.get("cpp").unwrap().clone()
             },
         );
 
@@ -1040,11 +1153,32 @@ impl TreeSitterParser {
                 !func_name.starts_with('_') || func_name.starts_with("__init__")
             }
             "Java" => {
-                // Java: Check for public keyword in method modifiers
                 if let Ok(text) = node.utf8_text(source.as_bytes()) {
                     text.contains("public ")
                 } else {
                     false
+                }
+            }
+            "Dart" => {
+                // Dart: Identifiers without a leading underscore are public
+                !func_name.starts_with('_')
+            }
+            "PHP" => {
+                if let Ok(text) = node.utf8_text(source.as_bytes()) {
+                    text.contains("public ")
+                        || (!text.contains("private ") && !text.contains("protected "))
+                } else {
+                    true
+                }
+            }
+            "CPP" => {
+                if let Ok(text) = node.utf8_text(source.as_bytes()) {
+                    // Exported if declared with export, extern, or in a header
+                    text.contains("extern ")
+                        || text.contains("export ")
+                        || !text.contains("static ")
+                } else {
+                    true
                 }
             }
             "JavaScript" | "TypeScript" => {
@@ -1115,19 +1249,5 @@ impl TreeSitterParser {
         } else {
             Some(doc_lines.join("\n"))
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn dump_jsx_ast() {
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_typescript::language_tsx())
-            .unwrap();
-        let src = r#"const X = () => <button onClick={handleFoo}>hi</button>;"#;
-        let tree = parser.parse(src, None).unwrap();
-        println!("{}", tree.root_node().to_sexp());
     }
 }

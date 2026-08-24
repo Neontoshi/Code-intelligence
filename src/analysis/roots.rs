@@ -123,26 +123,25 @@ impl RootDetector {
     fn detect_application_roots(call_graph: &CallGraph) -> HashSet<FunctionId> {
         let mut roots = HashSet::new();
 
-        // ⭐ Only treat as entry point if there's supporting context
         let app_entry_names = ["main", "async_main", "run", "start", "init", "setup"];
 
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
 
-            // Must be exactly "main" or "async_main"
+            // Must be exactly "main", "async_main", or Flutter's lib/main.dart
             if func.name == "main" || func.name == "async_main" {
+                roots.insert(func.full_path.clone());
+                continue;
+            }
+
+            // PHP entry points (index.php, artisan, bin/console)
+            if func.file.ends_with("index.php") || func.file.ends_with("artisan") {
                 roots.insert(func.full_path.clone());
                 continue;
             }
 
             // For generic names like "run", "start", "init", "setup"
             if app_entry_names.contains(&func.name.as_str()) {
-                // Only treat as root if there's supporting evidence:
-                // 1. It's the only function with that name in the project
-                // 2. It has no callers (true entry point)
-                // 3. It's in a bin/ or main.rs file
-                // 4. It has #[tokio::main] or similar attribute
-
                 let is_entry = Self::is_likely_entry_point(func, call_graph);
                 if is_entry {
                     roots.insert(func.full_path.clone());
@@ -163,14 +162,12 @@ impl RootDetector {
             .unwrap_or(false)
     }
 
-    ///Check if a function is likely a true entry point
+    /// Check if a function is likely a true entry point
     fn is_likely_entry_point(func: &FunctionNode, call_graph: &CallGraph) -> bool {
-        // Check 1: No callers (true entry point)
         let idx = call_graph.name_index.get(&func.full_path);
         if let Some(&idx) = idx {
             let callers = call_graph.get_callers(idx);
             if callers.is_empty() {
-                // Check 2: In bin/ or main.rs file
                 if func.file.contains("/bin/")
                     || func.file.ends_with("main.rs")
                     || func.file.contains("/src/bin/")
@@ -178,12 +175,10 @@ impl RootDetector {
                     return true;
                 }
 
-                // Check 3: Has async attribute (likely tokio::main)
                 if func.is_async {
                     return true;
                 }
 
-                // Check 4: Has doc comment with entry point indicators
                 if let Some(doc) = &func.doc_comment {
                     if doc.contains("#[tokio::main]")
                         || doc.contains("#[async_std::main]")
@@ -222,14 +217,12 @@ impl RootDetector {
         roots
     }
 
-    // Update the detect_export_roots function
     fn detect_export_roots(call_graph: &CallGraph) -> HashSet<FunctionId> {
         let mut roots = HashSet::new();
 
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
 
-            // React components are roots (even if not public)
             let is_jsx_file = func.file.ends_with(".tsx") || func.file.ends_with(".jsx");
             let is_ts_family =
                 is_jsx_file || func.file.ends_with(".ts") || func.file.ends_with(".js");
@@ -244,14 +237,10 @@ impl RootDetector {
             let is_hook = is_ts_family && Self::is_react_hook_name(&func.name);
 
             if is_component || is_hook {
-                if is_hook {
-                    eprintln!("🪝 export_roots: hook root added: {}", func.full_path);
-                }
                 roots.insert(func.full_path.clone());
                 continue;
             }
 
-            // Public functions exported from package roots/entry barrels
             let is_entry_barrel = func.file.ends_with("/index.ts")
                 || func.file.ends_with("/index.js")
                 || func.file.ends_with("/index.tsx")
@@ -264,7 +253,6 @@ impl RootDetector {
                 roots.insert(func.full_path.clone());
             }
 
-            // Go exported functions (capitalized) are EXPORTS, not FFI
             if func.file.ends_with(".go") {
                 let is_exported = func
                     .name
@@ -281,24 +269,20 @@ impl RootDetector {
         roots
     }
 
-    // Update the detect_ffi_roots function
     fn detect_ffi_roots(call_graph: &CallGraph) -> HashSet<FunctionId> {
         let mut roots = HashSet::new();
 
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
 
-            // 1. Function name suggests FFI
             if func.name.contains("extern") || func.name.contains("ffi") {
                 roots.insert(func.full_path.clone());
             }
 
-            // 2. File path suggests FFI
             if func.file.contains("/ffi/") || func.file.contains("/extern/") {
                 roots.insert(func.full_path.clone());
             }
 
-            // 3. Check for extern "C" in doc comment
             if let Some(doc) = &func.doc_comment {
                 if doc.contains("extern \"C\"")
                     || doc.contains("#[no_mangle]")
@@ -309,8 +293,7 @@ impl RootDetector {
                 }
             }
 
-            // 4. Check for #[no_mangle] attribute via function name pattern
-            if func.name.starts_with("_") && func.name.contains("c_") {
+            if func.name.starts_with('_') && func.name.contains("c_") {
                 roots.insert(func.full_path.clone());
             }
         }
@@ -352,7 +335,7 @@ impl RootDetector {
                 }
             }
 
-            // Java/Spring - check function annotations
+            // Java/Spring
             if func.file.ends_with(".java") {
                 if let Some(file) = files.iter().find(|f| f.path == func.file) {
                     if let Some(func_info) = file.functions.iter().find(|fi| fi.name == func.name) {
@@ -377,7 +360,7 @@ impl RootDetector {
                 }
             }
 
-            // Python: Web frameworks, CLI commands, pytest, and top-level entry modules
+            // Python
             if func.file.ends_with(".py") {
                 if func.file.ends_with("__main__.py")
                     || func.file.ends_with("manage.py")
@@ -409,6 +392,53 @@ impl RootDetector {
                                 break;
                             }
                         }
+                    }
+                }
+            }
+
+            // Dart / Flutter
+            if func.file.ends_with(".dart") {
+                let is_widget = func.file.contains("/widgets/")
+                    || func.file.contains("/pages/")
+                    || func.file.contains("/screens/")
+                    || func.file.contains("/views/");
+
+                if is_widget && func.is_public {
+                    roots.insert(func.full_path.clone());
+                    continue;
+                }
+            }
+
+            // PHP Laravel / Symfony
+            if func.file.ends_with(".php") {
+                if let Some(file) = files.iter().find(|f| f.path == func.file) {
+                    if let Some(func_info) = file.functions.iter().find(|fi| fi.name == func.name) {
+                        for decorator in &func_info.decorators {
+                            let d = decorator.to_lowercase();
+                            if d.contains("route")
+                                || d.contains("get")
+                                || d.contains("post")
+                                || d.contains("livewire")
+                            {
+                                roots.insert(func.full_path.clone());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // C++
+            if func.file.ends_with(".cpp")
+                || func.file.ends_with(".hpp")
+                || func.file.ends_with(".h")
+            {
+                if let Some(doc) = &func.doc_comment {
+                    if doc.contains("Q_INVOKABLE")
+                        || doc.contains("EMSCRIPTEN_KEEPALIVE")
+                        || doc.contains("JNIEXPORT")
+                    {
+                        roots.insert(func.full_path.clone());
                     }
                 }
             }
@@ -458,7 +488,6 @@ impl ReachabilityAnalyzer {
         let mut reachable_from: HashMap<FunctionId, Vec<FunctionId>> = HashMap::new();
         let mut queue = VecDeque::new();
 
-        // Initialize with all roots
         for root_id in &root_ids {
             if !reachable.contains(root_id) {
                 reachable.insert(root_id.clone());
@@ -501,7 +530,6 @@ impl ReachabilityAnalyzer {
             }
         }
 
-        // Compute unreachable
         let mut unreachable = HashSet::new();
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
@@ -523,7 +551,6 @@ impl ReachabilityAnalyzer {
         }
     }
 
-    /// Legacy method - kept for compatibility
     pub fn find_reachable_functions(
         call_graph: &CallGraph,
         roots: &RootSet,

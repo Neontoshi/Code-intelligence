@@ -109,10 +109,24 @@ pub fn detect_project_type(path: &Path) -> Option<String> {
     let has_go = path.join("go.mod").exists();
     let has_java = path.join("pom.xml").exists() || path.join("build.gradle").exists();
     let has_python = path.join("requirements.txt").exists() || path.join("pyproject.toml").exists();
-    let lang_count = [has_rust, has_typescript, has_go, has_java, has_python]
-        .iter()
-        .filter(|&&x| x)
-        .count();
+    let has_dart = path.join("pubspec.yaml").exists();
+    let has_php = path.join("composer.json").exists();
+    let has_cpp = path.join("CMakeLists.txt").exists() || path.join("Makefile").exists();
+
+    let lang_count = [
+        has_rust,
+        has_typescript,
+        has_go,
+        has_java,
+        has_python,
+        has_dart,
+        has_php,
+        has_cpp,
+    ]
+    .iter()
+    .filter(|&&x| x)
+    .count();
+
     if lang_count > 1 {
         Some("mixed".to_string())
     } else if has_rust {
@@ -127,6 +141,12 @@ pub fn detect_project_type(path: &Path) -> Option<String> {
         Some("java".to_string())
     } else if has_python {
         Some("python".to_string())
+    } else if has_dart {
+        Some("dart".to_string())
+    } else if has_php {
+        Some("php".to_string())
+    } else if has_cpp {
+        Some("cpp".to_string())
     } else {
         None
     }

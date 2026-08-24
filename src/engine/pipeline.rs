@@ -227,7 +227,10 @@ impl Pipeline {
     // File Hash Collection for Cache
     fn collect_file_hashes(&self, root: &Path) -> Vec<CachedFileEntry> {
         let mut entries = Vec::new();
-        let supported_extensions = ["rs", "py", "js", "jsx", "ts", "tsx", "go", "java"];
+        let supported_extensions = [
+            "rs", "py", "js", "jsx", "ts", "tsx", "go", "java", "dart", "php", "cpp", "cc", "cxx",
+            "hpp", "h",
+        ];
 
         for entry in walkdir::WalkDir::new(root)
             .into_iter()

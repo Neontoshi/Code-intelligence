@@ -307,11 +307,13 @@ impl DynamicRefDetector {
     /// AST Tree-Sitter based target extraction
     fn extract_dynamic_calls_via_ast(file: &ParsedFile) -> Vec<ExtractedDynamicCall> {
         let mut extracted = Vec::new();
-        let lang = match file.language.as_str() {
-            "python" => tree_sitter_python::language(),
-            "go" => tree_sitter_go::language(),
-            "javascript" => tree_sitter_javascript::language(),
-            "typescript" => tree_sitter_typescript::language_typescript(),
+        let lang: tree_sitter::Language = match file.language.as_str() {
+            "python" | "Python" => tree_sitter_python::LANGUAGE.into(),
+            "go" | "Go" => tree_sitter_go::LANGUAGE.into(),
+            "javascript" | "JavaScript" => tree_sitter_javascript::LANGUAGE.into(),
+            "typescript" | "TypeScript" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            "php" | "PHP" => tree_sitter_php::LANGUAGE_PHP.into(),
+            "cpp" | "CPP" => tree_sitter_cpp::LANGUAGE.into(),
             _ => return extracted,
         };
 
@@ -382,6 +384,32 @@ impl DynamicRefDetector {
                             ref_type: DynamicRefType::Reflection,
                             confidence: 0.90,
                             context: "Go reflect.MethodByName() dispatch".to_string(),
+                        });
+                    },
+                );
+            }
+            "php" => {
+                let query_str = r#"
+                                (function_call_expression
+                                    function: (name) @fn (#eq? @fn "call_user_func")
+                                    arguments: (arguments
+                                        (string (string_content) @target_str)
+                                    )
+                                )
+                            "#;
+                Self::run_ast_query(
+                    query_str,
+                    &lang,
+                    tree.root_node(),
+                    &file.source,
+                    |target, node| {
+                        extracted.push(ExtractedDynamicCall {
+                            enclosing_function: Self::find_enclosing_function(node, &file.source),
+                            target_name: target.trim_matches(|c| c == '"' || c == '\'').to_string(),
+                            pattern: "call_user_func".to_string(),
+                            ref_type: DynamicRefType::Reflection,
+                            confidence: 0.90,
+                            context: "PHP call_user_func dispatch".to_string(),
                         });
                     },
                 );

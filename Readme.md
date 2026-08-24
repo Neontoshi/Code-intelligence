@@ -7,168 +7,137 @@
 [![Model Accuracy](https://img.shields.io/badge/accuracy-95.3%25-brightgreen)](docs/evaluation_report.md)
 [![Precision](https://img.shields.io/badge/precision-96.8%25-brightgreen)](docs/evaluation_report.md)
 
-**Semantic Code Intelligence Engine for AI Dead Code Detection, Duplicate Detection, and Code Analysis**
+**Semantic Code Intelligence Engine for AI Dead Code Detection, Duplicate Detection, and Codebase Analysis**
 
-[![CI](https://github.com/neontoshi/Code-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/neontoshi/Code-intelligence/actions/workflows/ci.yml)
-[![Documentation](https://img.shields.io/badge/docs-passing-brightgreen)](docs/)
-
-`code-intelligence` is a fast, ML-powered static and dynamic semantic analysis platform designed to inspect, optimize, and map complex codebases. 
-
-**Core Capabilities:**
-- Full AST analysis across multiple languages (Rust, Python, TypeScript, Go, Java)
-- ML-driven dead code detection with 95%+ accuracy
-- Semantic duplicate elimination and refactoring suggestions
-- Call/import/type graph visualization (interactive HTML)
-- Terminal dashboard for real-time review and decision management
-
-**Optional Extensions:**
-- Local/cloud LLM analysis for documentation, bug detection, and code understanding
+`code-intelligence` is a fast, multi-language semantic analysis platform designed to map call graphs, detect dead code with high precision, eliminate structural duplication, and streamline refactoring across large polyglot codebases.
 
 ---
 
-## ⚡ Key Highlights & Capabilities
+## ⚡ Core Capabilities & Highlights
 
-### Core Analysis
-
-* **Unified Verdict Engine**: Combines static reachability analysis, fan-in/fan-out graph metrics, dynamic reference detection, and calibrated ML models to determine if code is `Dead`, `Alive`, or needs review.
-
-* **Multi-Language AST Parsing**: Full Tree-Sitter support for **Rust, TypeScript, JavaScript, Python, Go, and Java**.
-
-* **Safe False-Positive Filtering**: Built-in awareness for trait implementations, public framework decorators (React hooks/components, FastAPI/Flask routes, Spring annotations, NestJS controllers), and lifecycle entry points.
-
-* **Duplicate Code Detection**: Identifies identical and structurally similar code blocks using MinHash, AST hashing, and ML-based duplicate classification to suggest refactorings and estimate token savings.
-
-* **Interactive Graphs & UI**:
-  * Full detailed interactive call graphs in HTML.
-  * Circular architectural layer overviews designed for non-technical walk-throughs.
-  * Terminal UI Dashboard (Ratatui/Crossterm) for real-time review, status tracking, and decision management.
-
-* **Outcome Management**: Built-in ledger tracking (`.code-intelligence-outcomes.json`) to confirm removals, track false positives, and continuously improve training datasets.
-
-### Optional Extensions
-
-* **LLM Integration** (optional): Works with local (Ollama) and cloud providers (OpenAI, Anthropic) to generate documentation, summarize function logic, and flag code smells. Enable with `--llm` flag.
+* **Unified Verdict Engine**: Combines static reachability analysis, fan-in/fan-out graph metrics, dynamic reference detection, and calibrated linear ML models to categorize symbols into `DefinitelyAlive`, `ProbablyAlive`, `Unknown`, `ProbablyDead`, or `DefinitelyDead`[cite: 1].
+* **Polyglot AST Support**: Native Tree-Sitter parsing and resolution across **9 languages**:
+  * **Rust**: `impl` blocks, traits, operator overloads, FFI, and macros.
+  * **TypeScript / TSX / JavaScript**: ES6 modules, barrel exports, React component lifecycle methods, hooks (`use*`), and UI event handlers[cite: 1, 3].
+  * **Python**: Decorators (FastAPI, Flask, Pytest, Celery), dunder magic methods, `self.`/`cls.` invocations, and `getattr()` string dispatches[cite: 1].
+  * **Go**: Export capitalization, receiver methods (`func (r *Repo)`), `init()` hooks, `Test*`/`Benchmark*` suites, and `reflect.MethodByName`[cite: 1].
+  * **Java**: Access modifiers, class methods (`this.`), record types, and Spring/Jakarta annotations (`@GetMapping`, `@Service`, `@Repository`)[cite: 1, 3].
+  * **Dart / Flutter**: Widget lifecycle methods (`build`, `initState`, `dispose`), state handlers, and `lib/main.dart` application roots.
+  * **PHP**: Magic methods, Laravel/Symfony controller attributes, and dynamic execution (`call_user_func`).
+  * **C++**: Destructors, special member functions, entry macros, and header file declarations.
+* **Smart Dynamic Reference Detection**: AST pattern extractors track reflection, dynamic imports (`import()`, `require()`), IPC bridges (Tauri `invoke(...)`, Electron `ipcRenderer.send(...)`), and string-based routing dispatches[cite: 1].
+* **Structural Duplicate Elimination**: Identifies duplicate blocks and clones using MinHash, AST hashing, and ML-based duplicate classification to calculate token savings and refactoring suggestions[cite: 1].
+* **Outcome Management**: Built-in tracking ledger (`.code-intelligence-outcomes.json`) records removals and false-positive dismissals to continuously fine-tune training datasets[cite: 1].
+* **Interactive Terminal Dashboard**: Full-featured TUI built with Ratatui and Crossterm for live inspection, graph metrics, file-by-file categorization, and decision management[cite: 1].
+* **Visual Graph Output**: Exports interactive D3.js call graphs and circular architectural layer overviews in standalone HTML[cite: 1].
+* **Optional LLM Integration**: Pluggable provider support (Ollama, OpenAI, Anthropic) for documentation generation, automated function summarization, and issue auditing[cite: 1].
 
 ---
 
 ## 📦 Installation
 
-### 1. Prerequisites
+### Prerequisites
 
-* [Rust & Cargo](https://rustup.rs/) (edition 2021)
+* [Rust & Cargo](https://rustup.rs/) (1.70+)
+* (Optional) [Ollama](https://ollama.com/) running locally for offline LLM features[cite: 1]
 
-* (Optional) [Ollama](https://ollama.com/) running locally for offline LLM features
-
-### 2. Build & Install Everything
-
-To install the `ci` binary and all supporting evaluation and training tools to `~/.cargo/bin`:
+### Build & Install
 
 ```bash
-git clone https://github.com/neontoshi/Code-intelligence
-cd code-intelligence
+git clone [https://github.com/neontoshi/Code-intelligence.git](https://github.com/neontoshi/Code-intelligence.git)
+cd Code-intelligence
 cargo install --path .
+
 ```
 
-### 3. Verify Installation
+Verify the installation:
 
 ```bash
 ci --version
 ci --help
+
 ```
 
 ---
 
-## 🚀 Quick Start Guide
+## 🚀 Quick Start
 
-### Step 1: Configure Default Settings
+### 1. Global Configuration
 
-Set your default model and threshold in your global configuration (`~/.config/code-intelligence/config.toml`):
+Set up default model paths, classification thresholds, and LLM preferences in `~/.config/code-intelligence/config.toml`:
 
 ```bash
-# Point to your calibrated dead code model
+# Set default calibrated classification model
 ci config set model models/dead_code_model_v4_balanced_calibrated.bin
 
-# Set the default classification threshold (0.0 - 1.0)
-ci config set threshold 0.80
+# Set decision threshold (default: 0.92)
+ci config set threshold 0.92
 
-# Set preferred local/cloud LLM provider (optional)
+# Configure LLM provider (optional)
 ci config set llm_provider ollama
 ci config set llm_model phi:2.7b
+
 ```
 
-### Step 2: Analyze a Project
+### 2. Run Dead Code Check
 
-Navigate to any target codebase and trigger the analysis:
+Scan a project directory to generate a full dead code report:
 
 ```bash
-cd ~/Documents/your-project
-ci analyze
+ci analyze ~/Documents/my-project
+
 ```
 
-### Step 3: Inspect & Manage Dead Code
+### 3. Launch Interactive Terminal Dashboard
 
 ```bash
-# List all pending dead functions
-ci list
+ci dashboard ~/Documents/my-project
 
-# Review outcome statistics
-ci stats --detailed
-
-# Mark a function as removed after deleting it in your editor
-ci remove unused_helper_function --commit abc1234
-
-# Mark a function as a false positive so it won't be flagged again
-ci keep renderCustomView "Required by third-party plugin"
 ```
 
 ---
 
 ## 🛠️ CLI Reference (`ci`)
 
-The primary executable `ci` provides commands for code analysis, review, model operations, and reporting:
-
-### 1. Code Analysis & Inspection
+### 1. Inspection & Analysis
 
 | Command | Description | Example |
 | --- | --- | --- |
 | `ci analyze [path]` | Scan project for dead functions, types, and modules
 
- | `ci analyze ~/project --threshold 0.80 --git`<br> |
-| `ci dedup [path]` | Find identical and structurally duplicate functions
+ | `ci analyze . --threshold 0.92 --git`<br> |
+| `ci dedup [path]` | Find identical and structural code duplicates
 
- | `ci dedup . --threshold 0.85 --ml`<br> |
-| `ci graph [path]` | Generate HTML graph visualization (`interactive` or `overview`)
-
- | `ci graph . --mode overview --output map.html`<br> |
-| `ci llm [path]` | Run deep semantic review and bug scan via LLM (optional)
-
- | `ci llm . --provider openai --model gpt-4`<br> |
+ | `ci dedup . --threshold 0.85`<br> |
 | `ci dashboard [path]` | Launch interactive terminal UI (Ratatui)
 
- | `ci dashboard .`<br> |
+ | `ci dashboard .` |
+| `ci graph [path]` | Generate HTML call graphs (`interactive` or `overview`)
 
-### 2. Outcome Management & Tracking
+ | `ci graph . --output graph.html` |
+| `ci llm [path]` | Run deep semantic review and bug scan via LLM
+
+ | `ci llm . --provider openai --model gpt-4`<br> |
+
+### 2. Outcome Tracking & Management
 
 | Command | Description | Example |
 | --- | --- | --- |
-| `ci list [path]` | Display detected dead code candidates
+| `ci list [path]` | List detected dead code candidates
 
- | `ci list --all`<br> |
+ | `ci list --all` |
 | `ci remove <name>` | Mark dead candidate as deleted in the repo
 
- | `ci remove processOrder --commit 8f3d1b`<br> |
+ | `ci remove processOrder --commit 8f3d1b` |
 | `ci keep <name> "<reason>"` | Mark candidate as false positive / intentionally kept
 
- | `ci keep handlePing "Used by health check"`<br> |
-| `ci update <id> <action>` | Update verdict by specific unique ID
-
- | `ci update auth_1710928 removed`<br> |
+ | `ci keep handlePing "Health check callback"` |
 | `ci stats [path]` | View removal rates and false-positive metrics
 
- | `ci stats --detailed`<br> |
-| `ci report [path]` | Generate markdown, JSON, or HTML analysis summaries
+ | `ci stats --detailed` |
+| `ci report [path]` | Export markdown, JSON, or HTML analysis summaries
 
- | `ci report --format markdown --output report.md`<br> |
+ | `ci report --format markdown --output report.md` |
 
 ### 3. ML Training, Calibration & Experimentation
 
@@ -176,263 +145,111 @@ The primary executable `ci` provides commands for code analysis, review, model o
 | --- | --- | --- |
 | `ci train` | Train a linear classifier for dead code detection
 
- | `ci train --data data/train.json --precision 0.95`<br> |
-| `ci train-duplicate` | Train a classifier for code duplicate identification
+ | `ci train --train-data data/train.json`<br> |
+| `ci train-duplicate` | Train classifier for duplicate code detection
 
- | `ci train-duplicate data/pairs.json --output dup_model.bin`<br> |
-| `ci calibrate` | Calibrate confidence scores (temperature scaling, histogram)
+ | `ci train-duplicate data/pairs.json` |
+| `ci calibrate` | Calibrate confidence scores (temperature scaling)
 
  | `ci calibrate --method temperature --val-data data/val.json`<br> |
-| `ci tune` | Find the optimal decision threshold for target precision
+| `ci compare` | Compare accuracy and F1 across model configurations
 
- | `ci tune --precision 0.99`<br> |
-| `ci compare` | Compare accuracy and F1 across multiple model configurations
-
- | `ci compare --train-data data/train.json`<br> |
-| `ci features` | Display top differentiating features per programming language
+ | `ci compare --train-data data/train.json` |
+| `ci features` | Display top differentiating features per language
 
  | `ci features --data combined_training.json`<br> |
 | `ci ablation` | Run feature ablation studies to measure feature importance
 
  | `ci ablation --output-dir ./ablation_results`<br> |
-| `ci evaluate-lang` | Evaluate precision, recall, and false-positive rate per language
 
- | `ci evaluate-lang --model model.bin --test-data data/test.json`<br> |
-
-### 4. LLM Analysis (Optional)
-
-> **Note**: LLM analysis is an optional extension. The core dead-code detection and duplicate detection work without it.
-
-#### `ci llm`
-
-Run LLM-powered analysis (requires Ollama or API key).
-
-```bash
-# With Ollama (local)
-ci llm . --provider ollama
-
-# With OpenAI (cloud)
-ci llm . --provider openai --model gpt-4 --api-key $OPENAI_API_KEY
-
-# With custom temperature
-ci llm . --temperature 0.5
-```
-
-**Options:**
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--provider` | ollama, openai, anthropic | ollama |
-| `--model` | Model name | phi:2.7b |
-| `--api-key` | API key | - |
-| `--temperature` | Temperature (0.0-1.0) | 0.3 |
-| `--max-tokens` | Max output tokens | 1000 |
-
-### 5. Training Data Management
+### 4. Training Data Utilities
 
 | Command | Description | Example |
 | --- | --- | --- |
 | `ci export [path]` | Extract AST and graph feature vectors into training JSON
 
- | `ci export . --output repo_features.json`<br> |
+ | `ci export . --output features.json`<br> |
 | `ci merge` | Deduplicate and split repo datasets into train/val/test splits
 
  | `ci merge --input "training_data/*.json" --dedup`<br> |
 | `ci collect` | Clone public repositories and generate bulk training sets
 
  | `ci collect --max-repos 25`<br> |
-| `ci verify` | Produce a Markdown review checklist for dead candidates
-
- | `ci verify --data data/val.json --output checklist.md`<br> |
-| `ci self-analyze` | Run full analysis pipeline on the `code-intelligence` codebase
-
- | `ci self-analyze --format full`<br> |
-
-### 6. Global Configuration
-
-| Command | Description | Example |
-| --- | --- | --- |
-| `ci config set <key> <val>` | Update setting (`model`, `threshold`, `llm_provider`, `llm_model`, `verbose`)
-
- | `ci config set threshold 0.60`<br> |
-| `ci config get <key>` | Read active config setting
-
- | `ci config get model`<br> |
-| `ci config list` | Show defaults and per-project configurations
-
- | `ci config list`<br> |
+| `ci self-analyze` | Run full analysis pipeline on `code-intelligence` itself | `ci self-analyze --format full` |
 
 ---
 
-## 🧰 Standalone Binaries
+## 🧰 Standalone Cargo Binaries
 
-In addition to the `ci` driver, specialized binaries are available directly via Cargo:
+You can also run specialized tools directly using Cargo:
 
 ```bash
 # Core analyzers
-cargo run --release --bin dead_code_check -- ./path/to/project --model models/dead_code_model_v4_balanced_calibrated.bin
-cargo run --release --bin dedup_check -- ./path/to/project --threshold 0.80
+cargo run --release --bin dead_code_check -- ./path/to/project --threshold 0.92
+cargo run --release --bin dedup_check -- ./path/to/project --threshold 0.85
 cargo run --release --bin dead_code_dashboard -- ./path/to/project
 
-# ML Pipeline & Data Engineering
-cargo run --release --bin collect_training_data
+# ML Pipeline & Calibration
 cargo run --release --bin merge_all_training_data
-cargo run --release --bin train_model -- --train-data data/train.json --target-precision 0.95
-cargo run --release --bin calibrate_model -- --model model.bin --val-data data/val.json
-cargo run --release --bin tune_threshold -- --model model.bin --val-data data/val.json --target-precision 0.99
-cargo run --release --bin evaluate_per_language -- --model model.bin --test-data data/test.json
+cargo run --release --bin train -- --train-data data/train.json
+cargo run --release --bin calibration_analysis -- --model model.bin --val-data data/val.json --method temperature
+cargo run --release --bin evaluate -- detailed --model model.bin --test-data data/test.json
 cargo run --release --bin feature_ablation -- --train-data data/train.json --val-data data/val.json
+
 ```
 
 ---
 
-## 🖥️ Terminal Interactive Dashboard (`ci dashboard`)
+## 🖥️ Terminal Dashboard Navigation
 
-Launch a full-screen terminal UI built with `ratatui`:
+* **Summary Tab**: High-level project metrics, dead function percentage, and estimated removable lines of code.
 
-```bash
-ci dashboard ~/Documents/my-project
-```
 
-### Dashboard Views & Navigation:
+* **Charts Tab**: Visual distribution of dead code across modules, languages, and confidence intervals.
+* **List Tab**: Interactive table of candidate functions with detail inspection and evidence breakdown.
+* **By File Tab**: File-by-file grouped breakdown of dead functions and types.
+* **Priority Tab**: Ordered step-by-step removal plan minimizing breakage risk.
 
-* **Summary**: High-level metrics, health status, and estimated removable lines of code.
 
-* **Charts**: Visual distribution of dead code across modules, languages, and confidence intervals.
+* **History Tab**: Audit log of confirmed removals and false-positive dismissals.
 
-* **List**: Sortable table of dead function candidates with line numbers and confidence scores.
 
-* **By File**: File-by-file grouped breakdown of dead functions and types.
-
-* **Priority**: Ordered step-by-step removal plan minimizing breakage risk.
-
-* **History**: Audit log of confirmed removals, false-positive dismissals, and user actions.
 
 **Keybindings**:
 
 * `Tab` / `Right` / `l`: Next tab
 * `BackTab` / `Left` / `h`: Previous tab
-* `Down` / `j` & `Up` / `k`: Scroll list items
+* `Down` / `j` & `Up` / `k`: Navigate list items
 * `g` / `G`: Jump to top / bottom
+* `d`: Mark candidate as confirmed Dead
+* `f`: Mark candidate as False Positive (prompts for reason)
+* `s`: Defer candidate review
 * `q` / `Esc`: Exit dashboard
 
 ---
 
-## 🌐 Call Graph Visualizations (`ci graph`)
-
-`code-intelligence` provides two visual graph formats rendered entirely in HTML/SVG using D3.js:
-
-```bash
-# 1. Detailed Interactive View (for engineering analysis)
-ci graph . --mode interactive --output call_graph.html
-
-# 2. High-Level Architectural View (for presentations and non-tech stakeholders)
-ci graph . --mode overview --output call_graph_overview.html
-```
-
----
-
-## 🔄 CI/CD Automation Examples
-
-### 1. GitHub Actions (Dead Code Gate & Report)
-
-```yaml
-name: Dead Code & Optimization Gate
-
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-
-jobs:
-  analyze:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Setup Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
-
-      - name: Install Code Intelligence
-        run: |
-          git clone https://github.com/neontoshi/code-intelligence.git /tmp/ci
-          cd /tmp/ci && cargo install --path .
-
-      - name: Run Dead Code Analysis
-        run: |
-          ci config set model /tmp/ci/models/dead_code_model_v4_balanced_calibrated.bin
-          ci config set threshold 0.80
-          ci analyze . --cache
-
-      - name: Generate Reports
-        run: |
-          ci report . --format markdown --output dead_code_report.md
-          ci report . --format json --output dead_code_report.json
-
-      - name: Upload Analysis Artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: code-intelligence-report
-          path: |
-            dead_code_report.md
-            dead_code_report.json
-```
-
-### 2. Pre-Commit Hook (Prevent Committing Dead Code)
-
-Add to `.git/hooks/pre-commit` and make executable (`chmod +x .git/hooks/pre-commit`):
-
-```bash
-#!/usr/bin/env bash
-if ci stats . 2>/dev/null | grep -q "Pending: [1-9]"; then
-    echo "❌ Commit rejected: Pending dead code findings detected."
-    echo "   Run 'ci list' to review findings."
-    echo "   Run 'ci remove <name>' if deleted, or 'ci keep <name> \"<reason>\"' to whitelist."
-    exit 1
-fi
-```
-
----
-
-## 🏗️ Architecture & Project Layout
+## 🏗️ Architecture
 
 ```
 code-intelligence/
 ├── src/
-│   ├── analysis/             # Analysis logic (dead code, complexity, dynamic refs, reachability)
-│   │   ├── dead_code/        # Scorer, whitelist, type/module analysis, impact estimators
-│   │   ├── dynamic_refs.rs   # Reflection, framework callback, and string-dispatch detection
-│   │   ├── roots.rs          # Root detection & BFS reachability analysis
-│   │   └── verdict_source/   # Verdict decision engine combining static & ML signals
-│   ├── bin/                  # CLI tool (`ci`), dashboard, and ML training/eval binaries
-│   ├── engine/               # Indexer, file walking, disk caching, pipeline stages
+│   ├── analysis/             # Core analysis logic (dead code, complexity, dynamic refs, reachability)
+│   │   ├── dead_code/        # Scorer, filters, whitelist, type/module analysis, impact estimators
+│   │   ├── verdict_source/   # Decision engine combining static heuristics, graph signals & ML
+│   │   ├── dynamic_refs.rs   # AST-based reflection, IPC, and dynamic dispatch detection
+│   │   ├── roots.rs          # Root entry point detection & BFS reachability computation
+│   │   └── explainability.rs # Transparent evidence generators and risk assessment
+│   ├── bin/                  # CLI tool (`ci`), TUI dashboard, and ML training/eval binaries
+│   ├── engine/               # Parser coordinator, index builder, caching, and pipeline stages
 │   ├── graph/                # Call, dependency, import, and type graphs (Petgraph)
 │   ├── llm/                  # Providers: Ollama, OpenAI, Anthropic, Mock
-│   ├── ml/                   # Classifier, feature schema, calibration, serialization
+│   ├── ml/                   # Linear classifier, feature schema, temperature calibration
 │   ├── optimize/             # Deduplication, MinHash, token estimation, compression
-│   ├── output/               # Markdown, JSON, RAG, and interactive/overview HTML graphs
-│   └── parser/               # Tree-sitter parsers & semantic analyzers
-├── models/                   # Pretrained and calibrated .bin models
-└── data/                     # Train, validation, and test datasets
-```
+│   ├── output/               # Markdown, JSON, RAG generators, interactive HTML visualizations
+│   └── parser/               # Tree-sitter multi-language AST extraction
+├── models/                   # Pretrained and calibrated binary models
+└── data/                     # Training, validation, and test datasets
 
----
-
-## 🧪 Testing & Benchmarks
-
-```bash
-# Run unit and integration tests
-cargo test
-
-# Run integration tests specifically
-cargo test --test integration
-
-# Run criterion compression and deduplication benchmarks
-cargo bench
 ```
 
 ---
@@ -440,6 +257,7 @@ cargo bench
 ## 📄 License
 
 This project is licensed under the **MIT License**.
+
 ```
 
----
+```
