@@ -7,8 +7,8 @@ use std::path::PathBuf;
 #[command(
     name = "ci",
     author = "Code Intelligence Team",
-    version = "0.2.0",
-    about = "Code Intelligence - Dead code detection toolkit"
+    version = "0.1.0",
+    about = "Semantic codebase intelligence: high-precision dead code detection, structural deduplication, and architectural mapping"
 )]
 pub struct Args {
     #[command(subcommand)]

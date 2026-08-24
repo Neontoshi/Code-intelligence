@@ -6,70 +6,36 @@ echo  Code Intelligence Installer (Windows)
 echo ========================================
 echo.
 
-REM Check for administrator privileges
 net session >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ⚠️ This installer requires administrator privileges.
-    echo Please right-click Command Prompt and select "Run as administrator"
-    echo.
-    pause
-    exit /b 1
+    echo [!] Administrator privileges required. Elevating...
+    powershell -Command "Start-Process '%~f0' -Verb RunAs"
+    exit /b 0
 )
 
 set "INSTALL_DIR=%ProgramFiles%\CodeIntelligence"
-set "TEMP_FILE=%TEMP%\ci.exe"
+if defined ProgramW6432 set "INSTALL_DIR=%ProgramW6432%\CodeIntelligence"
+set "TEMP_FILE=%TEMP%\ci_%RANDOM%.exe"
 
-echo 📁 Installation directory: %INSTALL_DIR%
-echo.
+if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
 
-REM Create directory if it doesn't exist
-if not exist "%INSTALL_DIR%" (
-    echo 📁 Creating directory...
-    mkdir "%INSTALL_DIR%"
-    if errorlevel 1 (
-        echo ❌ Failed to create directory. Please check permissions.
-        pause
-        exit /b 1
-    )
-)
-
-echo 📥 Downloading ci.exe...
-powershell -Command "& { Invoke-WebRequest -Uri 'https://github.com/neontoshi/Code-intelligence/releases/latest/download/ci_windows_x86_64.exe' -OutFile '%TEMP_FILE%' }"
-
-if errorlevel 1 (
-    echo ❌ Download failed. Please check your internet connection.
-    pause
-    exit /b 1
-)
+echo [^>] Downloading ci_windows_x86_64.exe...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13; Invoke-WebRequest -Uri 'https://github.com/neontoshi/Code-intelligence/releases/latest/download/ci_windows_x86_64.exe' -OutFile '%TEMP_FILE%' -UseBasicParsing"
 
 if not exist "%TEMP_FILE%" (
-    echo ❌ Download failed - file not found.
+    echo [X] Download failed. Please verify your internet connection.
     pause
     exit /b 1
 )
 
-echo 📦 Installing to %INSTALL_DIR%...
-move /Y "%TEMP_FILE%" "%INSTALL_DIR%\ci.exe"
+echo [^>] Installing binary to %INSTALL_DIR%...
+move /Y "%TEMP_FILE%" "%INSTALL_DIR%\ci.exe" >nul
 
-if errorlevel 1 (
-    echo ❌ Failed to move file. Please check permissions.
-    pause
-    exit /b 1
-)
-
-echo 🔧 Adding to PATH...
-powershell -Command "& { [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';%INSTALL_DIR%', 'Machine') }"
+echo [^>] Registering PATH environment variable...
+powershell -NoProfile -Command "$dir = '%INSTALL_DIR%'; $p = [Environment]::GetEnvironmentVariable('Path', 'Machine'); if (-not ($p -split ';' -contains $dir)) { [Environment]::SetEnvironmentVariable('Path', ($p.TrimEnd(';') + ';' + $dir), 'Machine') }"
 
 echo.
-echo ✅ Installation complete!
-echo.
-echo 📦 Installed version:
+echo [V] Installation complete!
 "%INSTALL_DIR%\ci.exe" --version
-echo.
-echo 🚀 Quick Start:
-echo   1. Open a new Command Prompt
-echo   2. Run: ci analyze ^<path-to-your-project^>
-echo.
-echo 📖 Documentation: https://github.com/neontoshi/Code-intelligence
 echo.
 pause

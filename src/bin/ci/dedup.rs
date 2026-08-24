@@ -2,7 +2,6 @@
 
 use crate::helpers::get_default_duplicate_model;
 use code_intelligence::error::{err, Result};
-
 use std::path::PathBuf;
 
 pub async fn run_dedup_report(
@@ -24,20 +23,40 @@ pub async fn run_dedup_report(
     }
     println!();
 
-    // Get duplicate model if ML enabled
+    // Get duplicate model if ML enabled (custom path -> default config path -> embedded fallback)
     let model = if ml {
-        let model_path = duplicate_model
-            .or_else(get_default_duplicate_model)
-            .ok_or_else(|| err::config("No duplicate model configured"))?;
-
-        if !model_path.exists() {
-            return Err(err::model(format!(
-                "Duplicate model not found: {:?}",
-                model_path
-            )));
+        if let Some(custom_path) = duplicate_model {
+            if !custom_path.exists() {
+                return Err(err::model(format!(
+                    "Specified duplicate model not found: {:?}",
+                    custom_path
+                )));
+            }
+            if verbose {
+                println!("✅ Loaded custom duplicate model from: {:?}", custom_path);
+            }
+            Some(DuplicateClassifier::load(&custom_path).map_err(|e| err::model(e))?)
+        } else if let Some(config_path) = get_default_duplicate_model() {
+            if config_path.exists() {
+                if verbose {
+                    println!(
+                        "✅ Loaded configured duplicate model from: {:?}",
+                        config_path
+                    );
+                }
+                Some(DuplicateClassifier::load(&config_path).map_err(|e| err::model(e))?)
+            } else {
+                if verbose {
+                    println!("🧠 Falling back to embedded duplicate model");
+                }
+                Some(DuplicateClassifier::load_embedded().map_err(|e| err::model(e))?)
+            }
+        } else {
+            if verbose {
+                println!("🧠 Using built-in embedded duplicate model");
+            }
+            Some(DuplicateClassifier::load_embedded().map_err(|e| err::model(e))?)
         }
-
-        Some(DuplicateClassifier::load(&*model_path.to_string_lossy())?)
     } else {
         None
     };

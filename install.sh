@@ -1,30 +1,45 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 echo "🔍 Detecting your system..."
-OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-ARCH=$(uname -m)
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
 
 case "$OS-$ARCH" in
-  linux-x86_64)  ASSET="ci" ;;
-  linux-aarch64) ASSET="ci" ;;
-  darwin-x86_64) ASSET="ci_macos_intel" ;;
-  darwin-arm64)  ASSET="ci_macos_arm64" ;;
-  *) echo "❌ Unsupported: $OS $ARCH"; exit 1 ;;
+  linux-x86_64)   ASSET="ci" ;;
+  darwin-x86_64)  ASSET="ci_macos_intel" ;;
+  darwin-arm64)   ASSET="ci_macos_arm64" ;;
+  *)
+    echo "❌ Unsupported architecture/OS: $OS $ARCH"
+    exit 1
+    ;;
 esac
 
-echo "📥 Downloading $ASSET..."
-curl -fsSL -o ci "https://github.com/neontoshi/Code-intelligence/releases/latest/download/$ASSET"
+DOWNLOAD_URL="https://github.com/neontoshi/Code-intelligence/releases/latest/download/$ASSET"
+INSTALL_DIR="/usr/local/bin"
+TEMP_FILE="$(mktemp)"
 
-chmod +x ci
+echo "📥 Downloading $ASSET from GitHub..."
+curl -fsSL "$DOWNLOAD_URL" -o "$TEMP_FILE"
 
-if [ "$OS" = "darwin" ] || [ "$OS" = "linux" ]; then
-  sudo mv ci /usr/local/bin/
-  echo "✅ Installed ci to /usr/local/bin/"
+chmod +x "$TEMP_FILE"
+
+# Remove quarantine attribute on macOS
+if [ "$OS" = "darwin" ]; then
+  xattr -d com.apple.quarantine "$TEMP_FILE" 2>/dev/null || true
+fi
+
+echo "📦 Installing to $INSTALL_DIR/ci..."
+if [ -w "$INSTALL_DIR" ]; then
+  mv "$TEMP_FILE" "$INSTALL_DIR/ci"
 else
-  echo "✅ Downloaded ci.exe to current directory"
-  echo "   Move it to a folder in your PATH"
+  sudo mv "$TEMP_FILE" "$INSTALL_DIR/ci"
 fi
 
 echo "✅ Installation complete!"
-ci --version
+if command -v ci &>/dev/null; then
+  ci --version
+else
+  "$INSTALL_DIR/ci" --version
+  echo "⚠️ Make sure $INSTALL_DIR is in your PATH."
+fi

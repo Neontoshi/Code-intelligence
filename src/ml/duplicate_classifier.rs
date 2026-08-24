@@ -4,6 +4,7 @@
 
 use crate::analysis::training_data::FunctionFeatures;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// Simple linear classifier for duplicate detection
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,6 +14,10 @@ pub struct DuplicateClassifier {
     threshold: f64,
     feature_count: usize,
 }
+
+// Embed the duplicate model at compile time
+pub const EMBEDDED_DUPLICATE_MODEL_BYTES: &[u8] =
+    include_bytes!("../../models/duplicate_model_v4.bin");
 
 impl DuplicateClassifier {
     /// Create a new classifier with the given number of features
@@ -236,8 +241,28 @@ impl DuplicateClassifier {
         crate::ml::serialization::ModelSerializer::save_binary(self, path)
     }
 
-    pub fn load<P: AsRef<std::path::Path>>(path: P) -> crate::error::Result<Self> {
-        crate::ml::serialization::ModelSerializer::load_auto(path)
+    pub fn load_embedded() -> Result<Self, String> {
+        // Deserialize from embedded JSON bytes
+        serde_json::from_slice::<DuplicateClassifier>(EMBEDDED_DUPLICATE_MODEL_BYTES)
+            .map_err(|e| format!("Failed to deserialize embedded duplicate model: {}", e))
+    }
+
+    /// Load from disk if the user passed a custom model path
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, String> {
+        let content = std::fs::read(&path).map_err(|e| {
+            format!(
+                "Failed to read duplicate model at {:?}: {}",
+                path.as_ref(),
+                e
+            )
+        })?;
+
+        if let Ok(model) = serde_json::from_slice::<DuplicateClassifier>(&content) {
+            return Ok(model);
+        }
+
+        bincode::deserialize::<DuplicateClassifier>(&content)
+            .map_err(|e| format!("Failed to deserialize duplicate model: {}", e))
     }
 }
 

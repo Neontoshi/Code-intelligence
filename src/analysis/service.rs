@@ -125,7 +125,7 @@ impl AnalysisService {
         }
     }
 
-    /// Load the ML model if configured
+    /// Load the ML model if configured, or fall back to the embedded binary model
     pub fn load_model(&mut self) -> Result<()> {
         if let Some(model_path) = &self.config.model_path {
             if !model_path.exists() {
@@ -179,7 +179,22 @@ impl AnalysisService {
                 }
             }
         } else {
-            Ok(())
+            // Fall back to the model compiled directly into the binary
+            match DeadCodeClassifier::load_embedded() {
+                Ok(classifier) => {
+                    self.ml_model = Some(classifier);
+                    if self.config.verbose {
+                        println!("🧠 Using built-in embedded dead code model");
+                    }
+                    Ok(())
+                }
+                Err(e) => {
+                    if self.config.verbose {
+                        eprintln!("⚠️ Warning: Failed to load embedded model: {}", e);
+                    }
+                    Ok(())
+                }
+            }
         }
     }
 
@@ -227,10 +242,8 @@ impl AnalysisService {
 
     /// Run the full analysis
     pub async fn analyze(&mut self, project_path: &PathBuf) -> Result<AnalysisServiceResult> {
-        // 1. Load model if configured
-        if self.config.model_path.is_some() {
-            self.load_model()?;
-        }
+        // 1. Load model (custom path or embedded default)
+        self.load_model()?;
 
         // 2. Run pipeline
         let analysis = self

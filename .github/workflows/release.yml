@@ -16,7 +16,7 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             artifact_name: ci
-            asset_name: ci  # ⭐ This is what users download
+            asset_name: ci
             asset_path: ci
           - target: x86_64-apple-darwin
             os: macos-latest
@@ -35,47 +35,44 @@ jobs:
             asset_path: ci_windows_x86_64.exe
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Rust
-        uses: actions-rs/toolchain@v1
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          target: ${{ matrix.target }}
-          override: true
+          targets: ${{ matrix.target }}
 
-      - name: Build
+      - name: Build target binary
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Copy binary to expected name
-        run: |
-          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} ${{ matrix.asset_path }}
+      - name: Prepare binary asset
+        run: cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} ${{ matrix.asset_path }}
         shell: bash
 
-      - name: Upload artifact
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset_name }}
           path: ${{ matrix.asset_path }}
 
   release:
-    name: Create Release
+    name: Publish Release
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download all artifacts
+      - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: List artifacts (debug)
+      - name: Debug artifact paths
         run: ls -la artifacts/
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
           files: artifacts/**/*
           draft: false

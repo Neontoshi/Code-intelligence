@@ -141,17 +141,17 @@ impl LinearClassifier {
             let avg_loss = total_loss / shuffled.len() as f64;
 
             if epoch % 20 == 0 && epoch > 0 {
-                println!("   Epoch {}: loss = {:.4}", epoch, avg_loss);
+                println!("    Epoch {}: loss = {:.4}", epoch, avg_loss);
             }
         }
 
-        //  Clearly label this as TRAINING accuracy
+        // Clearly label this as TRAINING accuracy
         let training_accuracy = self.calculate_accuracy(examples);
         println!(
-            "\n   📊 Training Accuracy: {:.1}%",
+            "\n    📊 Training Accuracy: {:.1}%",
             training_accuracy * 100.0
         );
-        println!("   ⚠️  Note: This is training-set accuracy. Use evaluate_metrics for validation/test metrics.");
+        println!("    ⚠️  Note: This is training-set accuracy. Use evaluate_metrics for validation/test metrics.");
 
         training_accuracy
     }
@@ -213,10 +213,10 @@ impl LinearClassifier {
     pub fn print_feature_importance(&self) {
         println!("\n📊 Feature Importance (top 15):");
         println!(
-            "   {:>30} | {:>10} | {:>15}",
+            "    {:>30} | {:>10} | {:>15}",
             "Feature", "Weight", "Direction"
         );
-        println!("   {:-<30}-+-{:-<10}-+-{:-<15}", "", "", "");
+        println!("    {:-<30}-+-{:-<10}-+-{:-<15}", "", "", "");
 
         for (name, weight) in self.feature_importance().iter().take(15) {
             let direction = if *weight > 0.05 {
@@ -226,11 +226,10 @@ impl LinearClassifier {
             } else {
                 "→ UNCERTAIN"
             };
-            println!("   {:>30} | {:>10.3} | {:>15}", name, weight, direction);
+            println!("    {:>30} | {:>10.3} | {:>15}", name, weight, direction);
         }
 
-        // Also show feature category breakdown
-        println!("\n   By Category (average absolute weight):");
+        println!("\n    By Category (average absolute weight):");
         for category in [
             FeatureCategory::Graph,
             FeatureCategory::Signature,
@@ -246,7 +245,7 @@ impl LinearClassifier {
                     .filter_map(|f| self.weights.get(f.index).map(|w| w.abs()))
                     .sum::<f64>()
                     / features.len() as f64;
-                println!("      {:?}: {:.3}", category, avg_weight);
+                println!("       {:?}: {:.3}", category, avg_weight);
             }
         }
     }
@@ -280,6 +279,9 @@ pub struct DeadCodeClassifier {
     pub calibration: Option<CalibrationParams>,
 }
 
+/// Embed the binary ML model directly into the executable at compile-time
+pub const EMBEDDED_MODEL_BYTES: &[u8] = include_bytes!("../../models/model.bin");
+
 impl DeadCodeClassifier {
     pub fn new() -> Self {
         Self {
@@ -288,6 +290,12 @@ impl DeadCodeClassifier {
             feature_count: feature_count(),
             calibration: None,
         }
+    }
+
+    /// Load the model embedded directly into the binary at compile time
+    pub fn load_embedded() -> Result<Self, String> {
+        bincode::deserialize(EMBEDDED_MODEL_BYTES)
+            .map_err(|e| format!("Failed to deserialize embedded model.bin: {}", e))
     }
 
     pub fn train(&mut self, examples: &[TrainingExample]) -> Result<(), String> {
@@ -301,23 +309,21 @@ impl DeadCodeClassifier {
             "📊 Training Linear Classifier on {} examples",
             examples.len()
         );
-        println!("   Features: {}", feature_count);
+        println!("    Features: {}", feature_count);
 
         let mut classifier = LinearClassifier::new(feature_count)
             .with_learning_rate(0.01)
             .with_epochs(50);
 
-        // ⭐ FIX: Store training accuracy separately
         let training_accuracy = classifier.train(examples);
         self.accuracy = training_accuracy;
         self.model = Some(classifier);
 
-        // ⭐ FIX: Clearly label this as training accuracy
         println!(
-            "\n   ✅ Training Accuracy: {:.1}%",
+            "\n    ✅ Training Accuracy: {:.1}%",
             training_accuracy * 100.0
         );
-        println!("   📌 For validation/test metrics, run evaluate_metrics binary.");
+        println!("    📌 For validation/test metrics, run evaluate_metrics binary.");
 
         Ok(())
     }
@@ -330,14 +336,12 @@ impl DeadCodeClassifier {
         }
     }
 
-    // ⭐ NEW: Predict with validation
     pub fn predict_validated(&self, example: &TrainingExample) -> Result<TrainingLabel, String> {
         let features = example.features.to_feature_vector();
         self.validate_features(&features)?;
         Ok(self.predict(example))
     }
 
-    // ⭐ NEW: Check if model is compatible with current schema
     pub fn is_schema_compatible(&self) -> bool {
         use crate::ml::feature_schema::FEATURE_SCHEMA;
 
@@ -348,7 +352,6 @@ impl DeadCodeClassifier {
         }
     }
 
-    // ⭐ NEW: Get schema version info
     pub fn schema_info(&self) -> String {
         use crate::ml::feature_schema::FEATURE_SCHEMA;
 
@@ -484,10 +487,8 @@ mod tests {
             .with_learning_rate(0.1)
             .with_epochs(10);
 
-        // Create synthetic training data
         let mut examples = Vec::new();
 
-        // Alive examples (high fan_in)
         for i in 0..10 {
             let func = create_test_function(&format!("alive_{}", i), 5 + i, true);
             let features = crate::analysis::training_data::FunctionFeatures::from_function(
@@ -515,7 +516,6 @@ mod tests {
             });
         }
 
-        // Dead examples (low fan_in)
         for i in 0..10 {
             let func = create_test_function(&format!("dead_{}", i), 0, false);
             let features = crate::analysis::training_data::FunctionFeatures::from_function(

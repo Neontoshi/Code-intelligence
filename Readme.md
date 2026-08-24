@@ -8,42 +8,65 @@
 [![Model Accuracy](https://img.shields.io/badge/accuracy-95.3%25-brightgreen)](docs/evaluation_report.md)
 [![Precision](https://img.shields.io/badge/precision-96.8%25-brightgreen)](docs/evaluation_report.md)
 
-**Semantic Code Intelligence Engine for AI Dead Code Detection, Duplicate Detection, and Codebase Analysis**
+**High-precision semantic code intelligence engine for dead code detection, structural deduplication, and polyglot call-graph mapping.**
 
-`code-intelligence` is a fast, multi-language semantic analysis platform designed to map call graphs, detect dead code with high precision, eliminate structural duplication, and streamline refactoring across large polyglot codebases[cite: 1, 2].
+`code-intelligence` is a fast, multi-language static and dynamic analysis platform that combines AST parsing, graph reachability algorithms, and calibrated machine learning models to detect dead code with high precision, eliminate duplicate logic, and optimize large polyglot codebases[cite: 1, 2].
 
 ---
 
-## ⚡ Core Capabilities & Highlights
+## ⚡ Key Highlights & Capabilities
 
-* **Unified Verdict Engine**: Combines static reachability analysis, fan-in/fan-out graph metrics, dynamic reference detection, and calibrated linear ML models to categorize symbols into `DefinitelyAlive`, `ProbablyAlive`, `Unknown`, `ProbablyDead`, or `DefinitelyDead`[cite: 1, 2].
-* **Polyglot AST Support**: Native Tree-Sitter parsing and resolution across **10 languages**:
+* **Standalone Binary with Embedded ML**: Trained ML classifiers for dead code and duplicate detection are baked directly into the executable via compile-time embedding[cite: 2]. No external model files or runtime downloads required.
+* **Unified Verdict Engine**: Combines static BFS reachability analysis, fan-in/fan-out graph metrics, dynamic reference detection, and temperature-calibrated linear ML models to classify symbols into 5 confidence states (`DefinitelyAlive`, `ProbablyAlive`, `Unknown`, `ProbablyDead`, `DefinitelyDead`)[cite: 1, 2].
+* **Native Multi-Language Support (10 Languages)**:
   * **Rust**: `impl` blocks, traits, operator overloads, FFI, and macros[cite: 2].
-  * **TypeScript / TSX / JavaScript**: ES6 modules, barrel exports, React component lifecycle methods, hooks (`use*`), and UI event handlers[cite: 1, 2].
-  * **Python**: Decorators (FastAPI, Flask, Pytest, Celery), dunder magic methods, `self.`/`cls.` invocations, and `getattr()` string dispatches[cite: 1, 2].
-  * **Go**: Export capitalization, receiver methods (`func (r *Repo)`), `init()` hooks, `Test*`/`Benchmark*` suites, and `reflect.MethodByName`[cite: 1, 2].
-  * **Java**: Access modifiers, class methods (`this.`), record types, and Spring/Jakarta annotations (`@GetMapping`, `@Service`, `@Repository`)[cite: 1, 2].
-  * **C# / .NET**: ASP.NET Core controllers, routes (`[HttpGet]`, `[HttpPost]`), MediatR handlers, and `Program.cs` / `Startup.cs` entry points[cite: 2].
-  * **Dart / Flutter**: Widget lifecycle methods (`build`, `initState`, `dispose`), state handlers, and `lib/main.dart` application roots[cite: 2].
+  * **TypeScript / TSX / JavaScript**: ES6 modules, barrel exports, React components, hooks (`use*`), and event handlers[cite: 1, 2].
+  * **Python**: Decorators (FastAPI, Flask, Pytest, Celery), magic dunder methods, `self.`/`cls.` calls, and `getattr()` string dispatches[cite: 1, 2].
+  * **Go**: Export capitalization, receiver methods (`func (r *Repo)`), `init()` hooks, `Test*`/`Benchmark*` suites, and reflection[cite: 1, 2].
+  * **Java**: Access modifiers, class methods, records, and Spring/Jakarta annotations (`@GetMapping`, `@Service`, `@Repository`)[cite: 1, 2].
+  * **C# / .NET**: ASP.NET Core controllers, route attributes (`[HttpGet]`, `[HttpPost]`), MediatR handlers, and `Program.cs` entry points[cite: 2].
+  * **Dart / Flutter**: Widget lifecycle methods (`build`, `initState`, `dispose`), state handlers, and `lib/main.dart` entry points[cite: 2].
   * **PHP**: Magic methods, Laravel/Symfony controller attributes, and dynamic execution (`call_user_func`)[cite: 2].
   * **C++**: Destructors, special member functions, entry macros, and header file declarations[cite: 2].
-* **Smart Dynamic Reference Detection**: AST pattern extractors track reflection, dynamic imports (`import()`, `require()`), IPC bridges (Tauri `invoke(...)`, Electron `ipcRenderer.send(...)`), and string-based routing dispatches[cite: 1, 2].
-* **Structural Duplicate Elimination**: Identifies duplicate blocks and clones using MinHash, AST hashing, and ML-based duplicate classification to calculate token savings and refactoring suggestions[cite: 1, 2].
-* **Outcome Management**: Built-in tracking ledger (`.code-intelligence-outcomes.json`) records removals and false-positive dismissals to continuously fine-tune training datasets[cite: 1, 2].
-* **Interactive Terminal Dashboard**: Full-featured TUI built with Ratatui and Crossterm for live inspection, graph metrics, file-by-file categorization, and decision management[cite: 1, 2].
+* **Dynamic Reference Detection**: Tracks reflection calls, dynamic imports (`import()`, `require()`), IPC bridges (Tauri `invoke(...)`, Electron `ipcRenderer.send(...)`), and string dispatch routes[cite: 1, 2].
+* **Structural Duplicate Elimination**: Identifies duplicate blocks and code clones using MinHash, AST hashing, and ML pair classification to estimate token savings and suggest refactoring targets[cite: 1, 2].
+* **Outcome Management**: Built-in tracking ledger (`.code-intelligence-outcomes.json`) records removals and false-positive dismissals to continuously improve training datasets[cite: 1, 2].
+* **Interactive Terminal Dashboard**: Full-screen TUI built with Ratatui and Crossterm for live inspection, graph metrics, file-by-file categorization, and decision management[cite: 1, 2].
 * **Visual Graph Output**: Exports interactive D3.js call graphs and circular architectural layer overviews in standalone HTML[cite: 1, 2].
-* **Optional LLM Integration**: Pluggable provider support (Ollama, OpenAI, Anthropic) for documentation generation, automated function summarization, and issue auditing[cite: 1, 2].
+* **Optional LLM Extensions**: Pluggable provider support (Ollama, OpenAI, Anthropic) for documentation generation, automated function summarization, and issue auditing[cite: 1, 2].
 
 ---
 
 ## 📦 Installation
 
-### Prerequisites
+### Quick Install (Pre-built Binaries)
 
-* [Rust & Cargo](https://rustup.rs/) (1.70+)[cite: 1, 2]
-* (Optional) [Ollama](https://ollama.com/) running locally for offline LLM features[cite: 1, 2]
+#### **Linux & macOS**
+```bash
+curl -fsSL [https://raw.githubusercontent.com/neontoshi/Code-intelligence/main/install.sh](https://raw.githubusercontent.com/neontoshi/Code-intelligence/main/install.sh) | bash
 
-### Build & Install
+```
+
+#### **Windows (PowerShell as Administrator)**
+
+```powershell
+irm [https://raw.githubusercontent.com/neontoshi/Code-intelligence/main/install.ps1](https://raw.githubusercontent.com/neontoshi/Code-intelligence/main/install.ps1) | iex
+
+```
+
+#### **Windows (Command Prompt / Batch)**
+
+Download and run [`install.bat`](https://www.google.com/search?q=https://raw.githubusercontent.com/neontoshi/Code-intelligence/main/install.bat) as Administrator.
+
+---
+
+### Build from Source (Cargo)
+
+**Prerequisites:**
+
+* [Rust & Cargo](https://rustup.rs/) (1.70+)
+
+
 
 ```bash
 git clone [https://github.com/neontoshi/Code-intelligence.git](https://github.com/neontoshi/Code-intelligence.git)
@@ -52,7 +75,7 @@ cargo install --path .
 
 ```
 
-Verify the installation:
+Verify installation:
 
 ```bash
 ci --version
@@ -66,31 +89,28 @@ ci --help
 
 ### 1. Global Configuration
 
-Set up default model paths, classification thresholds, and LLM preferences in `~/.config/code-intelligence/config.toml`:
+Set default decision thresholds and optional LLM preferences in `~/.config/code-intelligence/config.toml`:
 
 ```bash
-# Set default calibrated classification model
-ci config set model models/dead_code_model_v4_balanced_calibrated.bin
-
 # Set decision threshold (default: 0.92)
 ci config set threshold 0.92
 
-# Configure LLM provider (optional)
+# Configure optional LLM provider
 ci config set llm_provider ollama
 ci config set llm_model phi:2.7b
 
 ```
 
-### 2. Run Dead Code Check
+### 2. Scan a Codebase
 
-Scan a project directory to generate a full dead code report:
+Run dead code analysis on any target project:
 
 ```bash
 ci analyze ~/Documents/my-project
 
 ```
 
-### 3. Launch Interactive Terminal Dashboard
+### 3. Launch the Interactive Dashboard
 
 ```bash
 ci dashboard ~/Documents/my-project
@@ -110,7 +130,7 @@ ci dashboard ~/Documents/my-project
  | `ci analyze . --threshold 0.92 --git`<br> |
 | `ci dedup [path]` | Find identical and structural code duplicates
 
- | `ci dedup . --threshold 0.85`<br> |
+ | `ci dedup . --threshold 0.85 --ml`<br> |
 | `ci dashboard [path]` | Launch interactive terminal UI (Ratatui)
 
  | `ci dashboard .`<br> |
@@ -141,7 +161,7 @@ ci dashboard ~/Documents/my-project
 
  | `ci report --format markdown --output report.md`<br> |
 
-### 3. ML Training, Calibration & Experimentation
+### 3. ML Training, Calibration & Data
 
 | Command | Description | Example |
 | --- | --- | --- |
@@ -163,46 +183,23 @@ ci dashboard ~/Documents/my-project
 | `ci ablation` | Run feature ablation studies to measure feature importance
 
  | `ci ablation --output-dir ./ablation_results`<br> |
-
-### 4. Training Data Utilities
-
-| Command | Description | Example |
-| --- | --- | --- |
 | `ci export [path]` | Extract AST and graph feature vectors into training JSON
 
  | `ci export . --output features.json`<br> |
 | `ci merge` | Deduplicate and split repo datasets into train/val/test splits
 
  | `ci merge --input "training_data/*.json" --dedup`<br> |
-| `ci collect` | Clone public repositories and generate bulk training sets
-
- | `ci collect --max-repos 25`<br> |
-| `ci self-analyze` | Run full analysis pipeline on `code-intelligence` itself
-
- | `ci self-analyze --format full`<br> |
-
----
-
-## 🧰 Standalone Cargo Binaries
-
-You can also run specialized tools directly using Cargo:
-
-```bash
-# Core analyzers
-cargo run --release --bin dead_code_check -- ./path/to/project --threshold 0.92
-cargo run --release --bin dedup_check -- ./path/to/project --threshold 0.85
-cargo run --release --bin dead_code_dashboard -- ./path/to/project
-
-# ML Pipeline & Calibration
-cargo run --release --bin data
-cargo run --release --bin train -- --train-data data/train.json
-cargo run --release --bin evaluate -- detailed --model model.bin --test-data data/test.json
-
-```
 
 ---
 
 ## 🖥️ Terminal Dashboard Navigation
+
+Launch the full-screen terminal interface:
+
+```bash
+ci dashboard .
+
+```
 
 * **Summary Tab**: High-level project metrics, dead function percentage, and estimated removable lines of code.
 
@@ -271,8 +268,25 @@ code-intelligence/
 │   ├── optimize/             # Deduplication, MinHash, token estimation, compression
 │   ├── output/               # Markdown, JSON, RAG generators, interactive HTML visualizations
 │   └── parser/               # Tree-sitter multi-language AST extraction
-├── models/                   # Pretrained and calibrated binary models
+├── models/                   # Pretrained and calibrated binary models (embedded into build)
 └── data/                     # Training, validation, and test datasets
+
+```
+
+---
+
+## 🧪 Testing & Benchmarks
+
+```bash
+# Run unit and integration tests
+cargo test --release
+
+# Run property and fuzz tests
+cargo test --test property_tests
+cargo test --test fuzz_tests
+
+# Run compression and graph benchmarks
+cargo bench
 
 ```
 
