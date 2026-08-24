@@ -361,7 +361,29 @@ impl TreeSitterParser {
     ) {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if config.function_kinds.contains(&child.kind().to_string()) {
+            let matches_function_kind = if child.kind() == "variable_declarator" {
+                // A `const X = ...` only counts as a function if X is a plain name
+                // (not a destructuring pattern like `[a, b]` or `{a, b}`) and the
+                // right-hand side is actually a function/arrow function.
+                let name_is_identifier = child
+                    .child_by_field_name("name")
+                    .map(|n| n.kind() == "identifier")
+                    .unwrap_or(false);
+                let value_is_function = child
+                    .child_by_field_name("value")
+                    .map(|v| {
+                        matches!(
+                            v.kind(),
+                            "arrow_function" | "function_expression" | "function"
+                        )
+                    })
+                    .unwrap_or(false);
+                name_is_identifier && value_is_function
+            } else {
+                config.function_kinds.contains(&child.kind().to_string())
+            };
+
+            if matches_function_kind {
                 if let Some(func) = Self::parse_function(&child, source, container, trait_impl) {
                     out.push(func);
                 }
@@ -421,7 +443,7 @@ impl TreeSitterParser {
         let body_start_line = node.start_position().row + 1;
         let body_end_line = node.end_position().row + 1;
 
-        // ⭐ NEW: Detect test, trait methods, and trait defaults
+        // Detect test, trait methods, and trait defaults
         let is_test = Self::has_test_attribute(node, source);
         let is_trait_method = Self::is_trait_method(node, source);
         let is_trait_default = Self::is_trait_default_method(node, source);
@@ -443,14 +465,13 @@ impl TreeSitterParser {
             purpose,
             trait_impl: trait_impl.map(|s| s.to_string()),
             decorators,
-            // ⭐ NEW FLAGS
             is_test,
             is_trait_method,
             is_trait_default,
         })
     }
 
-    // ⭐ NEW: Check if function has test attribute
+    // Check if function has test attribute
     fn has_test_attribute(node: &Node, source: &str) -> bool {
         let start_byte = node.start_byte();
         let text_before = if start_byte > 0 && start_byte <= source.len() {
@@ -478,11 +499,6 @@ impl TreeSitterParser {
         false
     }
 
-    /// Scan a macro's flat token_tree for call-shaped patterns (identifier chains
-    /// immediately followed by a parenthesized token_tree). tree-sitter-rust does
-    /// not parse macro bodies into call_expression/scoped_identifier nodes — it
-    /// emits them as raw tokens — so calls made inside json!/println!/format!/
-    /// vec![...]/write!/assert!/etc. are otherwise invisible to the call graph.
     fn scan_token_tree_for_calls(node: &Node, source: &str, calls: &mut Vec<String>) {
         let mut buf = String::new();
 
@@ -511,7 +527,7 @@ impl TreeSitterParser {
         }
     }
 
-    // ⭐ NEW: Check if this is a trait method definition
+    // Check if this is a trait method definition
     fn is_trait_method(node: &Node, _source: &str) -> bool {
         let mut current = node.parent();
         while let Some(parent) = current {
@@ -524,7 +540,7 @@ impl TreeSitterParser {
         false
     }
 
-    // ⭐ NEW: Check if this is a trait default method (has a body in the trait)
+    // Check if this is a trait default method (has a body in the trait)
     fn is_trait_default_method(node: &Node, source: &str) -> bool {
         if !Self::is_trait_method(node, source) {
             return false;
@@ -562,7 +578,7 @@ impl TreeSitterParser {
         Self::walk_for_calls_with_context(node, source, &mut calls, None);
         Self::walk_for_jsx_components(node, source, &mut calls);
 
-        // ⭐ NEW: Extract closures and their inner calls
+        // Extract closures and their inner calls
         Self::extract_closure_calls(node, source, &mut calls);
 
         // Deduplicate calls
@@ -579,7 +595,7 @@ impl TreeSitterParser {
         calls
     }
 
-    /// ⭐ NEW: Extract function calls inside closures
+    /// Extract function calls inside closures
     fn extract_closure_calls(node: &Node, source: &str, calls: &mut Vec<String>) {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
@@ -609,6 +625,10 @@ impl TreeSitterParser {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             if child.kind() == "jsx_element" || child.kind() == "jsx_self_closing_element" {
+                // jsx_element wraps its attrs in a separate open_tag node;
+                // jsx_self_closing_element carries them directly on the element.
+                let attr_container = child.child_by_field_name("open_tag").unwrap_or(child);
+
                 if let Some(open_tag) = child.child_by_field_name("open_tag") {
                     if let Some(tag_name) = open_tag.child_by_field_name("name") {
                         if let Ok(name) = tag_name.utf8_text(source.as_bytes()) {
@@ -623,8 +643,32 @@ impl TreeSitterParser {
                         }
                     }
                 }
+
+                Self::extract_jsx_attribute_refs(&attr_container, source, calls);
             }
             Self::walk_for_jsx_components(&child, source, calls);
+        }
+    }
+
+    fn extract_jsx_attribute_refs(attr_container: &Node, source: &str, calls: &mut Vec<String>) {
+        let mut cursor = attr_container.walk();
+        for attr in attr_container.children(&mut cursor) {
+            if attr.kind() != "jsx_attribute" {
+                continue;
+            }
+
+            let mut attr_cursor = attr.walk();
+            for value in attr.children(&mut attr_cursor) {
+                if value.kind() == "jsx_expression" {
+                    if let Some(inner) = value.named_child(0) {
+                        if inner.kind() == "identifier" {
+                            if let Ok(name) = inner.utf8_text(source.as_bytes()) {
+                                calls.push(name.to_string());
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -703,6 +747,20 @@ impl TreeSitterParser {
                 }
                 "index_expression" => {
                     calls.push("op::index".to_string());
+                }
+                "pair" => {
+                    if let Some(value) = child.child_by_field_name("value") {
+                        if value.kind() == "identifier" {
+                            if let Ok(name) = value.utf8_text(source.as_bytes()) {
+                                calls.push(name.to_string());
+                            }
+                        }
+                    }
+                }
+                "shorthand_property_identifier" => {
+                    if let Ok(name) = child.utf8_text(source.as_bytes()) {
+                        calls.push(name.to_string());
+                    }
                 }
                 "macro_invocation" => {
                     if let Some(token_tree) = child
@@ -937,9 +995,32 @@ impl TreeSitterParser {
     }
 
     fn is_public(node: &Node, source: &str) -> bool {
-        node.utf8_text(source.as_bytes())
-            .map(|t| t.contains("pub "))
-            .unwrap_or(false)
+        // Rust visibility
+        if let Ok(text) = node.utf8_text(source.as_bytes()) {
+            if text.contains("pub ") {
+                return true;
+            }
+        }
+
+        // JS / TS / TSX exports (traverse up to check if enclosing statement is an export)
+        let mut curr = Some(*node);
+        while let Some(n) = curr {
+            let kind = n.kind();
+            if kind == "export_statement"
+                || kind == "export_default"
+                || kind == "export_declaration"
+            {
+                return true;
+            }
+            if let Ok(text) = n.utf8_text(source.as_bytes()) {
+                let trimmed = text.trim_start();
+                if trimmed.starts_with("export ") || trimmed.starts_with("export default ") {
+                    return true;
+                }
+            }
+            curr = n.parent();
+        }
+        false
     }
 
     fn is_async(node: &Node, source: &str) -> bool {
@@ -985,5 +1066,19 @@ impl TreeSitterParser {
         } else {
             Some(doc_lines.join("\n"))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn dump_jsx_ast() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_typescript::language_tsx())
+            .unwrap();
+        let src = r#"const X = () => <button onClick={handleFoo}>hi</button>;"#;
+        let tree = parser.parse(src, None).unwrap();
+        println!("{}", tree.root_node().to_sexp());
     }
 }

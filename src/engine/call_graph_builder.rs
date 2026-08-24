@@ -1,6 +1,7 @@
 // src/engine/call_graph_builder.rs
 
 use crate::graph::call_graph::{CallEdge, CallGraph, FunctionNode};
+use crate::graph::resolution::ResolutionConfidence;
 use crate::parser::tree_sitter::ParsedFile;
 use std::collections::HashMap;
 
@@ -71,7 +72,11 @@ impl CallGraphBuilder {
                 // Calculate complexity from the function body
                 let body_start = func.body_range.0;
                 let body_end = func.body_range.1;
-                let body_source = &file.source[body_start..body_end];
+                let body_source = if body_end <= file.source.len() && body_start <= body_end {
+                    &file.source[body_start..body_end]
+                } else {
+                    ""
+                };
                 let complexity = Self::calculate_complexity(body_source);
 
                 let node = FunctionNode {
@@ -140,8 +145,6 @@ impl CallGraphBuilder {
         }
 
         // Build local variable type tracking from parser info
-        // This is a simplified approach - we track variable assignments
-        // by parsing the source code for `let x = Type::new()` patterns
         let mut var_to_type: HashMap<String, String> = HashMap::new();
 
         // Build a map of variable names to their types by scanning source
@@ -191,7 +194,6 @@ impl CallGraphBuilder {
                         // Check if it's a constructor call: Type::new() or Type { ... }
                         if init_part.contains("::") {
                             let type_part = init_part.split("::").next().unwrap_or("").trim();
-                            // Remove generics
                             let clean_type =
                                 type_part.split('<').next().unwrap_or(type_part).trim();
 
@@ -199,7 +201,6 @@ impl CallGraphBuilder {
                                 var_to_type.insert(var_part.to_string(), clean_type.to_string());
                             }
                         } else if init_part.contains('{') && !init_part.contains('.') {
-                            // Struct literal: Type { field: value }
                             let type_part = init_part.split('{').next().unwrap_or("").trim();
                             if !type_part.is_empty() && !type_part.starts_with('_') {
                                 var_to_type.insert(var_part.to_string(), type_part.to_string());
@@ -288,6 +289,7 @@ impl CallGraphBuilder {
                                     .get(&(trait_name.to_string(), method_name.to_string()))
                                 {
                                     for &callee_idx in idxs {
+                                        let target_path = call_graph[callee_idx].full_path.clone();
                                         call_graph.add_call(
                                             caller_idx,
                                             callee_idx,
@@ -295,6 +297,11 @@ impl CallGraphBuilder {
                                                 call_type: "operator_overload".to_string(),
                                                 line: func.line,
                                             },
+                                        );
+                                        call_graph.set_resolution_confidence(
+                                            &caller_path,
+                                            &target_path,
+                                            ResolutionConfidence::Inferred,
                                         );
                                     }
                                 }
@@ -317,6 +324,11 @@ impl CallGraphBuilder {
                                             line: func.line,
                                         },
                                     );
+                                    call_graph.set_resolution_confidence(
+                                        &caller_path,
+                                        &full_path,
+                                        ResolutionConfidence::Exact,
+                                    );
                                     found = true;
                                 }
                             }
@@ -336,6 +348,11 @@ impl CallGraphBuilder {
                                             line: func.line,
                                         },
                                     );
+                                    call_graph.set_resolution_confidence(
+                                        &caller_path,
+                                        &qualified_path,
+                                        ResolutionConfidence::Exact,
+                                    );
                                     found = true;
                                 }
                             }
@@ -352,7 +369,6 @@ impl CallGraphBuilder {
 
                                 // Check if receiver is a known type from variable tracking
                                 if let Some(var_type) = var_to_type.get(receiver) {
-                                    // Try to find method on this type
                                     let type_method = format!("{}::{}", var_type, method);
                                     if let Some(&callee_idx) = func_index.get(&type_method) {
                                         call_graph.add_call(
@@ -362,6 +378,11 @@ impl CallGraphBuilder {
                                                 call_type: "method_call_resolved".to_string(),
                                                 line: func.line,
                                             },
+                                        );
+                                        call_graph.set_resolution_confidence(
+                                            &caller_path,
+                                            &type_method,
+                                            ResolutionConfidence::Inferred,
                                         );
                                         found = true;
                                     }
@@ -378,6 +399,11 @@ impl CallGraphBuilder {
                                                 call_type: "method_call_same_file".to_string(),
                                                 line: func.line,
                                             },
+                                        );
+                                        call_graph.set_resolution_confidence(
+                                            &caller_path,
+                                            &full_path,
+                                            ResolutionConfidence::Exact,
                                         );
                                         found = true;
                                     }
@@ -396,6 +422,11 @@ impl CallGraphBuilder {
                                                     call_type: "method_call_container".to_string(),
                                                     line: func.line,
                                                 },
+                                            );
+                                            call_graph.set_resolution_confidence(
+                                                &caller_path,
+                                                &full_path,
+                                                ResolutionConfidence::Inferred,
                                             );
                                             found = true;
                                         }
@@ -416,6 +447,11 @@ impl CallGraphBuilder {
                                                         line: func.line,
                                                     },
                                                 );
+                                                call_graph.set_resolution_confidence(
+                                                    &caller_path,
+                                                    &paths[0],
+                                                    ResolutionConfidence::Heuristic,
+                                                );
                                                 found = true;
                                             }
                                         }
@@ -424,13 +460,11 @@ impl CallGraphBuilder {
 
                                 // Try common method patterns (heuristic)
                                 if !found {
-                                    // Common methods like new, default, clone, etc.
                                     let common_methods = vec![
                                         "new", "default", "clone", "from", "into", "try_from",
                                         "is_empty", "len", "capacity", "clear", "push", "pop",
                                     ];
                                     if common_methods.contains(&method) {
-                                        // Try to find by name alone
                                         if let Some(paths) = func_by_name.get(method) {
                                             if paths.len() == 1 {
                                                 if let Some(&callee_idx) = func_index.get(&paths[0])
@@ -443,6 +477,11 @@ impl CallGraphBuilder {
                                                                 .to_string(),
                                                             line: func.line,
                                                         },
+                                                    );
+                                                    call_graph.set_resolution_confidence(
+                                                        &caller_path,
+                                                        &paths[0],
+                                                        ResolutionConfidence::Heuristic,
                                                     );
                                                     found = true;
                                                 }
@@ -459,7 +498,6 @@ impl CallGraphBuilder {
                                         .map(|c| c.is_uppercase())
                                         .unwrap_or(false)
                                 {
-                                    // Receiver looks like a type name (starts with uppercase)
                                     let type_method = format!("{}::{}", receiver, method);
                                     if let Some(&callee_idx) = func_index.get(&type_method) {
                                         call_graph.add_call(
@@ -469,6 +507,11 @@ impl CallGraphBuilder {
                                                 call_type: "method_call_type".to_string(),
                                                 line: func.line,
                                             },
+                                        );
+                                        call_graph.set_resolution_confidence(
+                                            &caller_path,
+                                            &type_method,
+                                            ResolutionConfidence::Inferred,
                                         );
                                         found = true;
                                     }
@@ -491,21 +534,17 @@ impl CallGraphBuilder {
                                             line: func.line,
                                         },
                                     );
+                                    call_graph.set_resolution_confidence(
+                                        &caller_path,
+                                        &full_path,
+                                        ResolutionConfidence::Exact,
+                                    );
                                     found = true;
                                 }
                             }
                         }
 
-                        // TIER 1.7: Handle Type::method calls (qualified)
-                        if !found
-                            && called_name.contains("::")
-                            && !called_name.starts_with("self::")
-                            && !called_name.starts_with("Self::")
-                        {
-                            // Already handled by TIER 1
-                        }
-
-                        // TIER 1.8: ⭐ NEW Handle constructor calls
+                        // TIER 1.8: Handle constructor calls
                         if !found && called_name.contains("::") {
                             let is_constructor = called_name.ends_with("::new")
                                 || called_name.ends_with("::default")
@@ -522,12 +561,17 @@ impl CallGraphBuilder {
                                             line: func.line,
                                         },
                                     );
+                                    call_graph.set_resolution_confidence(
+                                        &caller_path,
+                                        called_name,
+                                        ResolutionConfidence::Exact,
+                                    );
                                     found = true;
                                 }
                             }
                         }
 
-                        // TIER 2: Internal calls within the same file
+                        // TIER 2: Internal calls within the same file (React callbacks, helper functions)
                         if !found {
                             let candidates: Vec<String> = func_by_file
                                 .get(&file_path)
@@ -549,6 +593,11 @@ impl CallGraphBuilder {
                                             call_type: "internal_call".to_string(),
                                             line: func.line,
                                         },
+                                    );
+                                    call_graph.set_resolution_confidence(
+                                        &caller_path,
+                                        &candidates[0],
+                                        ResolutionConfidence::Exact,
                                     );
                                     found = true;
                                 }
@@ -574,6 +623,11 @@ impl CallGraphBuilder {
                                                         line: func.line,
                                                     },
                                                 );
+                                                call_graph.set_resolution_confidence(
+                                                    &caller_path,
+                                                    container_candidates[0],
+                                                    ResolutionConfidence::Exact,
+                                                );
                                                 found = true;
                                             }
                                         }
@@ -594,6 +648,11 @@ impl CallGraphBuilder {
                                                 call_type: "imported".to_string(),
                                                 line: func.line,
                                             },
+                                        );
+                                        call_graph.set_resolution_confidence(
+                                            &caller_path,
+                                            imported_path,
+                                            ResolutionConfidence::Inferred,
                                         );
                                         found = true;
                                         break;
@@ -617,6 +676,11 @@ impl CallGraphBuilder {
                                                 line: func.line,
                                             },
                                         );
+                                        call_graph.set_resolution_confidence(
+                                            &caller_path,
+                                            candidates[0],
+                                            ResolutionConfidence::Heuristic,
+                                        );
                                         found = true;
                                     }
                                 }
@@ -633,6 +697,11 @@ impl CallGraphBuilder {
                                         call_type: "recursive".to_string(),
                                         line: func.line,
                                     },
+                                );
+                                call_graph.set_resolution_confidence(
+                                    &caller_path,
+                                    &caller_path,
+                                    ResolutionConfidence::Exact,
                                 );
                                 found = true;
                             }
@@ -652,17 +721,21 @@ impl CallGraphBuilder {
                                             line: func.line,
                                         },
                                     );
+                                    call_graph.set_resolution_confidence(
+                                        &caller_path,
+                                        &full_path,
+                                        ResolutionConfidence::Inferred,
+                                    );
                                     found = true;
                                 }
                             }
                         }
 
-                        // ⭐ NEW TIER 7: Try method resolution by receiver type (heuristic)
+                        // TIER 7: Try method resolution by receiver type (heuristic)
                         if !found && called_name.contains(".") {
                             let parts: Vec<&str> = called_name.split('.').collect();
                             if parts.len() == 2 {
                                 let method = parts[1];
-                                // Try to find any function with this name in the current file
                                 if let Some(paths) = func_by_name.get(method) {
                                     for path in paths {
                                         if path.starts_with(&file_path) && path != &caller_path {
@@ -676,6 +749,11 @@ impl CallGraphBuilder {
                                                         line: func.line,
                                                     },
                                                 );
+                                                call_graph.set_resolution_confidence(
+                                                    &caller_path,
+                                                    path,
+                                                    ResolutionConfidence::Heuristic,
+                                                );
                                                 found = true;
                                                 break;
                                             }
@@ -687,41 +765,47 @@ impl CallGraphBuilder {
 
                         // TIER 8: Trait method resolution (for dynamic dispatch)
                         if !found && called_name.contains("::") {
-                            // Check if this is a trait method call
-                            // e.g., LLMProvider::model_name()
                             let parts: Vec<&str> = called_name.split("::").collect();
                             if parts.len() >= 2 {
                                 let trait_name = parts[0];
                                 let method_name = parts[parts.len() - 1];
 
-                                // Look for trait definitions
-                                for idx in call_graph.node_indices() {
-                                    let func = &call_graph[idx];
-                                    // If this function is a trait method with matching name
-                                    if func.name == method_name && func.trait_impl.is_some() {
-                                        // Check if the trait name matches
-                                        if let Some(trait_impl) = &func.trait_impl {
+                                let matched_trait = call_graph.node_indices().find_map(|idx| {
+                                    let func_node = &call_graph[idx];
+                                    if func_node.name == method_name
+                                        && func_node.trait_impl.is_some()
+                                    {
+                                        if let Some(trait_impl) = &func_node.trait_impl {
                                             if trait_impl.contains(trait_name)
                                                 || trait_name.contains(trait_impl)
                                             {
-                                                call_graph.add_call(
-                                                    caller_idx,
-                                                    idx,
-                                                    CallEdge {
-                                                        call_type: "trait_method".to_string(),
-                                                        line: func.line,
-                                                    },
-                                                );
-                                                found = true;
-                                                break;
+                                                return Some((idx, func_node.full_path.clone()));
                                             }
                                         }
                                     }
+                                    None
+                                });
+
+                                if let Some((target_idx, target_full_path)) = matched_trait {
+                                    call_graph.add_call(
+                                        caller_idx,
+                                        target_idx,
+                                        CallEdge {
+                                            call_type: "trait_method".to_string(),
+                                            line: func.line,
+                                        },
+                                    );
+                                    call_graph.set_resolution_confidence(
+                                        &caller_path,
+                                        &target_full_path,
+                                        ResolutionConfidence::Ambiguous,
+                                    );
+                                    found = true;
                                 }
                             }
                         }
 
-                        // TIER 9: Higher-order function calls (unwrap_or_else, map, and_then, etc.)
+                        // TIER 9: Higher-order function calls
                         if !found
                             && (called_name.contains("unwrap_or_else")
                                 || called_name.contains("unwrap_or")
@@ -736,23 +820,28 @@ impl CallGraphBuilder {
                                 || called_name.contains("unwrap_or_default"))
                         {
                             for other_call in &func.calls {
-                                if other_call != called_name {
-                                    if !other_call.contains('.') && !other_call.contains("::") {
-                                        if let Some(paths) = func_by_name.get(other_call) {
-                                            if paths.len() == 1 {
-                                                if let Some(&callee_idx) = func_index.get(&paths[0])
-                                                {
-                                                    call_graph.add_call(
-                                                        caller_idx,
-                                                        callee_idx,
-                                                        CallEdge {
-                                                            call_type: "higher_order".to_string(),
-                                                            line: func.line,
-                                                        },
-                                                    );
-                                                    found = true;
-                                                    break;
-                                                }
+                                if other_call != called_name
+                                    && !other_call.contains('.')
+                                    && !other_call.contains("::")
+                                {
+                                    if let Some(paths) = func_by_name.get(other_call) {
+                                        if paths.len() == 1 {
+                                            if let Some(&callee_idx) = func_index.get(&paths[0]) {
+                                                call_graph.add_call(
+                                                    caller_idx,
+                                                    callee_idx,
+                                                    CallEdge {
+                                                        call_type: "higher_order".to_string(),
+                                                        line: func.line,
+                                                    },
+                                                );
+                                                call_graph.set_resolution_confidence(
+                                                    &caller_path,
+                                                    &paths[0],
+                                                    ResolutionConfidence::Heuristic,
+                                                );
+                                                found = true;
+                                                break;
                                             }
                                         }
                                     }
@@ -760,8 +849,9 @@ impl CallGraphBuilder {
                             }
                         }
 
+                        // Mark unresolved if all tiers failed
                         if !found {
-                            // Unresolved call - skip it
+                            call_graph.mark_unresolved(&caller_path, called_name);
                         }
                     }
                 }

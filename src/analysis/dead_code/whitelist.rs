@@ -26,6 +26,7 @@ impl Whitelist {
         functions.insert("default".to_string());
         functions.insert("clone".to_string());
         functions.insert("drop".to_string());
+        functions.insert("handleInvoke".to_string());
 
         // PATTERNS (minimal) — compiled once at construction
         patterns.push(Regex::new("^test_").expect("valid regex"));

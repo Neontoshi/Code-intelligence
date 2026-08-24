@@ -43,7 +43,6 @@ impl ProtectionLevel {
     }
 }
 
-/// ⭐ Determine the protection level for a function
 pub fn get_protection_level(func: &FunctionNode) -> ProtectionLevel {
     // 1. PROTECTED - Mathematically/semantically guaranteed alive
 
@@ -65,6 +64,35 @@ pub fn get_protection_level(func: &FunctionNode) -> ProtectionLevel {
     // Trait implementations are protected
     if func.trait_impl.is_some() {
         return ProtectionLevel::Protected;
+    }
+
+    // React Component Lifecycle & Singleton Conventions
+    let react_lifecycle = [
+        "render",
+        "componentDidMount",
+        "componentDidUpdate",
+        "componentWillUnmount",
+        "componentDidCatch",
+        "getDerivedStateFromError",
+        "getDerivedStateFromProps",
+        "shouldComponentUpdate",
+        "getInstance",
+        "constructor",
+    ];
+    if react_lifecycle.contains(&func.name.as_str()) {
+        return ProtectionLevel::Protected;
+    }
+
+    // React/UI Event Handlers & Local Callbacks in Component / Page Files
+    if func.file.ends_with(".tsx") || func.file.ends_with(".jsx") {
+        if func.name.starts_with("handle")
+            || func.name.starts_with("on")
+            || func.name.starts_with("render")
+            || func.name == "task"
+            || func.name == "handler"
+        {
+            return ProtectionLevel::Protected;
+        }
     }
 
     // FFI functions are protected
@@ -91,16 +119,32 @@ pub fn get_protection_level(func: &FunctionNode) -> ProtectionLevel {
         return ProtectionLevel::LikelyAlive;
     }
 
-    // React components are likely alive
-    if func.file.ends_with(".tsx") || func.file.ends_with(".jsx") {
-        let is_component = func
-            .name
-            .chars()
-            .next()
-            .map(|c| c.is_uppercase())
-            .unwrap_or(false);
-        let is_hook = func.name.starts_with("use");
+    // React components, hooks, and UI event handlers
+    if func.file.ends_with(".tsx")
+        || func.file.ends_with(".jsx")
+        || func.file.ends_with(".ts")
+        || func.file.ends_with(".js")
+    {
+        let is_component = (func.file.ends_with(".tsx") || func.file.ends_with(".jsx"))
+            && func
+                .name
+                .chars()
+                .next()
+                .map(|c| c.is_uppercase())
+                .unwrap_or(false);
+        let is_hook = func.name.starts_with("use")
+            && func
+                .name
+                .chars()
+                .nth(3)
+                .map(|c| c.is_uppercase())
+                .unwrap_or(false);
+        let is_ui_handler = func.name.starts_with("handle") || func.name.starts_with("on");
+
         if is_component || is_hook {
+            return ProtectionLevel::Protected;
+        }
+        if is_ui_handler {
             return ProtectionLevel::LikelyAlive;
         }
     }

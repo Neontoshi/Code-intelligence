@@ -48,8 +48,13 @@ impl ImportGraph {
 
         for file in files {
             for import in &file.imports {
-                let target = import.module.clone();
-                if self.nodes.contains_key(&target) {
+                let resolved_target = if self.nodes.contains_key(&import.module) {
+                    Some(import.module.clone())
+                } else {
+                    Self::resolve_relative_import(&file.path, &import.module, &self.nodes)
+                };
+
+                if let Some(target) = resolved_target {
                     self.edges.push(ImportEdge {
                         source_file: file.path.clone(),
                         target_file: target.clone(),
@@ -90,6 +95,48 @@ impl ImportGraph {
 
     pub fn get_imports(&self, file: &str) -> Vec<&ImportEdge> {
         self.get_edges_by_file(file, false)
+    }
+
+    fn resolve_relative_import(
+        source_file: &str,
+        import_module: &str,
+        nodes: &HashMap<String, ImportNode>,
+    ) -> Option<String> {
+        let clean_module = import_module.trim_matches(|c| c == '\'' || c == '"');
+        if !clean_module.starts_with('.') {
+            return None;
+        }
+
+        let source_path = std::path::Path::new(source_file);
+        let parent = source_path.parent()?;
+        let joined = parent.join(clean_module);
+
+        let candidates = [
+            joined.to_string_lossy().to_string(),
+            format!("{}.ts", joined.display()),
+            format!("{}.tsx", joined.display()),
+            format!("{}.js", joined.display()),
+            format!("{}.jsx", joined.display()),
+            joined.join("index.ts").to_string_lossy().to_string(),
+            joined.join("index.tsx").to_string_lossy().to_string(),
+            joined.join("index.js").to_string_lossy().to_string(),
+        ];
+
+        for candidate in &candidates {
+            if nodes.contains_key(candidate) {
+                return Some(candidate.clone());
+            }
+        }
+
+        // Canonicalized fallback comparison
+        if let Ok(canon_joined) = joined.canonicalize() {
+            let canon_str = canon_joined.to_string_lossy().to_string();
+            if nodes.contains_key(&canon_str) {
+                return Some(canon_str);
+            }
+        }
+
+        None
     }
 
     pub fn get_importers(&self, file: &str) -> Vec<&ImportEdge> {

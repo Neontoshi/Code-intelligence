@@ -153,6 +153,16 @@ impl RootDetector {
         roots
     }
 
+    fn is_react_hook_name(name: &str) -> bool {
+        if !name.starts_with("use") || name.len() <= 3 {
+            return false;
+        }
+        name.chars()
+            .nth(3)
+            .map(|c| c.is_uppercase())
+            .unwrap_or(false)
+    }
+
     ///Check if a function is likely a true entry point
     fn is_likely_entry_point(func: &FunctionNode, call_graph: &CallGraph) -> bool {
         // Check 1: No callers (true entry point)
@@ -220,18 +230,25 @@ impl RootDetector {
             let func = &call_graph[idx];
 
             // React components are roots (even if not public)
-            if func.file.ends_with(".tsx") || func.file.ends_with(".jsx") {
-                let is_component = func
+            let is_jsx_file = func.file.ends_with(".tsx") || func.file.ends_with(".jsx");
+            let is_ts_family =
+                is_jsx_file || func.file.ends_with(".ts") || func.file.ends_with(".js");
+
+            let is_component = is_jsx_file
+                && func
                     .name
                     .chars()
                     .next()
                     .map(|c| c.is_uppercase())
                     .unwrap_or(false);
-                let is_hook = func.name.starts_with("use");
-                if is_component || is_hook {
-                    roots.insert(func.full_path.clone());
-                    continue;
+            let is_hook = is_ts_family && Self::is_react_hook_name(&func.name);
+
+            if is_component || is_hook {
+                if is_hook {
+                    eprintln!("🪝 export_roots: hook root added: {}", func.full_path);
                 }
+                roots.insert(func.full_path.clone());
+                continue;
             }
 
             // Public functions with no callers are likely API exports
@@ -299,38 +316,30 @@ impl RootDetector {
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
 
-            // ⭐ React components (TSX/JSX) - contextual detection
-            if func.file.ends_with(".tsx") || func.file.ends_with(".jsx") {
-                // Must be in components/ or pages/ directory OR exported
-                let is_component = func
-                    .name
-                    .chars()
-                    .next()
-                    .map(|c| c.is_uppercase())
-                    .unwrap_or(false);
-                let is_hook = func.name.starts_with("use");
-                let is_exported = func.is_public;
+            let is_jsx_file = func.file.ends_with(".tsx") || func.file.ends_with(".jsx");
+            let is_ts_family =
+                is_jsx_file || func.file.ends_with(".ts") || func.file.ends_with(".js");
 
-                // ⭐ NEW: Check if in a component directory
-                let in_component_dir = func.file.contains("/components/")
-                    || func.file.contains("/pages/")
-                    || func.file.contains("/hooks/");
+            if is_ts_family {
+                let is_component = is_jsx_file
+                    && (func
+                        .name
+                        .chars()
+                        .next()
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false)
+                        || func.file.contains("/pages/")
+                        || func.file.contains("/components/"));
+                let is_hook = Self::is_react_hook_name(&func.name);
 
-                if (is_component || is_hook) && (in_component_dir || is_exported) {
+                let in_framework_dir = func.file.contains("/component")
+                    || func.file.contains("/page")
+                    || func.file.contains("/hooks/")
+                    || func.file.contains("/stores/")
+                    || func.file.contains("/services/");
+
+                if is_hook || is_component || (func.is_public && in_framework_dir) {
                     roots.insert(func.full_path.clone());
-                    continue;
-                }
-            }
-
-            // Go init functions - only in main packages or with init pattern
-            if func.name == "init" && func.file.ends_with(".go") {
-                // Check if it's in a main package or has no callers
-                let idx = call_graph.name_index.get(&func.full_path);
-                if let Some(&idx) = idx {
-                    let callers = call_graph.get_callers(idx);
-                    if callers.is_empty() {
-                        roots.insert(func.full_path.clone());
-                    }
                     continue;
                 }
             }

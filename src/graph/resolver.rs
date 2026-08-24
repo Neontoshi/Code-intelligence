@@ -72,15 +72,17 @@ impl CallResolver {
         resolved
     }
 
-    fn extract_call_targets(&self, _func: &FunctionNode) -> Vec<String> {
-        // ⭐ FIX: We don't have container directly on FunctionNode
-        // Instead, we extract from full_path
-        // Format: file::container::method or file::method
-        let targets = Vec::new();
-
-        // This would normally come from the parser's function info
-        // For now, return empty
-        targets
+    fn extract_call_targets(&self, func: &FunctionNode) -> Vec<String> {
+        // Read the callees directly from the graph edges or indexed name lookups
+        if let Some(&idx) = self.call_graph.name_index.get(&func.full_path) {
+            self.call_graph
+                .get_callees(idx)
+                .into_iter()
+                .map(|callee| callee.name.clone())
+                .collect()
+        } else {
+            Vec::new()
+        }
     }
 
     fn resolve_single_call(

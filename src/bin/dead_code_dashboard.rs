@@ -6,6 +6,7 @@ use code_intelligence::analysis::explainability::ExplainabilityEngine;
 use code_intelligence::analysis::git_analysis::GitAnalyzer;
 use code_intelligence::config::{get_default_model, get_default_threshold};
 use code_intelligence::error::{err, Result};
+use code_intelligence::graph::GraphMetrics;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -25,7 +26,7 @@ use ratatui::{
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::PathBuf;
-use std::time::Duration; // same helper deadcode.rs
+use std::time::Duration;
 
 // Data Structures
 
@@ -144,16 +145,6 @@ impl App {
         }
     }
 
-    fn load_analysis_metadata(&self) -> Option<AnalysisMetadata> {
-        let path = self.project_path.join(".code-intelligence-metadata.json");
-        if path.exists() {
-            let data = std::fs::read_to_string(&path).ok()?;
-            serde_json::from_str(&data).ok()
-        } else {
-            None
-        }
-    }
-
     fn load_decisions(&self) -> Vec<DashboardDecision> {
         let path = self.project_path.join(".code-intelligence-decisions.json");
         if path.exists() {
@@ -223,7 +214,6 @@ impl App {
         self.loading = true;
         self.loading_message = "Analyzing project...".to_string();
         self.current_commit = self.get_current_commit();
-        self.analysis_metadata = self.load_analysis_metadata();
         self.decisions = self.load_decisions();
 
         use indicatif::{ProgressBar, ProgressStyle};
@@ -264,9 +254,7 @@ impl App {
                     .map_err(|e| e.to_string())?;
 
                 // Extract the dead code analysis from the result
-                let dead_analysis = result.dead_code_analysis;
-
-                Ok::<_, String>(dead_analysis)
+                Ok::<_, String>(result)
             })
         });
 
@@ -274,8 +262,31 @@ impl App {
         pb.finish_and_clear();
 
         match outcome {
-            Ok(dead_analysis) => {
-                self.analysis = Some(dead_analysis);
+            Ok(result) => {
+                // Build metadata from the provenance actually attached to this run's
+                // verdicts, instead of a stale .code-intelligence-metadata.json file.
+                let provenance = result.verdicts.first().map(|v| v.provenance.clone());
+
+                self.analysis_metadata = Some(AnalysisMetadata {
+                    analysis_id: format!("run_{}", chrono::Utc::now().timestamp()),
+                    model_version: provenance
+                        .as_ref()
+                        .and_then(|p| p.model_path.clone())
+                        .unwrap_or_else(|| "none".to_string()),
+                    feature_schema_version: provenance
+                        .as_ref()
+                        .map(|p| p.feature_schema_version)
+                        .unwrap_or(1),
+                    source_commit: self.current_commit.clone(),
+                    analysis_timestamp: provenance
+                        .as_ref()
+                        .map(|p| p.analysis_timestamp)
+                        .unwrap_or_else(|| chrono::Utc::now().timestamp()),
+                    total_functions: result.call_graph.node_count(),
+                    dead_candidates: result.dead_verdicts.len(),
+                });
+
+                self.analysis = Some(result.dead_code_analysis);
                 self.table_state.select(Some(0));
                 self.loading = false;
                 self.loading_message = "Ready".to_string();
