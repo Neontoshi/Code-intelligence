@@ -103,36 +103,51 @@ impl ImportGraph {
         nodes: &HashMap<String, ImportNode>,
     ) -> Option<String> {
         let clean_module = import_module.trim_matches(|c| c == '\'' || c == '"');
-        if !clean_module.starts_with('.') {
+
+        let mut base_paths = Vec::new();
+        let source_path = std::path::Path::new(source_file);
+
+        if clean_module.starts_with('.') {
+            if let Some(parent) = source_path.parent() {
+                base_paths.push(parent.join(clean_module));
+            }
+        } else if clean_module.starts_with('@') || clean_module.starts_with('~') {
+            // Path alias support (e.g., "@/components/foo" -> "<root>/src/components/foo")
+            let stripped = clean_module
+                .trim_start_matches('@')
+                .trim_start_matches('~')
+                .trim_start_matches('/');
+
+            // Search upward for standard `src` or root directory
+            let mut curr = source_path.parent();
+            while let Some(p) = curr {
+                let src_candidate = p.join("src").join(stripped);
+                let root_candidate = p.join(stripped);
+                base_paths.push(src_candidate);
+                base_paths.push(root_candidate);
+                curr = p.parent();
+            }
+        } else {
             return None;
         }
 
-        let source_path = std::path::Path::new(source_file);
-        let parent = source_path.parent()?;
-        let joined = parent.join(clean_module);
+        for base in base_paths {
+            let candidates = [
+                base.to_string_lossy().to_string(),
+                format!("{}.ts", base.display()),
+                format!("{}.tsx", base.display()),
+                format!("{}.js", base.display()),
+                format!("{}.jsx", base.display()),
+                base.join("index.ts").to_string_lossy().to_string(),
+                base.join("index.tsx").to_string_lossy().to_string(),
+                base.join("index.js").to_string_lossy().to_string(),
+                base.join("index.jsx").to_string_lossy().to_string(),
+            ];
 
-        let candidates = [
-            joined.to_string_lossy().to_string(),
-            format!("{}.ts", joined.display()),
-            format!("{}.tsx", joined.display()),
-            format!("{}.js", joined.display()),
-            format!("{}.jsx", joined.display()),
-            joined.join("index.ts").to_string_lossy().to_string(),
-            joined.join("index.tsx").to_string_lossy().to_string(),
-            joined.join("index.js").to_string_lossy().to_string(),
-        ];
-
-        for candidate in &candidates {
-            if nodes.contains_key(candidate) {
-                return Some(candidate.clone());
-            }
-        }
-
-        // Canonicalized fallback comparison
-        if let Ok(canon_joined) = joined.canonicalize() {
-            let canon_str = canon_joined.to_string_lossy().to_string();
-            if nodes.contains_key(&canon_str) {
-                return Some(canon_str);
+            for candidate in &candidates {
+                if nodes.contains_key(candidate) {
+                    return Some(candidate.clone());
+                }
             }
         }
 

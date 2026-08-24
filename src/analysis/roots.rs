@@ -251,8 +251,16 @@ impl RootDetector {
                 continue;
             }
 
-            // Public functions with no callers are likely API exports
-            if func.is_public && func.fan_in == 0 {
+            // Public functions exported from package roots/entry barrels
+            let is_entry_barrel = func.file.ends_with("/index.ts")
+                || func.file.ends_with("/index.js")
+                || func.file.ends_with("/index.tsx")
+                || func.file.ends_with("/index.jsx")
+                || func.file.ends_with("/main.ts")
+                || func.file.ends_with("/mod.ts")
+                || func.file.ends_with("/lib.ts");
+
+            if func.is_public && (is_entry_barrel || func.fan_in == 0) {
                 roots.insert(func.full_path.clone());
             }
 

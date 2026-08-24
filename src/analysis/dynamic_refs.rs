@@ -387,17 +387,17 @@ impl DynamicRefDetector {
                 );
             }
             "javascript" | "typescript" => {
-                // Match import("./path") or require("./path")
-                let query_str = r#"
-                    (call_expression
-                        function: (identifier) @fn (#match? @fn "^(import|require)$")
-                        arguments: (arguments
-                            (string (string_fragment) @target_str)
-                        )
-                    )
-                "#;
+                // 1. Match import("./path") or require("./path")
+                let import_query = r#"
+                                (call_expression
+                                    function: (identifier) @fn (#match? @fn "^(import|require)$")
+                                    arguments: (arguments
+                                        (string (string_fragment) @target_str)
+                                    )
+                                )
+                            "#;
                 Self::run_ast_query(
-                    &query_str,
+                    import_query,
                     &lang,
                     tree.root_node(),
                     &file.source,
@@ -417,6 +417,39 @@ impl DynamicRefDetector {
                             ref_type: DynamicRefType::DynamicImport,
                             confidence: 0.80,
                             context: "Dynamic module import/require".to_string(),
+                        });
+                    },
+                );
+
+                // 2. Match Tauri invoke('command_name') and Electron IPC calls
+                let ipc_query = r#"
+                                (call_expression
+                                    function: [
+                                        (identifier) @fn_name (#match? @fn_name "^(invoke|emit|send)$")
+                                        (member_expression
+                                            property: (property_identifier) @prop_name (#match? @prop_name "^(invoke|send|emit|sendSync)$")
+                                        )
+                                    ]
+                                    arguments: (arguments
+                                        (string (string_fragment) @target_str)
+                                    )
+                                )
+                            "#;
+                Self::run_ast_query(
+                    ipc_query,
+                    &lang,
+                    tree.root_node(),
+                    &file.source,
+                    |target, node| {
+                        let clean_target =
+                            target.trim_matches(|c| c == '"' || c == '\'').to_string();
+                        extracted.push(ExtractedDynamicCall {
+                            enclosing_function: Self::find_enclosing_function(node, &file.source),
+                            target_name: clean_target.clone(),
+                            pattern: format!("IPC:{}", clean_target),
+                            ref_type: DynamicRefType::Framework,
+                            confidence: 0.95,
+                            context: "Tauri/Electron IPC command dispatch".to_string(),
                         });
                     },
                 );
