@@ -14,8 +14,8 @@ Models are stored as versioned JSON files containing:
 
 ## Dead Code Detection Models
 
-### dead_code_model_v4_balanced_calibrated.bin
-- **Version**: v4
+### model.bin
+- **Version**: v1
 - **Status**: ✅ Production ready
 - **Features**: 46 features (graph, signature, name, file, type, complexity)
 - **Calibration**: Temperature scaling
@@ -32,7 +32,7 @@ Models are stored as versioned JSON files containing:
 
 ### Legacy Models (v1-v3)
 These are kept for reference but are no longer recommended for production use.
-Use `dead_code_model_v4_balanced_calibrated.bin` for best results.
+Use `model.bin` for best results.
 
 ## Duplicate Detection Models
 
@@ -49,10 +49,10 @@ Use `dead_code_model_v4_balanced_calibrated.bin` for best results.
 ### Dead Code Detection
 ```bash
 # Use the recommended v4 model
-cargo run --bin dead_code_check -- ~/project --model models/dead_code_model_v4_balanced_calibrated.bin
+cargo run --bin dead_code_check -- ~/project --model models/model.bin
 
 # Or via the CI command
-ci analyze ~/project --model models/dead_code_model_v4_balanced_calibrated.bin
+ci analyze ~/project --model models/model.bin
 ```
 
 ### Duplicate Detection
@@ -91,10 +91,7 @@ cargo run --bin evaluate_metrics -- --model model.bin --test-data data/test.json
 
 | Version | Date | Changes |
 |---------|------|---------|
-| v4 | 2026-08-22 | Calibrated, balanced dataset, 46 features |
-| v3 | 2026-08-10 | Added type context features |
-| v2 | 2026-07-20 | Fixed test function labels |
-| v1 | 2026-07-01 | Initial release |
+| v1 | 2026-08-22 | Calibrated, balanced dataset, 46 features |
 
 ## Performance Comparison
 
@@ -119,9 +116,9 @@ Ensure the model path is correct and the file exists.
 - Collect more training data from your repositories
 ```
 
-### dead_code_model_v4_balanced_calibrated.bin
+### model.bin
 ...
-- **Threshold**: 0.80 (optimal F1 balance)
+- **Threshold**: 0.92 (optimal F1 balance)
 ...
 ## Threshold Policy
 

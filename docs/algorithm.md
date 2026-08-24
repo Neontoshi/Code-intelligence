@@ -1,7 +1,3 @@
-
-## Document 1: `docs/algorithm.md`
-
-```markdown
 # Dead Code Detection Algorithm
 
 ## Overview
@@ -14,45 +10,45 @@ The dead code detection algorithm combines **static analysis**, **graph theory**
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        1. PARSING                               │
-│  Tree-sitter parsers extract AST, functions, types, imports    │
+│                        1. PARSING                                │
+│  Tree-sitter parsers extract AST, functions, types, imports      │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                      2. GRAPH BUILDING                          │
-│  Call Graph │ Type Graph │ Import Graph │ Dependency Graph     │
+│                      2. GRAPH BUILDING                           │
+│  Call Graph │ Type Graph │ Import Graph │ Dependency Graph       │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    3. ROOT DETECTION                            │
-│  Entry points │ Tests │ Public API │ Framework Callbacks │ FFI  │
+│                    3. ROOT DETECTION                             │
+│  Entry points │ Tests │ Public API │ Framework Callbacks │ FFI   │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   4. REACHABILITY ANALYSIS                      │
-│  BFS from roots → Reachable functions → Dead candidates        │
+│                   4. REACHABILITY ANALYSIS                       │
+│  BFS from roots → reachable functions → dead candidates          │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    5. FEATURE EXTRACTION                        │
+│                    5. FEATURE EXTRACTION                         │
 │  46 features: Graph │ Signature │ Name │ File │ Type │ Complexity│
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    6. ML PREDICTION                             │
-│  Logistic Regression model → Probability of being dead          │
+│                    6. ML PREDICTION                              │
+│  Logistic regression model → probability of being dead           │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    7. VERDICT ENGINE                            │
-│  5-state system: DefinitelyAlive │ ProbablyAlive │ Unknown     │
-│                  ProbablyDead   │ DefinitelyDead                │
+│                    7. VERDICT ENGINE                             │
+│  5-state system: DefinitelyAlive │ ProbablyAlive │ Unknown       │
+│                  ProbablyDead   │ DefinitelyDead                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -62,26 +58,29 @@ The dead code detection algorithm combines **static analysis**, **graph theory**
 
 ### Tree-sitter Integration
 
-The parser uses **tree-sitter** for language-agnostic AST parsing:
+The parser uses **tree-sitter** for language-agnostic AST parsing, covering:
 
-```rust
-// Supported languages
-- Rust       (.rs)
-- Python     (.py)
-- JavaScript (.js, .jsx)
-- TypeScript (.ts, .tsx)
-- Go         (.go)
-- Java       (.java)
+```
+Rust       (.rs)
+Python     (.py)
+JavaScript (.js, .jsx)
+TypeScript (.ts, .tsx)
+Go         (.go)
+Java       (.java)
+C#         (.cs)
+Dart       (.dart)
+PHP        (.php)
+C++        (.cpp)
 ```
 
 ### Extracted Information
 
 For each file, the parser extracts:
 
-- **Functions**: Name, parameters, return type, visibility, body range, decorators
-- **Types**: Structs, enums, traits, interfaces, classes
-- **Imports**: Module paths and imported items
-- **Comments**: Documentation, TODOs, FIXMEs
+- **Functions**: name, parameters, return type, visibility, body range, decorators
+- **Types**: structs, enums, traits, interfaces, classes
+- **Imports**: module paths and imported items
+- **Comments**: documentation, TODOs, FIXMEs
 
 ### Function Detection Example
 
@@ -96,7 +95,7 @@ Extracted:
 - Parameters: `data: &str`
 - Return: `Result<String, Error>`
 - Visibility: `pub`
-- Body: Range of source code
+- Body: range of source code
 
 ---
 
@@ -104,7 +103,7 @@ Extracted:
 
 ### Call Graph
 
-Directed graph where nodes are functions and edges are calls:
+A directed graph where nodes are functions and edges are calls:
 
 ```rust
 pub fn main() {
@@ -116,17 +115,19 @@ fn helper() {
 }
 ```
 
-### Resolution Strategies (in priority order)
+### Resolution Strategies
+
+Applied in priority order — the first strategy that resolves a call wins:
 
 | Priority | Strategy | Description |
 |----------|----------|-------------|
-| 1 | **Exact** | Direct call to known function |
+| 1 | **Exact** | Direct call to a known function |
 | 2 | **Self Method** | `self.method_name()` |
 | 3 | **Associated** | `Type::method()` |
 | 4 | **Constructor** | `Type::new()` |
 | 5 | **Import** | Resolved through imports |
 | 6 | **Name Match** | Single unambiguous name |
-| 7 | **Container Method** | Same impl block |
+| 7 | **Container Method** | Same `impl` block |
 | 8 | **Trait Method** | Dynamic dispatch |
 | 9 | **Heuristic** | Best guess |
 
@@ -139,31 +140,29 @@ Tracks type relationships:
 
 ### Import Graph
 
-Tracks module dependencies:
-- Which files import which modules
-- Unused imports detection
+Tracks module dependencies — which files import which modules, and which imports go unused.
 
 ---
 
 ## Phase 3: Root Detection
 
-### What is a Root?
+### What Is a Root?
 
-A **root** is a function that can be called from outside the analysis scope. Roots are never considered dead.
+A **root** is a function reachable from outside the analysis scope. Roots are never considered dead.
 
 ### Root Categories
 
 | Category | Examples | Detection Method |
-|----------|----------|------------------|
+|----------|----------|-------------------|
 | **Entry Points** | `main`, `run`, `start` | Name patterns |
 | **Tests** | `test_*`, `#[test]`, `_test.rs` | Attributes, file paths |
 | **Public API** | `pub` functions with no callers | Visibility + fan-in |
 | **Framework** | `@app.route`, `React.FC`, `#[get]` | Decorators, file paths |
 | **FFI** | `#[no_mangle]`, `extern "C"` | Attributes, naming |
 
-### Filtering Framework Code
+### The Never-Dead List
 
-The system maintains a **never-dead list** for:
+Beyond roots, the system maintains a **never-dead list** — code that's structurally exempt from dead-code analysis regardless of reachability, because static analysis can't see who calls it (e.g. a framework calling a trait method by convention):
 
 - Trait implementations
 - React components and hooks
@@ -171,6 +170,8 @@ The system maintains a **never-dead list** for:
 - Spring annotations
 - Go `init()` functions
 - Standard trait methods (`clone`, `default`, `fmt`)
+
+This list is applied as the first filter in the pipeline — see [False Positive Prevention](#false-positive-prevention).
 
 ---
 
@@ -184,25 +185,26 @@ Starting from all roots, perform a **BFS** through the call graph:
 function find_reachable(roots, call_graph):
     reachable = set()
     queue = roots
-    
+
     while queue not empty:
         current = queue.pop()
         if current in reachable: continue
         reachable.add(current)
-        
+
         for callee in current.calls:
             if callee not in reachable:
                 queue.push(callee)
-    
+
     return reachable
 ```
 
-### Dead Functions
+### Dead Function Candidates
 
-A function is **dead** if:
+A function becomes a **dead candidate** — passed on to feature extraction and ML scoring, not yet a final verdict — when all three hold:
+
 1. Not reachable from any root
 2. Has no callers (fan-in = 0)
-3. Not filtered by the never-dead list
+3. Not covered by the never-dead list
 
 ---
 
@@ -211,19 +213,19 @@ A function is **dead** if:
 ### Feature Categories (46 total)
 
 #### Graph Features (4)
-- `fan_in` - Number of callers
-- `fan_out` - Number of callees
-- `call_depth` - Depth in call tree
-- `is_cycle` - Part of a cycle
+- `fan_in` — number of callers
+- `fan_out` — number of callees
+- `call_depth` — depth in call tree
+- `is_cycle` — part of a cycle
 
 #### Signature Features (4)
-- `param_count` - Number of parameters
-- `return_count` - Number of return values
-- `is_public` - Visibility
-- `is_async` - Async function
+- `param_count` — number of parameters
+- `return_count` — number of return values
+- `is_public` — visibility
+- `is_async` — async function
 
 #### Complexity (1)
-- `complexity` - Cyclomatic complexity
+- `complexity` — cyclomatic complexity
 
 #### Name Features (26)
 - Contains patterns: `use`, `test`, `init`, `get`, `set`, `new`, `create`, `build`, `parse`, `validate`, `handle`, `process`, `convert`, `commit`, `reveal`, `submit`, `upload`, `download`, `fetch`, `verify`, `audit`
@@ -259,10 +261,10 @@ if probability > threshold {
 
 ### Training Data
 
-- **Positive examples**: Functions verified dead
-- **Negative examples**: Functions verified alive
+- **Positive examples**: functions verified dead
+- **Negative examples**: functions verified alive
 - **Split**: 70% train, 15% validation, 15% test
-- **No leakage**: Same repository stays in same split
+- **No leakage**: same repository stays in the same split
 
 ### Calibration
 
@@ -272,7 +274,7 @@ The model uses **temperature scaling** to calibrate probabilities:
 calibrated_probability = 1 / (1 + e^(-logit / temperature))
 ```
 
-Calibration reduces ECE (Expected Calibration Error) to < 5%.
+Calibration reduces ECE (Expected Calibration Error) to under 5%.
 
 ---
 
@@ -280,23 +282,27 @@ Calibration reduces ECE (Expected Calibration Error) to < 5%.
 
 ### 5-State System
 
+Ranges are `(lower, upper]` — a score falls into the bucket it does *not* exceed the upper bound of, so 0.15 itself is "Probably Alive" and 0.30 is "Unknown":
+
 | State | Score Range | Meaning |
 |-------|-------------|---------|
-| **Definitely Alive** | ≤ 0.15 | Strong evidence of life |
-| **Probably Alive** | 0.15 - 0.30 | Some evidence of life |
-| **Unknown** | 0.30 - 0.70 | Insufficient evidence |
-| **Probably Dead** | 0.70 - 0.85 | Some evidence of death |
-| **Definitely Dead** | ≥ 0.85 | Strong evidence of death |
+| **Definitely Alive** | 0 – 0.15 | Strong evidence of life |
+| **Probably Alive** | 0.15 – 0.30 | Some evidence of life |
+| **Unknown** | 0.30 – 0.70 | Insufficient evidence |
+| **Probably Dead** | 0.70 – 0.85 | Some evidence of death |
+| **Definitely Dead** | 0.85 – 1.0 | Strong evidence of death |
 
 ### Signal Combination
 
-Final score combines:
+The final score fuses the static-analysis signal with the ML prediction:
 
 ```
 final_score = 0.6 * static_score + 0.4 * ml_score
 ```
 
 ### Static Signals
+
+`static_score` is the sum of the weights below for every signal that applies to a given function (each signal contributes only when its condition is true; the "→ Alive" rows push the score down, the "→ Dead" rows push it up):
 
 | Signal | Direction | Weight |
 |--------|-----------|--------|
@@ -338,44 +344,38 @@ final_score = 0.6 * static_score + 0.4 * ml_score
 
 ## False Positive Prevention
 
-### The Filter Pipeline
+The pipeline runs as four sequential filters, each narrowing the candidate set before the next stage runs:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    FUNCTION CANDIDATE                          │
+│                    FUNCTION CANDIDATE                            │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│              is_never_dead() - First Filter                    │
-│  ✓ Trait implementations                                      │
-│  ✓ React components                                           │
-│  ✓ Framework decorators                                       │
-│  ✓ Entry points                                               │
-│  ✓ FFI exports                                                │
-│  ✓ Test functions                                             │
+│         Filter 1 — Never-Dead List                               │
+│  Trait impls, React components, framework decorators,            │
+│  entry points, FFI exports, test functions → Alive                │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│           Root Detection - Second Filter                       │
-│  ✓ main() → Alive                                             │
-│  ✓ Public API → Alive                                         │
-│  ✓ Tests → Alive                                              │
+│         Filter 2 — Root Detection                                │
+│  main() / public API / tests → Alive                             │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│          Reachability - Third Filter                           │
-│  ✓ Reachable from roots → Alive                               │
-│  ✗ Unreachable → Potential Dead                               │
+│         Filter 3 — Reachability                                  │
+│  Reachable from roots → Alive                                    │
+│  Unreachable → passes through as a dead candidate                │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│              ML Prediction - Final Filter                      │
-│  ✓ Low probability → Alive                                    │
-│  ✗ High probability → Dead                                    │
+│         Filter 4 — ML Prediction                                 │
+│  Low probability → Alive                                         │
+│  High probability → Dead                                         │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -454,7 +454,7 @@ ML Probability: 0.95 (95% chance of being dead)
 static_score: 0.85 (no callers, private, unreachable)
 ml_score: 0.95
 final_score: 0.89
-verdict: Definitely Dead ✅
+verdict: Definitely Dead
 ```
 
 ---
@@ -463,14 +463,11 @@ verdict: Definitely Dead ✅
 
 The dead code detection algorithm combines:
 
-1. **Static Analysis** - Parse, build graphs, detect roots
-2. **Graph Theory** - Reachability analysis
-3. **Machine Learning** - 46 features → logistic regression
-4. **Signal Fusion** - Combine static and ML signals
-5. **Filtering** - Prevent false positives
-6. **Explainability** - Every verdict has evidence
+1. **Static Analysis** — parse, build graphs, detect roots
+2. **Graph Theory** — reachability analysis
+3. **Machine Learning** — 46 features → logistic regression
+4. **Signal Fusion** — combine static and ML signals
+5. **Filtering** — prevent false positives
+6. **Explainability** — every verdict has supporting evidence
 
 This multi-stage approach achieves **>95% accuracy** with **<3% false positive rate**.
-```
-
----

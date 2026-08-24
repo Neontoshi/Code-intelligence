@@ -796,7 +796,5 @@ pub enum CodeIntelError {
 
 The API follows semantic versioning. Breaking changes will result in a major version bump.
 
-**Current Version**: 0.2.0
+**Current Version**: 0.1.0
 ```
-
----

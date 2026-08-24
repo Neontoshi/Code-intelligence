@@ -127,9 +127,7 @@ path = "tests/unit/mod.rs"
 name = "integration"
 path = "tests/integration.rs"
 
-# ============================================================
-# BINARIES - Unified (6 total)
-# ============================================================
+# BINARIES
 
 # Core CLI
 [[bin]]
