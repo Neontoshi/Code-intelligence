@@ -1,4 +1,5 @@
 pub mod analysis;
+pub mod config;
 pub mod engine;
 pub mod error;
 pub mod graph;

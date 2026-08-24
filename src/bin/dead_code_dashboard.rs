@@ -4,6 +4,7 @@ mod dashboard_ui;
 use code_intelligence::analysis::dead_code::DeadCodeAnalysis;
 use code_intelligence::analysis::explainability::ExplainabilityEngine;
 use code_intelligence::analysis::git_analysis::GitAnalyzer;
+use code_intelligence::config::{get_default_model, get_default_threshold};
 use code_intelligence::error::{err, Result};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
@@ -24,7 +25,7 @@ use ratatui::{
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::Duration; // same helper deadcode.rs
 
 // Data Structures
 
@@ -243,10 +244,9 @@ impl App {
                     AnalysisService, AnalysisServiceConfig,
                 };
 
-                // Build config for the service
                 let config = AnalysisServiceConfig {
-                    model_path: None,
-                    threshold: None,
+                    model_path: get_default_model(),
+                    threshold: get_default_threshold().or(Some(0.92)),
                     verbose: false,
                     debug: false,
                     cache: false,

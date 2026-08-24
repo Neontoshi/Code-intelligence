@@ -19,6 +19,7 @@ lazy_static = "1.4"
 hex = "0.4"
 once_cell = "1.19"
 
+
 # Parsing
 tree-sitter = "0.22"
 tree-sitter-rust = "0.21"
