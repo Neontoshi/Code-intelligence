@@ -106,12 +106,49 @@ pub fn get_protection_level(func: &FunctionNode) -> ProtectionLevel {
         }
     }
 
-    // 2. LIKELY ALIVE - High confidence but not guaranteed
-
-    // Entry points are likely alive
-    let entry_points = ["main", "async_main", "run", "start", "init", "setup"];
+    // Entry points across Rust, Go, Python, and Java
+    let entry_points = [
+        "main",
+        "async_main",
+        "run",
+        "start",
+        "init",
+        "setup",
+        "__init__",
+        "__main__",
+    ];
     if entry_points.contains(&func.name.as_str()) {
-        return ProtectionLevel::LikelyAlive;
+        return ProtectionLevel::Protected;
+    }
+
+    // Python Dunder (Magic) Methods
+    if func.file.ends_with(".py") && func.name.starts_with("__") && func.name.ends_with("__") {
+        return ProtectionLevel::Protected;
+    }
+
+    // Go Test & Benchmark conventions (e.g., TestXxx, BenchmarkXxx, ExampleXxx)
+    if func.file.ends_with(".go") {
+        if func.name.starts_with("Test")
+            || func.name.starts_with("Benchmark")
+            || func.name.starts_with("Example")
+        {
+            return ProtectionLevel::Protected;
+        }
+    }
+
+    // Java Spring / Jakarta Bean lifecycle
+    if func.file.ends_with(".java") {
+        let java_lifecycle = [
+            "equals",
+            "hashCode",
+            "toString",
+            "compareTo",
+            "close",
+            "destroy",
+        ];
+        if java_lifecycle.contains(&func.name.as_str()) {
+            return ProtectionLevel::Protected;
+        }
     }
 
     // Public API functions are likely alive (especially in libraries)

@@ -377,23 +377,37 @@ impl RootDetector {
                 }
             }
 
-            // Python Flask/FastAPI - check decorators
-            if let Some(file) = files.iter().find(|f| f.path == func.file) {
-                if let Some(func_info) = file.functions.iter().find(|fi| fi.name == func.name) {
-                    for decorator in &func_info.decorators {
-                        let decorator_lower = decorator.to_lowercase();
-                        if decorator_lower.contains("app.route")
-                            || decorator_lower.contains("router.")
-                            || decorator_lower.contains("blueprint.")
-                            || decorator_lower.contains("click.command")
-                            || decorator_lower.contains("pytest")
-                            || decorator_lower.contains("app.get")
-                            || decorator_lower.contains("app.post")
-                            || decorator_lower.contains("app.put")
-                            || decorator_lower.contains("app.delete")
-                        {
-                            roots.insert(func.full_path.clone());
-                            break;
+            // Python: Web frameworks, CLI commands, pytest, and top-level entry modules
+            if func.file.ends_with(".py") {
+                if func.file.ends_with("__main__.py")
+                    || func.file.ends_with("manage.py")
+                    || func.file.ends_with("wsgi.py")
+                {
+                    roots.insert(func.full_path.clone());
+                    continue;
+                }
+
+                if let Some(file) = files.iter().find(|f| f.path == func.file) {
+                    if let Some(func_info) = file.functions.iter().find(|fi| fi.name == func.name) {
+                        for decorator in &func_info.decorators {
+                            let d = decorator.to_lowercase();
+                            if d.contains("route")
+                                || d.contains("get")
+                                || d.contains("post")
+                                || d.contains("put")
+                                || d.contains("delete")
+                                || d.contains("patch")
+                                || d.contains("router.")
+                                || d.contains("blueprint.")
+                                || d.contains("command")
+                                || d.contains("fixture")
+                                || d.contains("pytest")
+                                || d.contains("task")
+                                || d.contains("celery")
+                            {
+                                roots.insert(func.full_path.clone());
+                                break;
+                            }
                         }
                     }
                 }

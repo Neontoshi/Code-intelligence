@@ -519,9 +519,19 @@ impl CallGraphBuilder {
                             }
                         }
 
-                        // TIER 1.6: Handle associated function calls (Self::method)
-                        if !found && called_name.starts_with("Self::") {
-                            let method_name = called_name.trim_start_matches("Self::");
+                        // TIER 0: Unified Self / This / Container Method Calls (Rust, Python, Java, Go)
+                        let is_self_or_this = called_name.starts_with("self::")
+                            || called_name.starts_with("self.")
+                            || called_name.starts_with("this.")
+                            || called_name.starts_with("cls.");
+
+                        if !found && is_self_or_this {
+                            let method_name = called_name
+                                .trim_start_matches("self::")
+                                .trim_start_matches("self.")
+                                .trim_start_matches("this.")
+                                .trim_start_matches("cls.");
+
                             if let Some(container) = &func.container {
                                 let full_path =
                                     format!("{}::{}::{}", file_path, container, method_name);
@@ -530,7 +540,7 @@ impl CallGraphBuilder {
                                         caller_idx,
                                         callee_idx,
                                         CallEdge {
-                                            call_type: "associated_call".to_string(),
+                                            call_type: "self_method".to_string(),
                                             line: func.line,
                                         },
                                     );

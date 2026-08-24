@@ -384,7 +384,13 @@ impl TreeSitterParser {
             };
 
             if matches_function_kind {
-                if let Some(func) = Self::parse_function(&child, source, container, trait_impl) {
+                if let Some(func) = Self::parse_function(
+                    &child,
+                    source,
+                    container,
+                    trait_impl,
+                    config.name.as_str(),
+                ) {
                     out.push(func);
                 }
             }
@@ -408,6 +414,7 @@ impl TreeSitterParser {
         source: &str,
         container: Option<&str>,
         trait_impl: Option<&str>,
+        lang_name: &str,
     ) -> Option<FunctionInfo> {
         let name = node
             .child_by_field_name("name")?
@@ -416,7 +423,24 @@ impl TreeSitterParser {
             .to_string();
 
         let line = node.start_position().row + 1;
-        let is_public = Self::is_public(node, source);
+        let is_public = Self::is_public(node, source, lang_name, &name);
+
+        // Extract Go receiver type: func (r *Repo) Get() -> container = "Repo"
+        let mut resolved_container = container.map(|s| s.to_string());
+        if node.kind() == "method_declaration" && resolved_container.is_none() {
+            if let Some(receiver) = node.child_by_field_name("receiver") {
+                if let Ok(rec_text) = receiver.utf8_text(source.as_bytes()) {
+                    let clean = rec_text
+                        .trim_matches(|c| c == '(' || c == ')' || c == '*' || c == '&' || c == ' ')
+                        .split_whitespace()
+                        .last()
+                        .unwrap_or("");
+                    if !clean.is_empty() {
+                        resolved_container = Some(clean.to_string());
+                    }
+                }
+            }
+        }
         let is_async = Self::is_async(node, source);
         let return_type = node
             .child_by_field_name("return_type")
@@ -460,7 +484,7 @@ impl TreeSitterParser {
             body_range: (node.start_byte(), node.end_byte()),
             body_start_line,
             body_end_line,
-            container: container.map(|s| s.to_string()),
+            container: resolved_container,
             role,
             purpose,
             trait_impl: trait_impl.map(|s| s.to_string()),
@@ -994,33 +1018,58 @@ impl TreeSitterParser {
         }
     }
 
-    fn is_public(node: &Node, source: &str) -> bool {
-        // Rust visibility
-        if let Ok(text) = node.utf8_text(source.as_bytes()) {
-            if text.contains("pub ") {
-                return true;
-            }
-        }
-
-        // JS / TS / TSX exports (traverse up to check if enclosing statement is an export)
-        let mut curr = Some(*node);
-        while let Some(n) = curr {
-            let kind = n.kind();
-            if kind == "export_statement"
-                || kind == "export_default"
-                || kind == "export_declaration"
-            {
-                return true;
-            }
-            if let Ok(text) = n.utf8_text(source.as_bytes()) {
-                let trimmed = text.trim_start();
-                if trimmed.starts_with("export ") || trimmed.starts_with("export default ") {
-                    return true;
+    fn is_public(node: &Node, source: &str, lang_name: &str, func_name: &str) -> bool {
+        match lang_name {
+            "Rust" => {
+                if let Ok(text) = node.utf8_text(source.as_bytes()) {
+                    text.contains("pub ")
+                } else {
+                    false
                 }
             }
-            curr = n.parent();
+            "Go" => {
+                // Go: Capitalized function/method identifier indicates export
+                func_name
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false)
+            }
+            "Python" => {
+                // Python: Non-underscore prefixed names are public module exports
+                !func_name.starts_with('_') || func_name.starts_with("__init__")
+            }
+            "Java" => {
+                // Java: Check for public keyword in method modifiers
+                if let Ok(text) = node.utf8_text(source.as_bytes()) {
+                    text.contains("public ")
+                } else {
+                    false
+                }
+            }
+            "JavaScript" | "TypeScript" => {
+                let mut curr = Some(*node);
+                while let Some(n) = curr {
+                    let kind = n.kind();
+                    if kind == "export_statement"
+                        || kind == "export_default"
+                        || kind == "export_declaration"
+                    {
+                        return true;
+                    }
+                    if let Ok(text) = n.utf8_text(source.as_bytes()) {
+                        let trimmed = text.trim_start();
+                        if trimmed.starts_with("export ") || trimmed.starts_with("export default ")
+                        {
+                            return true;
+                        }
+                    }
+                    curr = n.parent();
+                }
+                false
+            }
+            _ => false,
         }
-        false
     }
 
     fn is_async(node: &Node, source: &str) -> bool {
