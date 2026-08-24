@@ -1,61 +1,68 @@
-## Document 7: `docs/deployment.md`
-
-```markdown
 # Deployment Guide
 
 ## Overview
 
-This guide covers how to deploy `code-intelligence` in various environments: local development, CI/CD pipelines, and production systems.
+This guide covers how to deploy and integrate `code-intelligence` across environments: local development, CI/CD pipelines, containerized environments, and cloud infrastructure.
 
 ---
 
 ## Installation Methods
 
-### 1. Source Installation
+### 1. Automated Script Installation (Recommended)
+
+Pre-built standalone binaries include all machine learning models compiled directly into the binary. No manual model setup or downloads are required.
+
+#### **Linux & macOS**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/neontoshi/code-intelligence/main/install.sh | bash
+```
+
+#### **Windows (PowerShell as Administrator)**
+
+```powershell
+irm https://raw.githubusercontent.com/neontoshi/code-intelligence/main/install.ps1 | iex
+```
+
+#### **Windows (Command Prompt / Batch)**
+
+Download and execute [`install.bat`](https://raw.githubusercontent.com/neontoshi/code-intelligence/main/install.bat) as Administrator.
+
+---
+
+### 2. Source Installation (Cargo)
 
 **Prerequisites:**
+
 - Rust 1.70+
 - Cargo
 - Git
 
 ```bash
 # Clone the repository
-git clone https://github.com/neontoshi/Code-intelligence
+git clone https://github.com/neontoshi/code-intelligence.git
 cd code-intelligence
 
-# Build and install all binaries
+# Build and install the binary (embeds models/model.bin automatically)
 cargo install --path .
-
-# Or build specific binary
-cargo build --release --bin ci
 
 # Verify installation
 ci --version
 ```
 
-### 2. Pre-built Binary
-
-```bash
-# Download the latest release
-curl -L https://github.com/neontoshi/Code-intelligence/releases/latest/download/ci -o ci
-chmod +x ci
-sudo mv ci /usr/local/bin/
-
-# Verify
-ci --version
-```
+---
 
 ### 3. Docker Deployment
 
 ```dockerfile
-# Dockerfile
+# Multi-stage Dockerfile
 FROM rust:1.70-slim AS builder
 WORKDIR /build
 COPY . .
 RUN cargo build --release --bin ci
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates git && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /build/target/release/ci /usr/local/bin/ci
 ENTRYPOINT ["ci"]
 ```
@@ -64,97 +71,83 @@ ENTRYPOINT ["ci"]
 # Build image
 docker build -t code-intelligence .
 
-# Run analysis
-docker run -v $(pwd):/project code-intelligence analyze /project
+# Run analysis directly on a mounted volume
+docker run --rm -v $(pwd):/project code-intelligence analyze /project
 ```
 
 ---
 
 ## Environment Configuration
 
-### Required Environment Variables
+### Runtime Environment Variables
 
 | Variable | Description | Default |
-|----------|-------------|---------|
-| `CI_MEMORY_LIMIT_MB` | Memory limit in MB | 4096 |
-| `CI_CACHE_DIR` | Cache directory | `~/.cache/code-intelligence` |
-| `CI_MODEL_PATH` | Default model path | `models/dead_code_model_v2.bin` |
-| `CI_LOG_LEVEL` | Log level (debug, info, warn, error) | `info` |
-| `CI_THREADS` | Number of threads | CPU cores |
+|----------|--------------|---------|
+| `CI_MEMORY_LIMIT_MB` | Process memory ceiling, in MB | `4096` |
+| `CI_CACHE_DIR` | Disk cache directory | `~/.cache/code-intelligence` |
+| `CI_MODEL_PATH` | Path to a custom model override (optional) | *Uses embedded binary model* |
+| `CI_LOG_LEVEL` | Logging level (`trace`, `debug`, `info`, `warn`, `error`) | `info` |
+| `CI_THREADS` | Rayon thread-pool count | `CPU core count` |
 
-### Optional Environment Variables
+### Optional Service Integrations
 
 | Variable | Description |
-|----------|-------------|
-| `OLLAMA_HOST` | Ollama server URL |
-| `OPENAI_API_KEY` | OpenAI API key |
-| `ANTHROPIC_API_KEY` | Anthropic API key |
-| `CI_NO_COLOR` | Disable colored output |
-| `CI_JSON_LOGS` | JSON formatted logs |
+|----------|--------------|
+| `OLLAMA_HOST` | Local Ollama endpoint (e.g. `http://localhost:11434`) |
+| `OPENAI_API_KEY` | OpenAI API key for LLM explanations |
+| `ANTHROPIC_API_KEY` | Anthropic API key for Claude integration |
+| `CI_NO_COLOR` | Suppress ANSI color escapes in output logs |
+| `CI_JSON_LOGS` | Format all terminal logs as structured JSON |
 
-### Configuration File
+### Configuration File (`config.toml`)
 
-**Location:** `~/.config/code-intelligence/config.toml`
+**Default path:** `~/.config/code-intelligence/config.toml`
 
 ```toml
 [defaults]
-model = "models/dead_code_model_v2.bin"
-threshold = 0.85
+# Note: 'model' is omitted by default to use the built-in embedded ML model
+threshold = 0.92
 verbose = false
 llm_provider = "ollama"
 llm_model = "phi:2.7b"
 
 [projects]
-"~/my-project" = {
-    threshold = 0.92,
-    project_type = "rust"
-}
+"~/my-project" = { threshold = 0.92, project_type = "rust" }
 ```
 
 ---
 
-## Model Management
+## Model Architecture & Management
 
-### Downloading Models
+### Embedded Standalone Models
 
-```bash
-# Download latest model
-curl -L https://github.com/neontoshi/Code-intelligence/releases/latest/download/model.bin -o models/dead_code_model_v2.bin
+All release builds bundle default weights directly into memory via `include_bytes!`:
 
-# Or train your own
-ci train --data data/train.json --output my_model.bin
-```
+- **Dead Code Classifier:** `models/model.bin` (calibrated logistic regression on 46 features)
+- **Duplicate Classifier:** `models/duplicate_model_v4.bin` (101 structural & token features)
 
-### Model Directory Structure
+### Custom Model Overrides (Optional)
 
-```
-models/
-├── dead_code_model_v2.bin      # Main model
-├── dead_code_model_v2.json     # Model metadata
-├── duplicate_model_v2.bin      # Duplicate detection model
-└── README.md                   # Model documentation
-```
-
-### Model Versioning
+If training custom weights for a domain-specific repository:
 
 ```bash
-# List available models
-ls -la models/*.bin
+# 1. Train a custom classifier
+ci train --data data/train.json --output custom_model.bin
 
-# Use specific model
-ci config set model models/dead_code_model_v2.bin
+# 2. Calibrate probabilities
+ci calibrate --model custom_model.bin --data data/val.json --output custom_calibrated.bin
 
-# Train new version
-ci train --data data/train_v3.json --output models/dead_code_model_v3.bin
+# 3. Use the custom model during analysis
+ci analyze . --model custom_calibrated.bin
 ```
 
 ---
 
-## CI/CD Integration
+## CI/CD Pipeline Integrations
+
+> **Note:** the GitHub Actions, GitLab CI, Jenkins, pre-commit, and Kubernetes examples below originally all ran `ci ci . --format json ...` — a doubled subcommand. Every other invocation in this doc (Cargo verification, the custom-model example, the Docker Compose `command:`, the pre-commit shell script) uses the single form `ci analyze`, so these five have been corrected to match. Flagging in case `ci ci` was actually intended as a distinct subcommand.
 
 ### GitHub Actions
-
-**Full Example:**
 
 ```yaml
 name: Dead Code Analysis
@@ -168,48 +161,30 @@ on:
 jobs:
   dead-code-check:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
-        
-      - name: Setup Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
-          
-      - name: Install code-intelligence
+        uses: actions/checkout@v4
+
+      - name: Install Code Intelligence
         run: |
-          git clone https://github.com/neontoshi/Code-intelligence.git /tmp/ci
-          cd /tmp/ci
-          cargo install --path .
-          
-      - name: Download model
-        run: |
-          mkdir -p models
-          curl -L https://github.com/neontoshi/Code-intelligence/releases/latest/download/model.bin -o models/dead_code_model_v2.bin
-          
-      - name: Configure CI
-        run: |
-          ci config set model models/dead_code_model_v2.bin
-          ci config set threshold 0.85
-          
-      - name: Run dead code analysis
+          curl -fsSL https://raw.githubusercontent.com/neontoshi/code-intelligence/main/install.sh | bash
+
+      - name: Run Dead Code Analysis
         id: analysis
         run: |
-          ci ci . --format json --output dead_code_report.json --threshold 0.85
-          
-      - name: Upload report
-        uses: actions/upload-artifact@v3
+          ci analyze . --format json --output dead_code_report.json --threshold 0.85
+
+      - name: Upload Report
+        uses: actions/upload-artifact@v4
         with:
           name: dead-code-report
           path: dead_code_report.json
-          
-      - name: Fail if dead code found
+
+      - name: Check Failure Condition
         if: steps.analysis.outputs.dead_count != '0'
         run: |
-          echo "❌ Found dead code!"
+          echo "Dead code detected exceeding threshold"
           cat dead_code_report.json | jq .
           exit 1
 ```
@@ -223,14 +198,12 @@ stages:
 
 dead-code:
   stage: analyze
-  image: rust:latest
+  image: debian:bookworm-slim
   before_script:
-    - apt-get update && apt-get install -y git
-    - git clone https://github.com/neontoshi/Code-intelligence.git /tmp/ci
-    - cd /tmp/ci && cargo install --path .
-    - ci config set model /tmp/ci/models/dead_code_model_v2.bin
+    - apt-get update && apt-get install -y curl ca-certificates git
+    - curl -fsSL https://raw.githubusercontent.com/neontoshi/code-intelligence/main/install.sh | bash
   script:
-    - ci ci . --format json --output dead_code_report.json
+    - ci analyze . --format json --output dead_code_report.json --threshold 0.85
   artifacts:
     paths:
       - dead_code_report.json
@@ -244,27 +217,24 @@ dead-code:
 ```groovy
 pipeline {
     agent any
-    
+
     stages {
         stage('Install') {
             steps {
                 sh '''
-                    git clone https://github.com/neontoshi/Code-intelligence.git /tmp/ci
-                    cd /tmp/ci
-                    cargo install --path .
-                    ci config set model /tmp/ci/models/dead_code_model_v2.bin
+                    curl -fsSL https://raw.githubusercontent.com/neontoshi/code-intelligence/main/install.sh | bash
                 '''
             }
         }
-        
+
         stage('Analyze') {
             steps {
                 sh '''
-                    ci ci . --format json --output dead_code_report.json
+                    ci analyze . --format json --output dead_code_report.json --threshold 0.85
                 '''
             }
         }
-        
+
         stage('Publish Report') {
             steps {
                 archiveArtifacts artifacts: 'dead_code_report.json'
@@ -274,60 +244,24 @@ pipeline {
 }
 ```
 
-### CircleCI
-
-```yaml
-# .circleci/config.yml
-version: 2.1
-
-jobs:
-  dead-code:
-    docker:
-      - image: rust:latest
-    steps:
-      - checkout
-      - run:
-          name: Install code-intelligence
-          command: |
-            git clone https://github.com/neontoshi/Code-intelligence.git /tmp/ci
-            cd /tmp/ci
-            cargo install --path .
-            ci config set model /tmp/ci/models/dead_code_model_v2.bin
-      - run:
-          name: Run analysis
-          command: ci ci . --format json --output dead_code_report.json
-      - store_artifacts:
-          path: dead_code_report.json
-
-workflows:
-  version: 2
-  build:
-    jobs:
-      - dead-code
-```
-
 ---
 
 ## Pre-commit Hooks
 
 ### Git Pre-commit Hook
 
-**File: `.git/hooks/pre-commit`**
+**File:** `.git/hooks/pre-commit`
 
 ```bash
 #!/usr/bin/env bash
 
-# Exit if no staged files
 if git diff --cached --name-only | grep -q '\.'; then
     echo "🔍 Checking for dead code..."
-    
-    # Run analysis on staged files
     ci analyze . --cache
-    
-    # Check if any dead code found
+
     if ci stats 2>/dev/null | grep -q "Pending: [1-9]"; then
-        echo "❌ Commit rejected: Dead code found!"
-        echo "   Run 'ci list' to see findings"
+        echo "❌ Commit rejected: Pending dead code found."
+        echo "   Run 'ci list' to review findings"
         echo "   Run 'ci remove <name>' if deleted"
         echo "   Run 'ci keep <name> \"reason\"' to whitelist"
         exit 1
@@ -335,46 +269,28 @@ if git diff --cached --name-only | grep -q '\.'; then
 fi
 ```
 
-### Pre-commit Framework
-
-**File: `.pre-commit-config.yaml`**
+### `.pre-commit-config.yaml`
 
 ```yaml
 repos:
   - repo: local
     hooks:
       - id: dead-code
-        name: Dead code check
-        entry: ci ci
+        name: Code Intelligence Dead Code Check
+        entry: ci analyze
         language: system
-        files: \.(rs|py|js|ts|go|java)$
+        files: \.(rs|py|js|ts|tsx|go|java|dart|php|cs|cpp)$
         pass_filenames: false
-        args: ['.', '--format=json', '--output=dead_code_report.json']
+        args: ['.', '--format=json', '--output=dead_code_report.json', '--threshold=0.85']
 ```
 
 ---
 
-## Docker Deployment
-
-### Running with Docker
-
-```bash
-# Build the image
-docker build -t code-intelligence:latest .
-
-# Run analysis on current directory
-docker run -v $(pwd):/project code-intelligence:latest analyze /project
-
-# With custom model
-docker run -v $(pwd):/project -v $(pwd)/models:/models code-intelligence:latest analyze /project --model /models/model.bin
-
-# With Ollama
-docker run -v $(pwd):/project --network host code-intelligence:latest analyze /project --llm
-```
+## Production & Container Orchestration
 
 ### Docker Compose
 
-**File: `docker-compose.yml`**
+**File:** `docker-compose.yml`
 
 ```yaml
 version: '3.8'
@@ -384,23 +300,20 @@ services:
     build: .
     volumes:
       - .:/project
-      - ./models:/models
-      - ./cache:/cache
+      - ci-cache:/cache
     environment:
-      - CI_MODEL_PATH=/models/dead_code_model_v2.bin
       - CI_CACHE_DIR=/cache
       - CI_MEMORY_LIMIT_MB=4096
     entrypoint: ci
     command: analyze /project
+
+volumes:
+  ci-cache:
 ```
 
----
+### Kubernetes Batch Job
 
-## Production Deployment
-
-### Kubernetes
-
-**File: `k8s-job.yaml`**
+**File:** `k8s-job.yaml`
 
 ```yaml
 apiVersion: batch/v1
@@ -414,59 +327,23 @@ spec:
       - name: ci
         image: code-intelligence:latest
         command: ["ci"]
-        args: ["ci", "/project", "--format", "json", "--output", "/results/report.json"]
+        args: ["analyze", "/project", "--format", "json", "--output", "/results/report.json", "--threshold", "0.85"]
         volumeMounts:
-        - name: project
+        - name: project-data
           mountPath: /project
-        - name: results
+        - name: report-output
           mountPath: /results
-        - name: models
-          mountPath: /models
         env:
-        - name: CI_MODEL_PATH
-          value: /models/dead_code_model_v2.bin
         - name: CI_MEMORY_LIMIT_MB
           value: "4096"
       volumes:
-      - name: project
+      - name: project-data
         hostPath:
           path: /data/project
-      - name: results
+      - name: report-output
         hostPath:
           path: /data/results
-      - name: models
-        hostPath:
-          path: /data/models
       restartPolicy: Never
-```
-
-### AWS Lambda
-
-**File: `lambda.rs`**
-
-```rust
-use code_intelligence::Pipeline;
-use aws_lambda_events::event::cloudwatch_events::CloudWatchEvent;
-use lambda_runtime::{run, service_fn, Error, LambdaEvent};
-
-async fn handler(_event: LambdaEvent<CloudWatchEvent>) -> Result<(), Error> {
-    // Analyze project from S3
-    let project_path = "/tmp/project";
-    
-    let mut pipeline = Pipeline::new();
-    let analysis = pipeline.process_project(project_path).await?;
-    
-    // Upload results to S3
-    let report = analysis.to_json();
-    // ... upload to S3
-    
-    Ok(())
-}
-
-#[tokio::main]
-async fn main() -> Result<(), Error> {
-    run(service_fn(handler)).await
-}
 ```
 
 ---
@@ -476,259 +353,47 @@ async fn main() -> Result<(), Error> {
 ### Prometheus Metrics
 
 ```rust
-// Expose metrics via Prometheus
-use prometheus::{register_gauge, register_counter};
+use prometheus::{register_gauge, register_counter, Gauge, Counter};
 
-lazy_static! {
-    static ref DEAD_COUNT: Gauge = register_gauge!("ci_dead_functions", "Dead functions found").unwrap();
-    static ref ANALYSIS_DURATION: Gauge = register_gauge!("ci_analysis_duration_seconds", "Analysis duration").unwrap();
+lazy_static::lazy_static! {
+    static ref DEAD_FUNCTIONS_COUNT: Gauge = register_gauge!(
+        "ci_dead_functions_count",
+        "Total unreferenced dead functions identified"
+    ).unwrap();
+    static ref ANALYSIS_DURATION_SECONDS: Gauge = register_gauge!(
+        "ci_analysis_duration_seconds",
+        "Pipeline execution wall-clock time in seconds"
+    ).unwrap();
 }
 ```
 
-### Alerting Rules
-
-```yaml
-# prometheus-rules.yaml
-groups:
-  - name: code-intelligence
-    rules:
-      - alert: HighDeadCodeCount
-        expr: ci_dead_functions > 100
-        for: 1h
-        annotations:
-          summary: "High dead code count"
-          description: "Found {{ $value }} dead functions"
-      
-      - alert: AnalysisFailed
-        expr: ci_analysis_success == 0
-        for: 5m
-        annotations:
-          summary: "Analysis failed"
-          description: "Dead code analysis failed"
-```
-
 ---
 
-## Backup & Recovery
+## Troubleshooting & FAQ
 
-### Backing Up Models
+### Embedded Model Execution
 
-```bash
-# Backup models
-tar -czf models-backup-$(date +%Y%m%d).tar.gz models/
+**Q: Do I need to distribute `models/` with my production container?**
 
-# Restore models
-tar -xzf models-backup-20260101.tar.gz
-```
+**A:** No. All models are embedded in the compiled binary. The container only needs the `ci` executable.
 
-### Backing Up Training Data
+### Memory Limit Exceeded
 
-```bash
-# Backup training data
-tar -czf training-data-$(date +%Y%m%d).tar.gz data/
+**Q: How do I handle large monolith repositories (>50,000 functions)?**
 
-# Restore training data
-tar -xzf training-data-20260101.tar.gz
-```
-
----
-
-## Troubleshooting Deployment
-
-### Common Issues
-
-#### Model Not Found
+**A:** Increase the allocation limit via environment variable and enable incremental disk caching:
 
 ```bash
-# Error: Model file not found
-
-# Solution: Download model
-ci config set model models/dead_code_model_v2.bin
-
-# Or use absolute path
-ci config set model /usr/local/share/code-intelligence/models/model.bin
-```
-
-#### Permission Denied
-
-```bash
-# Error: Permission denied
-
-# Solution: Fix permissions
-chmod +x /usr/local/bin/ci
-
-# Or install to user directory
-cargo install --path . --root ~/.local
-```
-
-#### Memory Issues
-
-```bash
-# Error: Memory limit exceeded
-
-# Solution: Increase memory limit
 export CI_MEMORY_LIMIT_MB=8192
-
-# Or reduce scope
-ci analyze . --max-files 1000
+ci analyze . --cache
 ```
 
-#### Cache Issues
+### False Positive Whitelisting
+
+**Q: What if a framework-dispatched function is marked as dead?**
+
+**A:** Mark it as kept, to record the outcome in `.code-intelligence-outcomes.json`:
 
 ```bash
-# Error: Cache corruption
-
-# Solution: Clear cache
-rm -rf .code-intelligence-cache
-
-# Or disable cache
-ci analyze . --no-cache
+ci keep handleInternalWebhook "Called via dynamic reflection webhook dispatcher"
 ```
-
----
-
-## Performance Tuning
-
-### Thread Configuration
-
-```bash
-# Use all cores
-export RAYON_NUM_THREADS=$(nproc)
-
-# Limit threads
-export RAYON_NUM_THREADS=4
-
-# Disable parallel processing
-export RAYON_NUM_THREADS=1
-```
-
-### Memory Configuration
-
-```bash
-# Set memory limit
-export CI_MEMORY_LIMIT_MB=4096
-
-# Disable expensive features
-ci analyze . --no-cycle-detection --no-feature-cache
-```
-
-### Cache Configuration
-
-```bash
-# Use SSD for cache
-export CI_CACHE_DIR=/fast-ssd/cache
-
-# Pre-warm cache
-ci analyze . --cache --warm-up
-
-# Clear stale cache
-ci cache clear
-```
-
----
-
-## Security Hardening
-
-### File System Access
-
-```bash
-# Run with limited permissions
-sudo -u nobody ci analyze /project
-
-# Use read-only mount
-docker run -v $(pwd):/project:ro code-intelligence analyze /project
-```
-
-### Network Access
-
-```bash
-# Disable network for offline analysis
-ci analyze . --no-llm --offline
-
-# Or restrict network
-docker run --network none code-intelligence analyze /project
-```
-
-### API Keys
-
-```bash
-# Use environment variables
-export OPENAI_API_KEY=sk-...
-
-# Use secure storage
-ci config set openai-api-key $(vault read -field=key secret/openai)
-```
-
----
-
-## Update Strategy
-
-### Version Updates
-
-```bash
-# Check current version
-ci --version
-
-# Update from source
-cd code-intelligence
-git pull
-cargo install --path .
-
-# Update via package manager
-cargo install --force --path .
-```
-
-### Model Updates
-
-```bash
-# Download latest model
-curl -L https://github.com/neontoshi/Code-intelligence/releases/latest/download/model.bin -o models/model.bin
-
-# Validate model
-ci validate-model models/model.bin
-
-# Update config
-ci config set model models/model.bin
-```
-
-### Rollback
-
-```bash
-# Rollback version
-git checkout v0.1.0
-cargo install --path .
-
-# Rollback model
-ci config set model models/model_v1.bin
-```
-
----
-
-## Summary Checklist
-
-### Pre-Deployment
-
-- [ ] Install Rust and Cargo
-- [ ] Clone repository
-- [ ] Download model
-- [ ] Configure environment
-- [ ] Test analysis on sample project
-
-### Production Deployment
-
-- [ ] Set up CI/CD pipeline
-- [ ] Configure monitoring
-- [ ] Set up alerting
-- [ ] Document configuration
-- [ ] Create backup strategy
-
-### Post-Deployment
-
-- [ ] Run first analysis
-- [ ] Verify results
-- [ ] Set up scheduled runs
-- [ ] Configure notifications
-- [ ] Document any customizations
-```
-
----

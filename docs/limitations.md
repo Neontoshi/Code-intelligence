@@ -1,442 +1,296 @@
-## Document 2: `docs/limitations.md`
 
 ```markdown
 # Limitations
 
 ## Overview
 
-While `code-intelligence` is a powerful tool for dead code detection, it has inherent limitations. This document honestly describes what the tool **can't do** and how to work around these limitations.
+While `code-intelligence` provides high-precision dead code detection by blending AST analysis, call graphs, and calibrated machine learning, static analysis of dynamic codebases has inherent boundaries[cite: 1, 2]. This document details the tool's limitations, edge cases across supported languages, and recommended mitigations[cite: 1, 2].
 
 ---
 
-## 1. Reflection
+## 1. Reflection & Dynamic Dispatch
 
 ### Problem
 
-Languages like Python, Go, and Java support reflection - calling functions by name at runtime:
+Runtime string lookups and reflection bypass static call graph construction[cite: 1, 2]:
 
 ```python
-# Python reflection - static analysis cannot see this call
-func = getattr(module, "dynamic_function_name")
+# Python reflection - string target cannot be inferred statically in arbitrary expressions
+func = getattr(module, dynamic_var)
 func()
+
 ```
 
 ```go
 // Go reflection
 v := reflect.ValueOf(obj)
-method := v.MethodByName("DynamicMethod")
+method := v.MethodByName(dynamicMethodName)
 method.Call(nil)
+
 ```
 
 ```java
 // Java reflection
-Method method = obj.getClass().getMethod("dynamicMethod");
+Method method = obj.getClass().getMethod(methodName);
 method.invoke(obj);
+
+```
+
+```php
+// PHP variable function calls
+$funcName = getAction();
+$funcName();
+
 ```
 
 ### Impact
 
-Functions called via reflection **appear dead** because there are no static call edges pointing to them.
+Functions invoked exclusively via reflection or runtime string lookups will register zero static incoming callers (`fan_in = 0`) and risk being marked as dead candidates.
 
 ### Detection
 
-The tool attempts to detect reflection patterns:
+The engine includes AST pattern extractors in `src/analysis/dynamic_refs.rs` for common reflection signatures:
 
-```rust
-// Detects reflection usage
-if body.contains("getattr(") || body.contains("reflect.") {
-    // Flag as dynamic reference
-}
-```
+* **Python**: `getattr(obj, "string_literal")`
 
-But this only marks the **presence** of reflection, not the actual targets.
+* **Go**: `reflect.MethodByName("Literal")`
+
+* **PHP**: `call_user_func("string_literal")`
+
+
+Literal patterns are extracted and added to the reachability graph. Dynamic variables (e.g., `getattr(obj, computed_str)`) can only be flagged as dynamic call sites, not resolved to concrete symbols.
 
 ### Mitigation
 
-1. **Whitelist**: Manually add reflection targets to the whitelist
-2. **Documentation**: Document reflection usage in code comments
-3. **Annotation**: Use `#[cfg(not(dead_code_check))]` for reflection targets
+1. **Keep / Whitelist**: Mark the candidate in the dashboard (`f`) or CLI:
+```bash
+ci keep dynamicMethod "Invoked via reflection in serializer"
+
+```
+
+
+2. **Annotation**: Add comments or docstrings containing `reflection` or `dynamic_dispatch` to lower ML confidence scores.
+
+
 
 ---
 
-## 2. Dynamic Dispatch
+## 2. Polymorphic Interfaces & Trait Objects
 
 ### Problem
 
-Languages with dynamic dispatch (trait objects, interfaces, virtual methods) can hide call relationships:
+Polymorphism and virtual method tables decouple call sites from exact implementations:
 
 ```rust
-// Rust trait object
-let handler: Box<dyn Handler> = Box::new(DefaultHandler);
-handler.handle();  // Static analysis can't see which implementation
+// Rust dynamic dispatch
+let handler: Box<dyn Handler> = get_handler();
+handler.handle(); // Static graph cannot always pinpoint the exact struct implementor
+
+```
+
+```csharp
+// C# interface resolution via DI container
+public interface IOrderService { void Process(); }
+// Injected at runtime via MediatR / ServiceProvider
+
+```
+
+### Impact
+
+Concrete implementations of interface methods may have zero direct callers in the call graph.
+
+### Mitigation
+
+The engine includes safety rules in `is_never_dead()` and root detection:
+
+* **Rust**: Methods inside `impl Trait for Type` blocks are never classified as `DefinitelyDead`.
+
+
+* **C# / Java**: Classes decorated with `@Service`, `@Repository`, `[ApiController]`, or implementing registered interfaces are preserved as potential entry points.
+
+
+
+---
+
+## 3. FFI (Foreign Function Interface) & Native Exports
+
+### Problem
+
+Functions exported across language boundaries (e.g., Rust to C/WASM, C++ JNI exports) are called by external runtimes:
+
+```rust
+#[no_mangle]
+pub extern "C" fn native_compute(ptr: *const u8, len: usize) -> i32 {
+    // ...
+}
+
 ```
 
 ```cpp
-// C++ virtual methods
-Animal* animal = new Dog();
-animal->speak();  // Calls Dog::speak(), but static analysis doesn't know
-```
-
-### Impact
-
-Trait implementations may appear dead even though they're used polymorphically.
-
-### Mitigation
-
-The tool **never marks trait implementations as dead**:
-
-```rust
-fn is_never_dead(func: &FunctionNode) -> bool {
-    if func.trait_impl.is_some() {
-        return true;  // Trait implementations are safe
-    }
+extern "C" JNIEXPORT void JNICALL Java_com_app_Native_run(JNIEnv* env, jobject obj) {
     // ...
 }
-```
 
----
-
-## 3. FFI (Foreign Function Interface)
-
-### Problem
-
-Functions exported to other languages (C, Python, etc.) have callers outside the codebase:
-
-```rust
-// Rust FFI - called from C
-#[no_mangle]
-pub extern "C" fn process_data(data: *const u8) -> i32 {
-    // ...
-}
-```
-
-```c
-// C code calling the Rust function
-int result = process_data(buffer);
 ```
 
 ### Impact
 
-FFI functions appear dead because there are no internal callers.
+FFI endpoints have no internal callers within the analyzed codebase.
 
-### Detection
+### Detection & Mitigation
 
-The tool detects FFI exports:
+The root detector inspects symbols for FFI patterns (`#[no_mangle]`, `extern "C"`, `JNIEXPORT`, `EMSCRIPTEN_KEEPALIVE`, `Q_INVOKABLE`) and automatically registers them as external roots.
+
+---
+
+## 4. Metaprogramming & Macros
+
+### Problem
+
+Procedural and declarative macros generate AST nodes after macro expansion:
 
 ```rust
-fn is_ffi_export(func: &FunctionNode) -> bool {
-    func.name.contains("extern") ||
-    func.doc_comment.contains("#[no_mangle]") ||
-    func.file.contains("/ffi/")
+#[derive(Serialize, Deserialize)]
+struct State {
+    id: String,
 }
+// Macros expand into helper serialization traits/methods invisible in unexpanded AST
+
 ```
 
 ### Mitigation
 
-FFI functions are **never marked dead** by the filter pipeline.
+* Generated files matching common patterns (`*.gen.rs`, `*_gen.go`, `*.pb.go`, `*_pb2.py`) are flagged with `is_generated = true`.
+
+
+* Symbols derived from macros receive reduced dead-code scores.
+
+
 
 ---
 
-## 4. Macros
+## 5. Dynamic Module Loading & IPC
 
 ### Problem
 
-Macros generate code that isn't visible to static analysis:
+Runtime dynamic imports and cross-process messaging hide invocation targets:
 
-```rust
-// Macro-generated code
-#[derive(Debug, Clone, Serialize)]
-struct Config {
-    name: String,
-    value: i32,
-}
+```typescript
+// Dynamic import
+const module = await import(`./plugins/${pluginName}`);
+module.initialize();
 
-// The macro generates:
-// - impl Debug for Config
-// - impl Clone for Config
-// - impl Serialize for Config
+// Electron / Tauri IPC bridge
+window.__TAURI__.invoke('sync_database', { payload });
+ipcRenderer.send('download-complete', data);
+
 ```
 
-### Impact
+### Detection & Mitigation
 
-Macro-generated functions appear dead because the macro expansion isn't parsed.
+The AST parser identifies string-literal IPC calls (`invoke`, `send`, `emit`) and maps them to backend Rust/C++/Node handler functions automatically. Non-literal dynamic paths must be reviewed manually.
 
-### Detection
+---
 
-The tool looks for macro indicators:
+## 6. Monolith Scalability (>100k Functions)
 
-```rust
-if func.doc_comment.contains("macro") ||
-   func.file.contains(".gen.rs") ||
-   func.file.contains("_gen.rs") {
-    // Likely macro-generated
-}
-```
+### Performance Envelope
+
+| Metric | Target / Limit | Behavior Exceeded |
+| --- | --- | --- |
+| **Call Graph Nodes** | ~5,000 | Cycle detection skips beyond 5,000 nodes to preserve O(V + E) complexity
+
+ |
+| **RAM Usage** | 4,096 MB | Configurable via `CI_MEMORY_LIMIT_MB`<br> |
+| **File Traversal** | 10,000 files | Exceeding files require `--max-files` override or incremental cache
+
+ |
 
 ### Mitigation
 
-Generated code patterns are added to the never-dead filter.
+* **Incremental Analysis**: Pass `--cache` to cache file AST hashes (`.code-intelligence-cache`).
 
----
 
-## 5. Dynamic Imports
+* **Scope Reduction**: Analyze submodules or specific packages rather than whole multi-gigabyte monolith repositories.
 
-### Problem
 
-JavaScript/TypeScript dynamic imports are resolved at runtime:
-
-```javascript
-// Dynamic import - invisible to static analysis
-const module = await import('./dynamic-module.js');
-module.dynamicFunction();
-```
-
-```python
-# Python dynamic import
-import importlib
-module = importlib.import_module('dynamic_module')
-module.dynamic_function()
-```
-
-### Impact
-
-Functions in dynamically imported modules appear dead.
-
-### Detection
-
-The tool detects dynamic import patterns:
-
-```rust
-if body.contains("import(") || body.contains("importlib") {
-    // Flag as dynamic import
-}
-```
-
-### Mitigation
-
-Dynamic import usage is flagged but not fully resolved.
-
----
-
-## 6. Large Codebases
-
-### Problem
-
-Very large codebases (>100k functions, >1M LOC) can cause performance issues:
-
-- **Memory**: Building the full call graph can exceed 4GB
-- **Time**: Analysis can take 10+ minutes
-- **Cycle Detection**: O(N²) algorithms become impractical
-
-### Mitigations
-
-#### Memory Limits
-
-```rust
-// Configurable memory limit
-config.max_memory_mb = Some(4096);  // 4GB limit
-
-// Automatic degradation
-if current_memory > limit * 0.85 {
-    // Reduce threads, skip expensive features
-}
-```
-
-#### Incremental Analysis
-
-```rust
-// Only re-analyze changed files
-let changed = file_tracker.detect_changes(&files);
-if changed.is_empty() {
-    return cached_analysis;  // Fast path
-}
-```
-
-#### Cycle Detection Skipping
-
-```rust
-// Skip cycle detection for huge graphs
-if call_graph.node_count() > 5000 {
-    skip_cycle_detection = true;
-}
-```
-
----
-
-## 7. Generated Code
-
-### Problem
-
-Generated code (protobuf, bindings, etc.) often has patterns that look dead:
-
-```rust
-// protobuf-generated code
-pub struct User {
-    #[prost(string, tag="1")]
-    pub name: String,
-}
-
-// Generated methods that look dead
-impl User {
-    pub fn name(&self) -> &str { &self.name }
-    pub fn set_name(&mut self, name: String) { self.name = name; }
-}
-```
-
-### Impact
-
-Generated accessors and builders appear dead but are used by the code generator.
-
-### Detection
-
-The tool skips files with generated markers:
-
-```rust
-fn is_generated_file(file: &str) -> bool {
-    file.contains(".gen.rs") ||
-    file.contains("_gen.rs") ||
-    file.contains(".pb.go") ||
-    file.contains("_pb2.py") ||
-    file.contains("/generated/") ||
-    file.contains("/gen/")
-}
-```
-
-### Mitigation
-
-Generated files are partially skipped or have features disabled.
-
----
-
-## 8. Testing Code
-
-### Problem
-
-Test code often has functions that appear dead but are called by the test runner:
-
-```rust
-#[test]
-fn test_helper() {
-    // Called by cargo test
-}
-
-#[bench]
-fn bench_parser() {
-    // Called by cargo bench
-}
-```
-
-### Impact
-
-Test functions may appear dead if the test runner isn't detected.
-
-### Mitigation
-
-Test functions are automatically detected and marked as roots:
-
-```rust
-fn is_test_function(func: &FunctionNode) -> bool {
-    func.is_test ||
-    func.name.starts_with("test_") ||
-    func.file.contains("/tests/") ||
-    func.file.ends_with("_test.rs")
-}
-```
-
----
-
-## 9. Build System Integration
-
-### Problem
-
-Build scripts, benchmarks, and examples have their own entry points:
-
-```
-build.rs    - Called by cargo build
-benches/    - Called by cargo bench
-examples/   - Called by cargo run --example
-```
-
-### Impact
-
-Functions in these directories may appear dead.
-
-### Mitigation
-
-These paths are automatically added to roots:
-
-```rust
-if file.contains("/benches/") ||
-   file.contains("/examples/") ||
-   file.ends_with("build.rs") {
-    // Treat as root
-}
-```
 
 ---
 
 ## Summary Table
 
-| Limitation | Severity | Mitigation |
-|------------|----------|------------|
-| Reflection | High | Dynamic reference detection |
-| Dynamic Dispatch | Medium | Never mark trait impls dead |
-| FFI | High | Detect FFI exports |
-| Macros | Medium | Detect generated patterns |
-| Dynamic Imports | Medium | Detect import patterns |
-| Large Codebases | Low | Memory limits, incremental |
-| Generated Code | Low | Skip generated files |
-| Test Code | Low | Auto-detect test functions |
-| Build System | Low | Auto-detect build paths |
+| Limitation | Impact | Severity | Mitigation Strategy |
+| --- | --- | --- | --- |
+| **Reflection**<br> | False dead candidates
+
+ | High
+
+ | AST literal extraction + manual whitelist
+
+ |
+| **Polymorphism / DI**<br> | Indirect method usage
+
+ | Medium
+
+ | Interface and trait methods protected
+
+ |
+| **FFI / WASM Exports**<br> | Zero internal callers
+
+ | High
+
+ | Automated attribute export detection
+
+ |
+| **Macros / CodeGen**<br> | Unparsed expansions
+
+ | Medium
+
+ | Generated file markers + reduced penalty
+
+ |
+| **IPC & Dynamic Imports**<br> | Decoupled execution
+
+ | Medium
+
+ | IPC literal AST matching
+
+ |
+| **Large Graphs (>5k nodes)**<br> | Slower graph traversals
+
+ | Low
+
+ | Cycle skipping + disk caching
+
+ |
 
 ---
 
 ## Best Practices
 
-### For Developers
+1. **Review Before Deleting**: Use the interactive dashboard (`ci dashboard .`) to inspect evidence, caller paths, and confidence intervals before removing code.
 
-1. **Use Attributes**: `#[cfg(not(dead_code_check))]` for reflection targets
-2. **Add Doc Comments**: Document FFI and reflection usage
-3. **Organize Code**: Put generated code in `generated/` directories
-4. **Review Verdicts**: Always review before removing code
-5. **Test After Removal**: Run tests after deleting dead code
 
-### For Team Leads
+2. **Record Decisions**: When keeping a false positive, record the reason with `ci keep <name> "<reason>"`. This writes to `.code-intelligence-outcomes.json` and supplies training feedback for future model iterations.
 
-1. **Set Thresholds**: Use `--threshold` for PR checks
-2. **Track Outcomes**: Use `ci stats` to monitor progress
-3. **Retrain Models**: Periodically retrain with new data
-4. **Document Exceptions**: Keep a project whitelist
 
----
+3. **Calibrate for Codebase Type**:
+* Libraries / SDKs: Use `--threshold 0.92` (protect public API entry points).
 
-## Known False Positives
 
-### Common False Positives
+* Applications / Services: Use `--threshold 0.80 - 0.85` (aggressive dead logic pruning).
 
-| Pattern | Example | Why It's Flagged |
-|---------|---------|------------------|
-| Trait methods | `impl Handler for DefaultHandler` | No direct calls |
-| Framework hooks | `@app.route('/')` | Called by framework |
-| FFI exports | `#[no_mangle]` | Called from external |
-| Test helpers | `fn setup_test()` | Called by tests |
-| Build scripts | `build.rs` | Called by cargo |
 
-### How to Handle
 
-```bash
-# Mark as false positive
-ci keep setup_test "Used by integration tests"
 
-# Or add to whitelist permanently
-ci config set whitelist "setup_test,prepare_db,create_test_data"
+4. **Run Test Suites**: Always execute your automated test pipeline after pruning flagged symbols.
+
+
+
+> **Rule of thumb**: Keeping dead code carries technical debt, but deleting dynamically dispatched code causes runtime failures. If confidence is below `0.85` or evidence is uncertain, review the candidate before removal.
+> 
+> 
+
 ```
 
----
-
-## Disclaimer
-
-No static analysis tool can be 100% accurate. Always **review before removing** code, and **run tests** after making changes.
-
-> **Rule of thumb**: If you're not sure, keep it. Removing a used function is worse than keeping a dead one.
 ```
