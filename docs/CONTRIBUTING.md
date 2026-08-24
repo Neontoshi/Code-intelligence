@@ -1,6 +1,3 @@
-## Document 8: `CONTRIBUTING.md`
-
-```markdown
 # Contributing to Code Intelligence
 
 Thank you for your interest in contributing to `code-intelligence`! This document provides guidelines and instructions for contributing to the project.
@@ -25,13 +22,13 @@ By participating in this project, you agree to:
 - Rust 1.70+
 - Cargo
 - Git
-- (Optional) Ollama for LLM features
+- (Optional) Ollama, for LLM features
 
 ### Development Setup
 
 ```bash
 # Fork and clone the repository
-git clone https://github.com/YOUR_USERNAME/Code-intelligence
+git clone https://github.com/YOUR_USERNAME/code-intelligence
 cd code-intelligence
 
 # Build the project
@@ -65,20 +62,20 @@ cargo tarpaulin --ignore-tests
 code-intelligence/
 ├── src/
 │   ├── analysis/          # Analysis logic
-│   ├── bin/               # CLI tools
-│   ├── engine/            # Pipeline engine
-│   ├── graph/             # Graph representations
-│   ├── llm/               # LLM integration
-│   ├── ml/                # Machine Learning
-│   ├── optimize/          # Optimization
-│   ├── output/            # Output generation
-│   ├── parser/            # Parsing
-│   └── utils/             # Utilities
+│   ├── bin/                # CLI tools
+│   ├── engine/             # Pipeline engine
+│   ├── graph/               # Graph representations
+│   ├── llm/                 # LLM integration
+│   ├── ml/                   # Machine learning
+│   ├── optimize/             # Optimization
+│   ├── output/                # Output generation
+│   ├── parser/                 # Parsing
+│   └── utils/                  # Utilities
 ├── tests/                 # Tests
 ├── docs/                  # Documentation
 ├── models/                # ML models
 ├── data/                  # Training data
-└── benches/               # Benchmarks
+└── benches/                # Benchmarks
 ```
 
 ---
@@ -87,7 +84,7 @@ code-intelligence/
 
 ### 1. Find an Issue
 
-Check the [issue tracker](https://github.com/neontoshi/Code-intelligence/issues) for:
+Check the [issue tracker](https://github.com/neontoshi/code-intelligence/issues) for:
 
 - Good first issues
 - Bug reports
@@ -99,7 +96,7 @@ Check the [issue tracker](https://github.com/neontoshi/Code-intelligence/issues)
 # Create a feature branch
 git checkout -b feature/your-feature-name
 
-# Or for bug fixes
+# Or, for bug fixes
 git checkout -b fix/issue-number
 ```
 
@@ -154,7 +151,7 @@ fn test_end_to_end_flow() {
 # Run all tests
 cargo test
 
-# Run specific test
+# Run a specific test
 cargo test test_function_works
 
 # Run with output
@@ -177,19 +174,19 @@ cargo clippy --fix
 ### 7. Commit Changes
 
 ```bash
-# Commit with descriptive message
-git commit -m "feat: Add support for new language"
+# Commit with a descriptive message
+git commit -m "feat: add support for new language"
 
 # Commit format
-# feat: New feature
-# fix: Bug fix
-# docs: Documentation
-# refactor: Code refactoring
-# test: Tests
-# chore: Maintenance
+# feat:     new feature
+# fix:      bug fix
+# docs:     documentation
+# refactor: code refactoring
+# test:     adding or updating tests
+# chore:    maintenance
 ```
 
-### 8. Create Pull Request
+### 8. Create a Pull Request
 
 1. Push your branch
 2. Open a pull request
@@ -274,7 +271,7 @@ path.canonicalize()
 /// Returns `CodeIntelError` if:
 /// - The project path doesn't exist
 /// - Analysis fails
-/// - Memory limit is exceeded
+/// - The memory limit is exceeded
 ///
 /// # Example
 ///
@@ -330,7 +327,7 @@ async fn test_full_analysis() {
     let project = setup_test_project();
     let mut pipeline = Pipeline::new();
     let analysis = pipeline.process_project(&project).await.unwrap();
-    
+
     assert!(analysis.function_count() > 0);
 }
 ```
@@ -368,14 +365,14 @@ fn test_parser_fuzz() {
 
 ### Adding a New Language
 
-1. **Add tree-sitter grammar:**
+1. **Add the tree-sitter grammar:**
    ```toml
    # Cargo.toml
    [dependencies]
    tree-sitter-newlang = "0.20"
    ```
 
-2. **Add language config:**
+2. **Add the language config:**
    ```rust
    // src/parser/tree_sitter.rs
    langs.insert(
@@ -405,7 +402,7 @@ fn test_parser_fuzz() {
 
 ### Adding a New Feature
 
-1. **Define feature:**
+1. **Define the feature:**
    ```rust
    // src/ml/feature_schema.rs
    features.push(FeatureDefinition {
@@ -417,7 +414,7 @@ fn test_parser_fuzz() {
    });
    ```
 
-2. **Extract feature:**
+2. **Extract the feature:**
    ```rust
    // src/analysis/features.rs
    impl FunctionFeatures {
@@ -435,35 +432,35 @@ fn test_parser_fuzz() {
 
 ### Adding a New LLM Provider
 
-1. **Create provider:**
+1. **Create the provider:**
    ```rust
    // src/llm/providers/new_provider.rs
    use async_trait::async_trait;
-   
+
    pub struct NewProvider {
        // ...
    }
-   
+
    #[async_trait]
    impl LLMProvider for NewProvider {
        async fn generate(&self, messages: &[LLMMessage], options: &GenerationOptions) -> Result<LLMResponse, String> {
            // Implementation
        }
-       
+
        async fn generate_stream(&self, messages: &[LLMMessage], options: &GenerationOptions) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send>, String> {
            // Implementation
        }
    }
    ```
 
-2. **Add to factory:**
+2. **Add it to the factory:**
    ```rust
    // src/llm/providers/mod.rs
    pub enum ProviderType {
        // ...
        NewProvider,
    }
-   
+
    pub async fn create_provider(provider_type: ProviderType, config: &ProviderConfig) -> Result<Arc<dyn LLMProvider>, String> {
        match provider_type {
            // ...
@@ -478,36 +475,36 @@ fn test_parser_fuzz() {
 
 ### Memory Usage
 
-- **Avoid large clones**: Use references instead
-- **Use Arc for shared data**: Reduce duplication
-- **Use iterators**: Avoid collecting large vectors
-- **Limit graph size**: Skip cycle detection for large graphs
+- **Avoid large clones**: use references instead
+- **Use `Arc` for shared data**: reduces duplication
+- **Use iterators**: avoid collecting large vectors
+- **Limit graph size**: skip cycle detection for large graphs
 
 ### Time Complexity
 
-- **O(N) parsing**: Keep parsing linear
+- **O(N) parsing**: keep parsing linear
 - **O(F + C) reachability**: BFS is efficient
-- **O(F) ML prediction**: Keep prediction fast
+- **O(F) ML prediction**: keep prediction fast
 
 ### Optimization Tips
 
 ```rust
-// Bad: Clone large data
+// Bad: clone large data
 let copy = data.clone();
 
-// Good: Use reference
+// Good: use a reference
 let data_ref = &data;
 
-// Bad: Collect large vector
+// Bad: collect a large vector
 let vec: Vec<_> = iter.collect();
 
-// Good: Use iterator directly
+// Good: use the iterator directly
 for item in iter { ... }
 
-// Bad: Expensive hash
+// Bad: expensive hash on every call
 let hash = compute_expensive_hash(&data);
 
-// Good: Cache hash
+// Good: cache the hash
 let hash = cache.get_or_compute(&key, || compute_expensive_hash(&data));
 ```
 
@@ -524,10 +521,10 @@ let hash = cache.get_or_compute(&key, || compute_expensive_hash(&data));
 //! It handles Y and Z.
 
 /// Function documentation
-/// 
+///
 /// # Arguments
 /// * `arg` - Description
-/// 
+///
 /// # Returns
 /// * `Result<...>` - Description
 pub fn my_function(arg: &str) -> Result<String, Error> {
@@ -539,15 +536,18 @@ pub fn my_function(arg: &str) -> Result<String, Error> {
 
 ```
 docs/
-├── algorithm.md        # Algorithm explanation
-├── limitations.md      # Known limitations
-├── evaluation_report.md # Model evaluation
-├── api.md             # API reference
-├── user_guide.md      # User guide
-├── architecture.md    # Architecture overview
-├── deployment.md      # Deployment guide
-└── CONTRIBUTING.md    # This file
+├── algorithm.md          # Algorithm explanation
+├── limitations.md        # Known limitations
+├── evaluation_report.md  # Model evaluation
+├── api.md                # API reference
+├── user_guide.md         # User guide
+├── architecture.md       # Architecture overview
+└── deployment.md         # Deployment guide
+
+CONTRIBUTING.md            # This file (repo root)
 ```
+
+> **Note:** the original listing nested `CONTRIBUTING.md` inside `docs/`, but every link in this file (e.g. `[docs/](docs/)`) treats `docs/` and the contributing guide as siblings — the standard convention is `CONTRIBUTING.md` at the repo root, next to `Cargo.toml`. Split it out above; flag if it's actually meant to live inside `docs/`.
 
 ---
 
@@ -555,14 +555,14 @@ docs/
 
 ### Pull Request Requirements
 
-1. **Tests**: All new code must have tests
-2. **Documentation**: Public API must be documented
-3. **No warnings**: Code must compile without warnings
-4. **No panics**: Avoid `unwrap()` and `expect()` in production code
+1. **Tests**: all new code must have tests
+2. **Documentation**: public API must be documented
+3. **No warnings**: code must compile without warnings
+4. **No panics**: avoid `unwrap()` and `expect()` in production code
 
 ### Review Checklist
 
-- [ ] Code follows style guide
+- [ ] Code follows the style guide
 - [ ] Tests pass
 - [ ] Documentation updated
 - [ ] No breaking changes (or announced)
@@ -592,16 +592,16 @@ version = "0.2.0"  # Major.Minor.Patch
 ### Creating a Release
 
 ```bash
-# Create release branch
+# Create a release branch
 git checkout -b release/v0.2.0
 
-# Update version
+# Update the version
 sed -i 's/version = "0.1.0"/version = "0.2.0"/' Cargo.toml
 
 # Commit changes
 git commit -am "Release v0.2.0"
 
-# Create tag
+# Create a tag
 git tag v0.2.0
 
 # Push
@@ -616,8 +616,8 @@ git push origin v0.2.0
 ### Resources
 
 - **Documentation**: [docs/](docs/)
-- **Issue Tracker**: [GitHub Issues](https://github.com/neontoshi/Code-intelligence/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/neontoshi/Code-intelligence/discussions)
+- **Issue Tracker**: [GitHub Issues](https://github.com/neontoshi/code-intelligence/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/neontoshi/code-intelligence/discussions)
 
 ### Asking Questions
 
@@ -626,7 +626,7 @@ When asking for help, please provide:
 1. What you're trying to do
 2. What you've tried
 3. Error messages (if any)
-4. Environment (OS, Rust version, etc.)
+4. Your environment (OS, Rust version, etc.)
 
 ---
 
@@ -635,23 +635,3 @@ When asking for help, please provide:
 Your contributions make this project better. Whether you're fixing a bug, adding a feature, or improving documentation, every contribution is valued.
 
 **Happy coding! 🚀**
-```
-
----
-
-## Phase 9 Complete! ✅
-
-### Documentation Files Created:
-
-| File | Description |
-|------|-------------|
-| `docs/algorithm.md` | How the dead code detection algorithm works |
-| `docs/limitations.md` | Honest limitations of the tool |
-| `docs/evaluation_report.md` | Model performance metrics |
-| `docs/api.md` | API documentation |
-| `docs/user_guide.md` | User guide with examples |
-| `docs/architecture.md` | Architecture overview |
-| `docs/deployment.md` | Deployment guide |
-| `CONTRIBUTING.md` | Contribution guide |
-
----
