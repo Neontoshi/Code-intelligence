@@ -3,8 +3,8 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'  # Triggers on tags like v0.1.0, v0.2.0, etc.
-  workflow_dispatch:  # Allows manual trigger
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -15,20 +15,24 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact: ci
-            asset_name: ci_linux_x86_64
+            artifact_name: ci
+            asset_name: ci  # ⭐ This is what users download
+            asset_path: ci
           - target: x86_64-apple-darwin
             os: macos-latest
-            artifact: ci
+            artifact_name: ci
             asset_name: ci_macos_intel
+            asset_path: ci_macos_intel
           - target: aarch64-apple-darwin
             os: macos-latest
-            artifact: ci
+            artifact_name: ci
             asset_name: ci_macos_arm64
+            asset_path: ci_macos_arm64
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            artifact: ci.exe
+            artifact_name: ci.exe
             asset_name: ci_windows_x86_64.exe
+            asset_path: ci_windows_x86_64.exe
 
     steps:
       - name: Checkout code
@@ -44,11 +48,16 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Copy binary to expected name
+        run: |
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} ${{ matrix.asset_path }}
+        shell: bash
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset_name }}
-          path: target/${{ matrix.target }}/release/${{ matrix.artifact }}
+          path: ${{ matrix.asset_path }}
 
   release:
     name: Create Release
@@ -61,6 +70,9 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      - name: List artifacts (debug)
+        run: ls -la artifacts/
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
