@@ -403,6 +403,7 @@ fn test_is_never_dead_filter() {
             depth: 0,
             layer: "test".to_string(),
             trait_impl,
+            decorators: Vec::new(),
             is_test: name.starts_with("test"),
             is_trait_method: false,
             is_trait_default: false,

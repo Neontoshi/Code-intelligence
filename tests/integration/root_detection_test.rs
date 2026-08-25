@@ -144,8 +144,10 @@ fn test_detect_react_components() {
         println!("✅ React components detected as roots");
     } else {
         println!("⚠️ React components not fully detected (TSX parsing may be limited)");
-        println!("   UserProfile: {}, Dashboard: {}, useCustomHook: {}", 
-            has_user_profile, has_dashboard, has_use_hook);
+        println!(
+            "   UserProfile: {}, Dashboard: {}, useCustomHook: {}",
+            has_user_profile, has_dashboard, has_use_hook
+        );
     }
 
     // Helper should NOT be a root
@@ -203,7 +205,7 @@ fn test_detect_go_interface_impls() {
         roots.iter().any(|r| r.contains("main")),
         "main should be a root"
     );
-    
+
     // init may or may not be detected depending on parser
     if roots.iter().any(|r| r.contains("init")) {
         println!("✅ Go init detected as root");
@@ -267,8 +269,10 @@ fn test_detect_java_spring_annotations() {
         println!("✅ Spring annotations detected as roots");
     } else {
         println!("⚠️ Spring annotations not fully detected (Java parsing may be limited)");
-        println!("   getUsers: {}, createUser: {}, process: {}", 
-            has_get_users, has_create_user, has_process);
+        println!(
+            "   getUsers: {}, createUser: {}, process: {}",
+            has_get_users, has_create_user, has_process
+        );
     }
 
     // Internal helper should NOT be a root
@@ -326,6 +330,7 @@ fn create_graph_from_source(source: &str, language: &str) -> (CallGraph, Vec<Fun
                 depth: 0,
                 layer: String::new(),
                 trait_impl: func_info.trait_impl.clone(),
+                decorators: Vec::new(),
                 is_test: func_info.is_test,
                 is_trait_method: func_info.is_trait_method,
                 is_trait_default: func_info.is_trait_default,

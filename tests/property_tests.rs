@@ -235,6 +235,7 @@ fn create_test_function(name: &str, full_path: &str) -> FunctionNode {
         depth: 0,
         layer: "core".to_string(),
         trait_impl: None,
+        decorators: Vec::new(),
         is_test: false,
         is_trait_method: false,
         is_trait_default: false,

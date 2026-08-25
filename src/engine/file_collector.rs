@@ -1,6 +1,10 @@
 // src/engine/file_collector.rs
 
 //! File collection with intelligent filtering for source code analysis
+//!
+//! This module walks directory trees and collects source files while
+//! automatically excluding build artifacts, generated code, and other
+//! non-source files.
 
 use crate::engine::config::PipelineConfig;
 use crate::engine::stages::RawProject;
@@ -56,7 +60,7 @@ impl FileCollector {
             // C/C++ / CMake Build
             "cmake-build-debug",
             "cmake-build-release",
-            ".cxx",
+            ".cxx", // CMake C++ build artifacts (Flutter NDK)
             "CMakeFiles",
             "CMakeScripts",
             "Testing",
@@ -65,13 +69,13 @@ impl FileCollector {
             ".dart_tool",
             ".pub",
             ".pub-cache",
-            "build",
+            "build", // Already included but important for Flutter
             ".flutter-plugins",
             ".flutter-plugins-dependencies",
             // Android / Gradle
             ".gradle",
             "gradle",
-            "build",
+            "build", // Android build output
             "libs",
             "generated",
             "intermediates",
@@ -83,6 +87,7 @@ impl FileCollector {
             ".symlinks",
             "xcuserdata",
             ".xcode",
+            "build", // iOS build output
             // Node.js / JavaScript
             "node_modules",
             "bower_components",
@@ -101,13 +106,13 @@ impl FileCollector {
             // Java / JVM
             ".mvn",
             "mvnw",
-            "target",
+            "target", // Maven build output
             // Go
             "vendor",
             ".mod",
             ".sum",
             // Rust
-            "target",
+            "target", // Cargo build output
             // IDE
             ".idea",
             ".vscode",
@@ -144,7 +149,7 @@ impl FileCollector {
             "old",
             "backup",
             "archive",
-            // Test fixtures
+            // Test fixtures (large binary/test data)
             "fixtures",
             "testdata",
             "test_data",
@@ -155,43 +160,26 @@ impl FileCollector {
         // SUPPORTED SOURCE CODE EXTENSIONS (ONLY THESE WILL BE PARSED)
         let source_extensions: &[&str] = &[
             // Systems
-            "rs",  // Rust
-            "go",  // Go
-            "zig", // Zig
+            "rs", // Rust
             // Web
             "js", "jsx", // JavaScript
-            "ts", "tsx",    // TypeScript
-            "vue",    // Vue
-            "svelte", // Svelte
+            "ts", "tsx", // TypeScript
             // Mobile
             "dart", // Dart/Flutter
-            "kt", "kts",   // Kotlin
-            "java",  // Java
-            "swift", // Swift
-            "m",     // Objective-C
-            "mm",    // Objective-C++
             // Backend
             "py",  // Python
             "rb",  // Ruby
             "php", // PHP
             "cs",  // C#
-            "fs",  // F#
-            "vb",  // Visual Basic
             "lua", // Lua
-            "r",   // R
             // Systems (C family)
             "c", "h", // C
             "cpp", "cc", "cxx", "c++", // C++
             "hpp", "hh", "hxx", "h++", // C++ Headers
-            "s", "S", // Assembly
             // Other source-like
-            "proto",   // Protocol Buffers
-            "thrift",  // Thrift
-            "graphql", // GraphQL
-            "gql",     // GraphQL
-            "sql",     // SQL
-            "sh", "bash", "zsh",  // Shell
-            "toml", // TOML
+            "proto",  // Protocol Buffers
+            "thrift", // Thrift
+            "sql",    // SQL
         ];
 
         // FILE EXCLUSIONS (FILENAMES AND PATTERNS)
@@ -230,7 +218,8 @@ impl FileCollector {
             "CMakeCXXCompilerId.cpp",
             "CMakeDetermineCompilerABI_C.bin",
             "CMakeDetermineCompilerABI_CXX.bin",
-            // Generated Source Files
+            "CMakeFiles",
+            // Generated Source Files - Dart
             ".g.dart",
             ".freezed.dart",
             ".gr.dart",
@@ -238,6 +227,7 @@ impl FileCollector {
             ".part.dart",
             ".gql.dart",
             ".graphql.dart",
+            // Generated Source Files - TypeScript/JavaScript
             ".g.ts",
             ".g.js",
             ".g.cs",
@@ -248,23 +238,23 @@ impl FileCollector {
             ".min.css",
             ".chunk.js",
             ".chunk.css",
+            // Generated Source Files - Protocol Buffers
             ".pb.go",
             ".pb.dart",
             ".pb.rs",
             "_pb2.py",
             "_pb2_grpc.py",
+            // Generated Source Files - Rust
             ".rs.bk",
             ".rlib",
             ".rmeta",
+            // Generated Source Files - Python
             ".pyc",
             ".pyo",
             ".pyd",
             ".so",
             ".egg-info",
-            ".class",
-            ".jar",
-            ".war",
-            ".ear",
+            // Generated Source Files - General
             ".gen",
             ".generated",
             ".auto",
@@ -285,6 +275,33 @@ impl FileCollector {
             ".out",
             ".err",
             "nohup.out",
+            // Kotlin files (no tree-sitter grammar installed)
+            ".kt",
+            ".kts",
+            // Swift files (no tree-sitter grammar installed)
+            ".swift",
+            // Objective-C files (no tree-sitter grammar installed)
+            ".m",
+            ".mm",
+            // Gradle build files
+            "build.gradle.kts",
+            "settings.gradle.kts",
+            "build.gradle",
+            "settings.gradle",
+            // Android manifest
+            "AndroidManifest.xml",
+            // iOS/MacOS asset catalogs
+            ".xcassets",
+            "Contents.json",
+            "Info.plist",
+            // Shell scripts (not source code for analysis)
+            ".sh",
+            ".bash",
+            ".zsh",
+            // TOML config files (not source code for analysis)
+            ".toml",
+            // Go files (we have the grammar but it's optional)
+            // Keep .go since we have tree-sitter-go
         ];
 
         // COLLECTION
@@ -296,6 +313,24 @@ impl FileCollector {
                 if skip_dirs.contains(&name) {
                     return false;
                 }
+
+                // Skip files that look like generated/bundled assets
+                if let Some(name) = e.file_name().to_str() {
+                    if HASHED_FILE_RE.is_match(name)
+                        || MINIFIED_FILE_RE.is_match(name)
+                        || BUNDLED_FILE_RE.is_match(name)
+                        || GENERATED_DART_RE.is_match(name)
+                        || PROTOBUF_RE.is_match(name)
+                        || TEMPLATE_FILE_RE.is_match(name)
+                    {
+                        return false;
+                    }
+                    // Skip long names with hash patterns (common in build outputs)
+                    if name.len() > 40 && (name.ends_with(".js") || name.ends_with(".css")) {
+                        return false;
+                    }
+                }
+
                 true
             })
             .filter_map(|e| e.ok())
@@ -306,7 +341,7 @@ impl FileCollector {
 
                 let path_str = e.path().to_string_lossy();
 
-                // PATH-BASED EXCLUSIONS
+                    // PATH-BASED EXCLUSIONS
 
                 // Skip asset/build directories
                 if path_str.contains("/remote-dist/assets/")
@@ -316,7 +351,7 @@ impl FileCollector {
                     return false;
                 }
 
-                // Skip CMake build directories
+                // Skip CMake build directories (Flutter/Android NDK)
                 if path_str.contains("/build/.cxx/")
                     || path_str.contains("/build/intermediates/")
                     || path_str.contains("/.cxx/")
@@ -334,7 +369,12 @@ impl FileCollector {
                     || path_str.contains("/android/app/build/")
                     || path_str.contains("/ios/Pods/")
                     || path_str.contains("/ios/DerivedData/")
+                    // Skip Flutter build directories
                     || path_str.contains("/android/app/src/main/gen/")
+                    || path_str.contains("/android/app/src/main/assets/")
+                    // Skip Flutter generated plugin registrant
+                    || path_str.contains("/android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java")
+                    // Skip Flutter generated main.dart in build
                     || path_str.contains("/build/flutter_assets/")
                     || path_str.contains("/build/app/")
                 {
@@ -347,6 +387,7 @@ impl FileCollector {
                     || path_str.contains("/build/tmp/")
                     || path_str.contains("/build/intermediates/")
                     || path_str.contains("/build/outputs/")
+                    // Skip Gradle wrapper
                     || path_str.contains("/gradle/wrapper/")
                 {
                     return false;
@@ -372,8 +413,8 @@ impl FileCollector {
                     return false;
                 }
 
-                // FILENAME-BASED EXCLUSIONS
-                if let Some(name) = e.path().file_name().and_then(|n| n.to_str()) {
+                    // FILENAME-BASED EXCLUSIONS
+                    if let Some(name) = e.path().file_name().and_then(|n| n.to_str()) {
                     // Check exact matches
                     if skip_files.contains(&name) {
                         return false;
@@ -382,17 +423,19 @@ impl FileCollector {
                     // Check if the file matches any skip pattern
                     for pattern in skip_files {
                         if pattern.starts_with('.') {
+                            // Suffix match
                             if name.ends_with(pattern) {
                                 return false;
                             }
                         } else if pattern.ends_with('.') {
+                            // Prefix match
                             if name.starts_with(pattern) {
                                 return false;
                             }
                         }
                     }
 
-                    // Skip generated file patterns
+                    // Skip files in known build/generated patterns
                     if name.contains(".gen.")
                         || name.contains("_gen.")
                         || name.contains(".generated.")
@@ -408,7 +451,7 @@ impl FileCollector {
                         return false;
                     }
 
-                    // Skip specific generated Dart files
+                    // Skip specific Flutter/Dart generated files
                     if name.ends_with(".g.dart")
                         || name.ends_with(".freezed.dart")
                         || name.ends_with(".gr.dart")
@@ -421,26 +464,11 @@ impl FileCollector {
                     {
                         return false;
                     }
-
-                    // Skip hashed/bundled/minified files
-                    if HASHED_FILE_RE.is_match(name)
-                        || MINIFIED_FILE_RE.is_match(name)
-                        || BUNDLED_FILE_RE.is_match(name)
-                        || GENERATED_DART_RE.is_match(name)
-                        || PROTOBUF_RE.is_match(name)
-                        || TEMPLATE_FILE_RE.is_match(name)
-                    {
-                        return false;
-                    }
-
-                    // Skip long names with hash patterns
-                    if name.len() > 40 && (name.ends_with(".js") || name.ends_with(".css")) {
-                        return false;
-                    }
                 }
 
-                // EXTENSION CHECK - ONLY SOURCE CODE EXTENSIONS
-                if let Some(ext) = e.path().extension().and_then(|e| e.to_str()) {
+                    // EXTENSION CHECK - ONLY SOURCE CODE EXTENSIONS
+                    if let Some(ext) = e.path().extension().and_then(|e| e.to_str()) {
+                    // Check if it's in our supported source extensions
                     if source_extensions.contains(&ext) {
                         if let Ok(meta) = e.metadata() {
                             if meta.len() == 0 || meta.len() > config.max_file_size {

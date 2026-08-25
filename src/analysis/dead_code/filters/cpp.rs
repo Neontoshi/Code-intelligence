@@ -11,9 +11,21 @@ pub struct CppFilter;
 impl LanguageFilter for CppFilter {
     fn get_protection_level(&self, func: &FunctionNode) -> ProtectionLevel {
         // 1. PROTECTED
-
-        // Test functions are protected
         if func.is_test || is_test_file(&func.file) {
+            return ProtectionLevel::Protected;
+        }
+
+        // Flutter-generated runner boilerplate — GObject vtable callbacks and
+        // Win32 WNDPROC entries are wired via macros/function pointers, never
+        // called directly, so static reachability can't see their callers.
+        // Matched by filename (always auto-generated with these exact names
+        // by `flutter create`) rather than directory, since some project
+        // layouts nest them under a "runner/" folder and others don't.
+        let file_name = func.file.rsplit('/').next().unwrap_or(&func.file);
+        if matches!(
+            file_name,
+            "my_application.cc" | "my_application.h" | "win32_window.cpp" | "win32_window.h"
+        ) {
             return ProtectionLevel::Protected;
         }
 

@@ -17,6 +17,9 @@ impl LanguageFilter for DartFilter {
         // ============================================================
         // 1. PROTECTED - Never considered dead
         // ============================================================
+        if func.is_override() || func.decorators.iter().any(|d| d.contains("override")) {
+            return ProtectionLevel::Protected;
+        }
 
         // Test functions are protected
         if func.is_test || is_test_file(&func.file) {

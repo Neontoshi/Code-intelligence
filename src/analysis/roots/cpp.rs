@@ -39,7 +39,14 @@ impl LanguageRootDetector for CppRootDetector {
 
             // Entry points
             if config.include_exports {
-                if func.name == "main" {
+                if func.name == "main"
+                    || matches!(
+                        func.name.as_str(),
+                        "WinMain" | "WndProc" | "DllMain" | "GetThisFromHandle"
+                    )
+                    || func.name.starts_with("my_application_")
+                    || func.name.ends_with("_class_init")
+                {
                     roots.insert(func.full_path.clone());
                     continue;
                 }

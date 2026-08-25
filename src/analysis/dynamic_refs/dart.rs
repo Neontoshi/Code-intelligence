@@ -14,26 +14,31 @@ pub struct DartDetector;
 impl DynamicRefDetector for DartDetector {
     fn detect(&self, file: &ParsedFile, context: &mut DetectionContext) -> Vec<DynamicReference> {
         let mut refs = Vec::new();
-        let source = &file.source;
 
-        // Detect Flutter Widget lifecycle
-        if source.contains("Widget build(")
-            || source.contains("initState()")
-            || source.contains("dispose()")
-        {
-            refs.push(DynamicReference::new_framework(
-                file.path.clone(),
-                None,
-                "Widget.build".to_string(),
-                None,
-                "FlutterWidget".to_string(),
-                0.95,
-                "Flutter widget lifecycle override".to_string(),
-            ));
+        // 1. Structural detection: Mark any @override as a dynamic framework entry point
+        for func in &file.functions {
+            let has_override = func.decorators.iter().any(|d| d.contains("override"))
+                || func.trait_impl.is_some()
+                || func.is_trait_method;
+
+            if has_override {
+                refs.push(DynamicReference::new_framework(
+                    file.path.clone(),
+                    Some(func.name.clone()),
+                    func.container.clone().unwrap_or_default(),
+                    None,
+                    "FrameworkOverride".to_string(),
+                    0.95,
+                    format!(
+                        "Method `{}` overrides a base interface/class method",
+                        func.name
+                    ),
+                ));
+            }
         }
 
-        // Detect function tear-offs (callbacks)
-        for tearoff in find_dart_call_arg_identifiers(source) {
+        // 2. Generic tear-off resolution: Match bare identifier callbacks in argument lists
+        for tearoff in find_dart_call_arg_identifiers(&file.source) {
             if let Some(resolved_path) = context.resolve_symbol(&tearoff) {
                 refs.push(DynamicReference {
                     source_file: file.path.clone(),
@@ -43,10 +48,7 @@ impl DynamicRefDetector for DartDetector {
                     target_pattern: "call-argument tear-off".to_string(),
                     reference_type: DynamicRefType::Callback,
                     confidence: 0.85,
-                    context: format!(
-                        "Function `{}` passed as a bare callback/tear-off argument",
-                        tearoff
-                    ),
+                    context: format!("Function `{}` passed as a callback argument", tearoff),
                     resolved: true,
                 });
             }
@@ -141,7 +143,17 @@ fn is_plain_identifier(s: &str) -> bool {
 fn is_dart_reserved(s: &str) -> bool {
     matches!(
         s,
-        "true" | "false" | "null" | "this" | "super" | "context" | "widget" | "state"
+        "true"
+            | "false"
+            | "null"
+            | "this"
+            | "super"
+            | "context"
+            | "widget"
+            | "state"
+            | "options"
+            | "handler"
+            | "error"
     )
 }
 

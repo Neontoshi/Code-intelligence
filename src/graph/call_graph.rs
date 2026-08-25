@@ -30,6 +30,7 @@ pub struct FunctionNode {
     pub depth: usize,
     pub layer: String,
     pub trait_impl: Option<String>,
+    pub decorators: Vec<String>,
     pub is_test: bool,
     pub is_trait_method: bool,
     pub is_trait_default: bool,
@@ -569,6 +570,15 @@ impl CallGraph {
         });
         candidates.truncate(max_nodes);
         candidates
+    }
+}
+
+impl FunctionNode {
+    /// Helper to check if a function overrides a superclass or interface method
+    pub fn is_override(&self) -> bool {
+        self.decorators.iter().any(|d| d.contains("override"))
+            || self.trait_impl.is_some()
+            || self.is_trait_method
     }
 }
 

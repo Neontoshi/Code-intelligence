@@ -102,6 +102,7 @@ impl CallGraphBuilder {
                     depth: 0,
                     layer: String::new(),
                     trait_impl: func.trait_impl.clone(),
+                    decorators: func.decorators.clone(),
                     is_test: func.is_test,
                     is_trait_method: func.is_trait_method,
                     is_trait_default: func.is_trait_default,
