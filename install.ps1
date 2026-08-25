@@ -38,6 +38,7 @@ if (-not (Test-Path $InstallDir)) {
 
 $tempFile = Join-Path $env:TEMP "$([System.Guid]::NewGuid()).exe"
 Write-Host "📥 Downloading $assetName..." -ForegroundColor Gray
+$ProgressPreference = 'SilentlyContinue'
 Invoke-WebRequest -Uri $downloadUrl -OutFile $tempFile -UseBasicParsing
 
 $targetFile = Join-Path $InstallDir "ci.exe"

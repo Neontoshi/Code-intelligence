@@ -20,7 +20,7 @@ set "TEMP_FILE=%TEMP%\ci_%RANDOM%.exe"
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
 
 echo [^>] Downloading ci_windows_x86_64.exe...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13; Invoke-WebRequest -Uri 'https://github.com/neontoshi/Code-intelligence/releases/latest/download/ci_windows_x86_64.exe' -OutFile '%TEMP_FILE%' -UseBasicParsing"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13; $ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri 'https://github.com/neontoshi/Code-intelligence/releases/latest/download/ci_windows_x86_64.exe' -OutFile '%TEMP_FILE%' -UseBasicParsing"
 
 if not exist "%TEMP_FILE%" (
     echo [X] Download failed. Please verify your internet connection.
