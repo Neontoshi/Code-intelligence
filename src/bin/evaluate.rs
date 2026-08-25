@@ -1,12 +1,5 @@
 // src/bin/evaluate.rs
 
-//! Unified evaluation tool with subcommands
-//!
-//! Usage:
-//!   evaluate metrics --model <path> --test-data <path>
-//!   evaluate per-language --model <path> --test-data <path>
-//!   evaluate detailed --model <path> --test-data <path>
-
 use clap::{Parser, Subcommand};
 use code_intelligence::error::{err, Result};
 use std::path::{Path, PathBuf};
@@ -127,8 +120,10 @@ fn run_metrics(model: &Path, test_data: &Path, output: &Path) -> Result<()> {
 
     println!("✅ Results saved to: {:?}", output);
     println!(
-        "   Accuracy: {:.1}%, F1: {:.1}%",
+        "   Accuracy: {:.1}%, Precision: {:.1}%, Recall: {:.1}%, F1: {:.1}%",
         metrics.accuracy * 100.0,
+        metrics.precision * 100.0,
+        metrics.recall * 100.0,
         metrics.f1 * 100.0
     );
 
@@ -184,9 +179,12 @@ fn run_per_language(model: &Path, test_data: &Path, output: &Path, detailed: boo
         println!("\n📊 Per-Language Results:");
         for result in &results {
             println!(
-                "   {}: F1={:.1}%, Examples={}",
+                "   {:<12} F1={:>5.1}%, Prec={:>5.1}%, Rec={:>5.1}%, Accuracy={:>5.1}%, Examples={}",
                 result["language"].as_str().unwrap_or("unknown"),
                 result["f1"].as_f64().unwrap_or(0.0) * 100.0,
+                result["precision"].as_f64().unwrap_or(0.0) * 100.0,
+                result["recall"].as_f64().unwrap_or(0.0) * 100.0,
+                result["accuracy"].as_f64().unwrap_or(0.0) * 100.0,
                 result["examples"].as_u64().unwrap_or(0)
             );
         }
@@ -236,17 +234,17 @@ fn run_detailed(
     println!("✅ Detailed evaluation complete!");
     println!("   Results: {:?}", output_dir);
     println!(
-        "   Accuracy: {:.1}%, F1: {:.1}%",
+        "   Accuracy: {:.1}%, Precision: {:.1}%, Recall: {:.1}%, F1: {:.1}%",
         metrics.accuracy * 100.0,
+        metrics.precision * 100.0,
+        metrics.recall * 100.0,
         metrics.f1 * 100.0
     );
 
     Ok(())
 }
 
-// ============================================================================
 // Common evaluation functions
-// ============================================================================
 
 #[derive(Debug, Clone, serde::Serialize)]
 struct EvaluationMetrics {
@@ -290,8 +288,6 @@ fn compute_metrics(
     let mut tn = 0;
     let mut fp = 0;
     let mut fn_ = 0;
-    let mut predictions = Vec::new();
-    let mut labels = Vec::new();
 
     for example in examples {
         if example.label == TrainingLabel::Unknown {
@@ -299,19 +295,12 @@ fn compute_metrics(
         }
 
         let dead_prob = classifier.predict_dead_probability(example);
-        let pred = if dead_prob > 0.5 {
+        let pred = if dead_prob >= 0.5 {
             TrainingLabel::Dead
         } else {
             TrainingLabel::Alive
         };
         let actual = &example.label;
-
-        predictions.push(dead_prob);
-        labels.push(match actual {
-            TrainingLabel::Dead => 1.0,
-            TrainingLabel::Alive => 0.0,
-            _ => 0.5,
-        });
 
         match (pred, actual) {
             (TrainingLabel::Dead, TrainingLabel::Dead) => tp += 1,
@@ -325,6 +314,36 @@ fn compute_metrics(
     let total = tp + tn + fp + fn_;
     let correct = tp + tn;
 
+    let precision = if tp + fp > 0 {
+        tp as f64 / (tp + fp) as f64
+    } else {
+        0.0
+    };
+
+    let recall = if tp + fn_ > 0 {
+        tp as f64 / (tp + fn_) as f64
+    } else {
+        0.0
+    };
+
+    let f1 = if precision + recall > 0.0 {
+        2.0 * precision * recall / (precision + recall)
+    } else {
+        0.0
+    };
+
+    let fpr = if fp + tn > 0 {
+        fp as f64 / (fp + tn) as f64
+    } else {
+        0.0
+    };
+
+    let fnr = if fn_ + tp > 0 {
+        fn_ as f64 / (fn_ + tp) as f64
+    } else {
+        0.0
+    };
+
     EvaluationMetrics {
         total,
         correct,
@@ -333,28 +352,12 @@ fn compute_metrics(
         } else {
             0.0
         },
-        precision: if tp + fp > 0 {
-            tp as f64 / (tp + fp) as f64
-        } else {
-            0.0
-        },
-        recall: if tp + fn_ > 0 {
-            tp as f64 / (tp + fn_) as f64
-        } else {
-            0.0
-        },
-        f1: 0.0,
-        fpr: if fp + tn > 0 {
-            fp as f64 / (fp + tn) as f64
-        } else {
-            0.0
-        },
-        fnr: if fn_ + tp > 0 {
-            fn_ as f64 / (fn_ + tp) as f64
-        } else {
-            0.0
-        },
-        specificity: 0.0,
+        precision,
+        recall,
+        f1,
+        fpr,
+        fnr,
+        specificity: 1.0 - fpr,
         confusion_matrix: ConfusionMatrix {
             tp,
             tn,
@@ -374,17 +377,6 @@ fn compute_detailed_metrics(
 ) -> EvaluationMetrics {
     let mut metrics = compute_metrics(classifier, examples);
 
-    // Compute F1
-    let p = metrics.precision;
-    let r = metrics.recall;
-    metrics.f1 = if p + r > 0.0 {
-        2.0 * p * r / (p + r)
-    } else {
-        0.0
-    };
-    metrics.specificity = 1.0 - metrics.fpr;
-
-    // Compute top-K precision
     let mut preds: Vec<(f64, f64)> = Vec::new();
     for example in examples {
         if example.label != code_intelligence::analysis::training_data::TrainingLabel::Unknown {
@@ -409,7 +401,6 @@ fn compute_detailed_metrics(
         }
     }
 
-    // Compute PR-AUC
     let mut tp_count = 0;
     let mut fp_count = 0;
     let total_pos = preds.iter().filter(|(_, l)| *l == 1.0).count();
@@ -441,7 +432,6 @@ fn compute_detailed_metrics(
     }
     metrics.auc_pr = auc;
 
-    // Compute ROC-AUC (simplified)
     let total_neg = preds.iter().filter(|(_, l)| *l == 0.0).count();
     if total_pos > 0 && total_neg > 0 {
         let mut tp_count2 = 0;

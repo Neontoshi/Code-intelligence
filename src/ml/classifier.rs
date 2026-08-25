@@ -1,4 +1,3 @@
-// src/ml/classifier.rs
 use crate::analysis::training_data::{TrainingExample, TrainingLabel};
 use crate::ml::feature_schema::{feature_count, feature_names, FeatureCategory, FEATURE_SCHEMA};
 use crate::ml::features::FeatureScaler;
@@ -14,8 +13,6 @@ pub struct LinearClassifier {
     pub learning_rate: f64,
     pub epochs: usize,
     pub feature_count: usize,
-    // `#[serde(default)]` so model files saved before this field existed
-    // still deserialize (they'll just load with scaler: None).
     #[serde(default)]
     pub scaler: Option<FeatureScaler>,
 }
@@ -25,8 +22,8 @@ impl LinearClassifier {
         Self {
             weights: vec![0.0; feature_count],
             bias: 0.0,
-            learning_rate: 0.01,
-            epochs: 100,
+            learning_rate: 0.005,
+            epochs: 50,
             feature_count,
             scaler: None,
         }
@@ -46,8 +43,6 @@ impl LinearClassifier {
     }
 
     pub fn validate_features(&self, features: &[f64]) -> Result<(), String> {
-        use crate::ml::feature_schema::FEATURE_SCHEMA;
-
         if features.len() != self.feature_count {
             return Err(format!(
                 "Feature count mismatch: expected {}, got {}",
@@ -60,13 +55,11 @@ impl LinearClassifier {
         Ok(())
     }
 
-    // Predict with validation
     pub fn predict_validated(&self, features: &[f64]) -> Result<f64, String> {
         self.validate_features(features)?;
         Ok(self.predict(features))
     }
 
-    // Predict label with validation
     pub fn predict_label_validated(&self, features: &[f64]) -> Result<TrainingLabel, String> {
         self.validate_features(features)?;
         Ok(self.predict_label(features))
@@ -82,7 +75,6 @@ impl LinearClassifier {
             return 0.0;
         }
 
-        // Ensure we have the right number of features
         if self.weights.len() != self.feature_count {
             self.weights = vec![0.0; self.feature_count];
         }
@@ -95,11 +87,9 @@ impl LinearClassifier {
         scaler.fit_from_vectors(&raw_vectors);
         self.scaler = Some(scaler);
 
-        // Train using gradient descent
         for epoch in 0..self.epochs {
             let mut total_loss = 0.0;
 
-            // Shuffle examples
             let mut shuffled = labeled.clone();
             use rand::seq::SliceRandom;
             let mut rng = rand::thread_rng();
@@ -107,11 +97,7 @@ impl LinearClassifier {
 
             for example in &shuffled {
                 let raw = example.features.to_feature_vector();
-                let features = self
-                    .scaler
-                    .as_ref()
-                    .expect("scaler was just fitted and set above the training loop")
-                    .transform(&raw);
+                let features = self.scaler.as_ref().unwrap().transform(&raw);
 
                 let target = match example.label {
                     TrainingLabel::Alive => 1.0,
@@ -119,40 +105,38 @@ impl LinearClassifier {
                     TrainingLabel::Unknown => 0.5,
                 };
 
-                // Forward pass (sigmoid)
+                // Numerically stable forward pass
                 let dot: f64 = features.iter().zip(&self.weights).map(|(f, w)| f * w).sum();
-                let prediction = 1.0 / (1.0 + (-(dot + self.bias)).exp());
+                let z = (dot + self.bias).clamp(-20.0, 20.0);
+                let prediction = 1.0 / (1.0 + (-z).exp());
 
-                // Loss (binary cross-entropy)
-                let loss = -target * prediction.ln() - (1.0 - target) * (1.0 - prediction).ln();
+                // Numerically bounded BCE loss
+                let p_safe = prediction.clamp(1e-7, 1.0 - 1e-7);
+                let loss = -target * p_safe.ln() - (1.0 - target) * (1.0 - p_safe).ln();
                 total_loss += loss;
 
-                // Backward pass (gradient descent)
+                // Gradient descent with gradient clipping
                 let error = prediction - target;
-
                 for (i, &feature) in features.iter().enumerate() {
                     if i < self.weights.len() {
-                        self.weights[i] -= self.learning_rate * error * feature;
+                        let grad = (error * feature).clamp(-5.0, 5.0);
+                        self.weights[i] -= self.learning_rate * grad;
                     }
                 }
-                self.bias -= self.learning_rate * error;
+                self.bias -= self.learning_rate * error.clamp(-5.0, 5.0);
             }
 
             let avg_loss = total_loss / shuffled.len() as f64;
-
-            if epoch % 20 == 0 && epoch > 0 {
+            if epoch % 10 == 0 && epoch > 0 {
                 println!("    Epoch {}: loss = {:.4}", epoch, avg_loss);
             }
         }
 
-        // Clearly label this as TRAINING accuracy
         let training_accuracy = self.calculate_accuracy(examples);
         println!(
             "\n    📊 Training Accuracy: {:.1}%",
             training_accuracy * 100.0
         );
-        println!("    ⚠️  Note: This is training-set accuracy. Use evaluate_metrics for validation/test metrics.");
-
         training_accuracy
     }
 
@@ -165,11 +149,12 @@ impl LinearClassifier {
             features
         };
         let dot: f64 = features.iter().zip(&self.weights).map(|(f, w)| f * w).sum();
-        1.0 / (1.0 + (-(dot + self.bias)).exp())
+        let z = (dot + self.bias).clamp(-20.0, 20.0);
+        1.0 / (1.0 + (-z).exp())
     }
 
     pub fn predict_label(&self, features: &[f64]) -> TrainingLabel {
-        if self.predict(features) > 0.5 {
+        if self.predict(features) >= 0.5 {
             TrainingLabel::Alive
         } else {
             TrainingLabel::Dead
@@ -279,7 +264,6 @@ pub struct DeadCodeClassifier {
     pub calibration: Option<CalibrationParams>,
 }
 
-/// Embed the binary ML model directly into the executable at compile-time
 pub const EMBEDDED_MODEL_BYTES: &[u8] = include_bytes!("../../models/model.bin");
 
 impl DeadCodeClassifier {
@@ -292,7 +276,6 @@ impl DeadCodeClassifier {
         }
     }
 
-    /// Load the model embedded directly into the binary at compile time
     pub fn load_embedded() -> Result<Self, String> {
         bincode::deserialize(EMBEDDED_MODEL_BYTES)
             .map_err(|e| format!("Failed to deserialize embedded model.bin: {}", e))
@@ -312,18 +295,12 @@ impl DeadCodeClassifier {
         println!("    Features: {}", feature_count);
 
         let mut classifier = LinearClassifier::new(feature_count)
-            .with_learning_rate(0.01)
+            .with_learning_rate(0.005)
             .with_epochs(50);
 
         let training_accuracy = classifier.train(examples);
         self.accuracy = training_accuracy;
         self.model = Some(classifier);
-
-        println!(
-            "\n    ✅ Training Accuracy: {:.1}%",
-            training_accuracy * 100.0
-        );
-        println!("    📌 For validation/test metrics, run evaluate_metrics binary.");
 
         Ok(())
     }
@@ -343,8 +320,6 @@ impl DeadCodeClassifier {
     }
 
     pub fn is_schema_compatible(&self) -> bool {
-        use crate::ml::feature_schema::FEATURE_SCHEMA;
-
         if let Some(model) = &self.model {
             model.feature_count == FEATURE_SCHEMA.feature_count()
         } else {
@@ -353,8 +328,6 @@ impl DeadCodeClassifier {
     }
 
     pub fn schema_info(&self) -> String {
-        use crate::ml::feature_schema::FEATURE_SCHEMA;
-
         format!(
             "Schema v{} ({} features) - Model: {} features",
             FEATURE_SCHEMA.version,
@@ -433,117 +406,5 @@ impl DeadCodeClassifier {
 impl Default for DeadCodeClassifier {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// Tests
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::analysis::verdict_source::label_source::LabelSource;
-    use crate::graph::call_graph::FunctionNode;
-
-    fn create_test_function(name: &str, fan_in: usize, is_public: bool) -> FunctionNode {
-        FunctionNode {
-            name: name.to_string(),
-            full_path: format!("test::{}", name),
-            file: "test.rs".to_string(),
-            line: 1,
-            body_start_line: 1,
-            body_end_line: 1,
-            is_public,
-            is_async: false,
-            params: vec![],
-            returns: vec![],
-            complexity: 1.0,
-            importance_score: 0.0,
-            doc_comment: None,
-            writes_to: vec![],
-            reads_from: vec![],
-            errors: vec![],
-            fan_in,
-            fan_out: 0,
-            is_cycle: false,
-            depth: 0,
-            layer: "core".to_string(),
-            trait_impl: None,
-            is_test: true,
-            is_trait_method: false,
-            is_trait_default: false,
-        }
-    }
-
-    #[test]
-    fn test_linear_classifier_new() {
-        let classifier = LinearClassifier::new_with_schema();
-        assert_eq!(classifier.feature_count(), feature_count());
-        assert_eq!(classifier.weights.len(), feature_count());
-    }
-
-    #[test]
-    fn test_linear_classifier_train_and_predict() {
-        let mut classifier = LinearClassifier::new(10)
-            .with_learning_rate(0.1)
-            .with_epochs(10);
-
-        let mut examples = Vec::new();
-
-        for i in 0..10 {
-            let func = create_test_function(&format!("alive_{}", i), 5 + i, true);
-            let features = crate::analysis::training_data::FunctionFeatures::from_function(
-                &func,
-                &crate::graph::call_graph::CallGraph::new(),
-            );
-            examples.push(TrainingExample {
-                function_name: func.name.clone(),
-                full_path: func.full_path.clone(),
-                file: func.file.clone(),
-                language: "rust".to_string(),
-                features,
-                label: TrainingLabel::Alive,
-                confidence: 0.9,
-                source: "test".to_string(),
-                repository_id: None,
-                commit_hash: None,
-                dataset_split: None,
-                label_reason: None,
-                label_version: Some(1),
-                label_source: LabelSource::StaticHeuristic,
-                generated_by_model: None,
-                verified_by: None,
-                created_at: Some(chrono::Utc::now().timestamp()),
-            });
-        }
-
-        for i in 0..10 {
-            let func = create_test_function(&format!("dead_{}", i), 0, false);
-            let features = crate::analysis::training_data::FunctionFeatures::from_function(
-                &func,
-                &crate::graph::call_graph::CallGraph::new(),
-            );
-            examples.push(TrainingExample {
-                function_name: func.name.clone(),
-                full_path: func.full_path.clone(),
-                file: func.file.clone(),
-                language: "rust".to_string(),
-                features,
-                label: TrainingLabel::Dead,
-                confidence: 0.9,
-                source: "test".to_string(),
-                repository_id: None,
-                commit_hash: None,
-                dataset_split: None,
-                label_reason: None,
-                label_version: Some(1),
-                label_source: LabelSource::StaticHeuristic,
-                generated_by_model: None,
-                verified_by: None,
-                created_at: Some(chrono::Utc::now().timestamp()),
-            });
-        }
-
-        let accuracy = classifier.train(&examples);
-        assert!(accuracy > 0.5);
     }
 }

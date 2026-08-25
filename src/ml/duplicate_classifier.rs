@@ -17,7 +17,7 @@ pub struct DuplicateClassifier {
 
 // Embed the duplicate model at compile time
 pub const EMBEDDED_DUPLICATE_MODEL_BYTES: &[u8] =
-    include_bytes!("../../models/duplicate_model_v4.bin");
+    include_bytes!("../../models/duplicate_model.bin");
 
 impl DuplicateClassifier {
     /// Create a new classifier with the given number of features

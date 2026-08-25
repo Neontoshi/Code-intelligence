@@ -1,31 +1,32 @@
-// src/bin/split_repositories.rs
-
 //! Repository-level train/validation/test split
 //!
-//! This tool ensures that all functions from the same repository
-//! stay together in the same split (train/val/test) to prevent
-//! data leakage.
+//! This tool loads all repository files from data/raw/jsonl/
+//! and splits them cleanly at the repository level to prevent data leakage.
 
 use clap::Parser;
-use code_intelligence::analysis::training_data::TrainingExample;
+use code_intelligence::analysis::training_data::{TrainingExample, TrainingLabel};
 use code_intelligence::error::Result;
+use rand::seq::SliceRandom;
+use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Split training data at repository level")]
 struct Args {
-    /// Input JSON file containing all training examples
-    #[arg(short, long, default_value = "combined_training.json")]
-    input: PathBuf,
+    /// Input directory containing individual .jsonl files per repo
+    #[arg(short, long, default_value = "data/raw/jsonl")]
+    input_dir: PathBuf,
 
     /// Output directory for splits
     #[arg(short, long, default_value = "data")]
     output_dir: PathBuf,
 
     /// Train split ratio (0.0 - 1.0)
-    #[arg(long, default_value = "0.7")]
+    #[arg(long, default_value = "0.70")]
     train_ratio: f64,
 
     /// Validation split ratio (0.0 - 1.0)
@@ -69,183 +70,101 @@ pub struct RepoList {
     pub test: Vec<String>,
 }
 
+fn load_repo_jsonl(path: &Path, repo_name: &str) -> Vec<TrainingExample> {
+    let mut examples = Vec::new();
+    if let Ok(file) = File::open(path) {
+        let reader = BufReader::new(file);
+        for line in reader.lines().flatten() {
+            if let Ok(mut ex) = serde_json::from_str::<TrainingExample>(&line) {
+                ex.repository_id = Some(repo_name.to_string());
+                examples.push(ex);
+            }
+        }
+    }
+    examples
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Validate ratios
-    let total_ratio = args.train_ratio + args.val_ratio + args.test_ratio;
-    if (total_ratio - 1.0).abs() > 0.001 {
-        eprintln!("⚠️ Ratios sum to {}, not 1.0. Normalizing...", total_ratio);
-    }
-
-    // Load data
-    println!("📊 Loading training data from: {:?}", args.input);
-    let data = std::fs::read_to_string(&args.input)?;
-    let examples: Vec<TrainingExample> = serde_json::from_str(&data)?;
-
-    println!("   Total examples: {}", examples.len());
-
-    // Group by repository
+    println!("📊 Loading repositories from: {:?}", args.input_dir);
     let mut by_repo: HashMap<String, Vec<TrainingExample>> = HashMap::new();
-    for example in examples {
-        let repo_id = example
-            .repository_id
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string());
-        by_repo.entry(repo_id).or_default().push(example);
+
+    if let Ok(entries) = std::fs::read_dir(&args.input_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("jsonl") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    let examples = load_repo_jsonl(&path, stem);
+                    if examples.len() >= args.min_examples {
+                        by_repo.insert(stem.to_string(), examples);
+                    }
+                }
+            }
+        }
     }
 
-    // Filter repos with too few examples
-    let repos: Vec<(String, Vec<TrainingExample>)> = by_repo
-        .into_iter()
-        .filter(|(_, examples)| examples.len() >= args.min_examples)
+    let mut repos: Vec<(String, usize)> = by_repo
+        .iter()
+        .map(|(name, ex)| (name.clone(), ex.len()))
         .collect();
 
     println!("   Repositories found: {}", repos.len());
-
     if repos.is_empty() {
-        eprintln!(
-            "❌ No repositories with enough examples (min: {})",
-            args.min_examples
-        );
+        eprintln!("❌ No repositories found in {:?}", args.input_dir);
         std::process::exit(1);
     }
 
-    // Sort repos by size for stratified split
-    let mut sorted_repos: Vec<(String, usize)> = repos
-        .iter()
-        .map(|(name, examples)| (name.clone(), examples.len()))
-        .collect();
-    sorted_repos.sort_by(|a, b| b.1.cmp(&a.1));
+    let mut rng = rand::rngs::StdRng::seed_from_u64(args.seed);
+    repos.shuffle(&mut rng);
 
-    // Calculate split sizes
-    let total_repos = sorted_repos.len();
+    let total_repos = repos.len();
     let train_count = (total_repos as f64 * args.train_ratio).round() as usize;
     let val_count = (total_repos as f64 * args.val_ratio).round() as usize;
     let test_count = total_repos - train_count - val_count;
 
-    println!("\n📊 Split sizes:");
-    println!("   Train: {} repos", train_count);
-    println!("   Val: {} repos", val_count);
-    println!("   Test: {} repos", test_count);
+    let train_repos: Vec<String> = repos.iter().take(train_count).map(|(n, _)| n.clone()).collect();
+    let val_repos: Vec<String> = repos.iter().skip(train_count).take(val_count).map(|(n, _)| n.clone()).collect();
+    let test_repos: Vec<String> = repos.iter().skip(train_count + val_count).take(test_count).map(|(n, _)| n.clone()).collect();
 
-    // Shuffle with seed for reproducibility
-    use rand::seq::SliceRandom;
-    use rand::SeedableRng;
-    let mut rng = rand::rngs::StdRng::seed_from_u64(args.seed);
-
-    // Create splits
-    let mut shuffled_repos = sorted_repos;
-    shuffled_repos.shuffle(&mut rng);
-
-    let train_repos: Vec<String> = shuffled_repos
-        .iter()
-        .take(train_count)
-        .map(|(name, _)| name.clone())
-        .collect();
-
-    let val_repos: Vec<String> = shuffled_repos
-        .iter()
-        .skip(train_count)
-        .take(val_count)
-        .map(|(name, _)| name.clone())
-        .collect();
-
-    let test_repos: Vec<String> = shuffled_repos
-        .iter()
-        .skip(train_count + val_count)
-        .take(test_count)
-        .map(|(name, _)| name.clone())
-        .collect();
-
-    // Build split datasets
     let mut train_examples = Vec::new();
     let mut val_examples = Vec::new();
     let mut test_examples = Vec::new();
 
-    let repo_map: HashMap<String, Vec<TrainingExample>> = repos.into_iter().collect();
-
     for repo in &train_repos {
-        if let Some(examples) = repo_map.get(repo) {
-            let mut cloned = examples.clone();
-            for example in &mut cloned {
-                example.dataset_split = Some("train".to_string());
-            }
-            train_examples.extend(cloned);
+        if let Some(mut ex) = by_repo.remove(repo) {
+            for e in &mut ex { e.dataset_split = Some("train".to_string()); }
+            train_examples.extend(ex);
         }
     }
 
     for repo in &val_repos {
-        if let Some(examples) = repo_map.get(repo) {
-            let mut cloned = examples.clone();
-            for example in &mut cloned {
-                example.dataset_split = Some("val".to_string());
-            }
-            val_examples.extend(cloned);
+        if let Some(mut ex) = by_repo.remove(repo) {
+            for e in &mut ex { e.dataset_split = Some("val".to_string()); }
+            val_examples.extend(ex);
         }
     }
 
     for repo in &test_repos {
-        if let Some(examples) = repo_map.get(repo) {
-            let mut cloned = examples.clone();
-            for example in &mut cloned {
-                example.dataset_split = Some("test".to_string());
-            }
-            test_examples.extend(cloned);
+        if let Some(mut ex) = by_repo.remove(repo) {
+            for e in &mut ex { e.dataset_split = Some("test".to_string()); }
+            test_examples.extend(ex);
         }
     }
 
-    // Count labels
-    use code_intelligence::analysis::training_data::TrainingLabel;
+    let train_alive = train_examples.iter().filter(|e| e.label == TrainingLabel::Alive).count();
+    let train_dead = train_examples.iter().filter(|e| e.label == TrainingLabel::Dead).count();
+    let val_alive = val_examples.iter().filter(|e| e.label == TrainingLabel::Alive).count();
+    let val_dead = val_examples.iter().filter(|e| e.label == TrainingLabel::Dead).count();
+    let test_alive = test_examples.iter().filter(|e| e.label == TrainingLabel::Alive).count();
+    let test_dead = test_examples.iter().filter(|e| e.label == TrainingLabel::Dead).count();
 
-    let train_alive = train_examples
-        .iter()
-        .filter(|e| e.label == TrainingLabel::Alive)
-        .count();
-    let train_dead = train_examples
-        .iter()
-        .filter(|e| e.label == TrainingLabel::Dead)
-        .count();
-
-    let val_alive = val_examples
-        .iter()
-        .filter(|e| e.label == TrainingLabel::Alive)
-        .count();
-    let val_dead = val_examples
-        .iter()
-        .filter(|e| e.label == TrainingLabel::Dead)
-        .count();
-
-    let test_alive = test_examples
-        .iter()
-        .filter(|e| e.label == TrainingLabel::Alive)
-        .count();
-    let test_dead = test_examples
-        .iter()
-        .filter(|e| e.label == TrainingLabel::Dead)
-        .count();
-
-    // Create output directory
     std::fs::create_dir_all(&args.output_dir)?;
 
-    // Save splits
-    let train_path = args.output_dir.join("train.json");
-    let val_path = args.output_dir.join("val.json");
-    let test_path = args.output_dir.join("test.json");
+    std::fs::write(args.output_dir.join("train.json"), serde_json::to_string_pretty(&train_examples)?)?;
+    std::fs::write(args.output_dir.join("val.json"), serde_json::to_string_pretty(&val_examples)?)?;
+    std::fs::write(args.output_dir.join("test.json"), serde_json::to_string_pretty(&test_examples)?)?;
 
-    std::fs::write(&train_path, serde_json::to_string_pretty(&train_examples)?)?;
-    std::fs::write(&val_path, serde_json::to_string_pretty(&val_examples)?)?;
-    std::fs::write(&test_path, serde_json::to_string_pretty(&test_examples)?)?;
-
-    // Also save as JSONL for streaming
-    let train_jsonl: String = train_examples
-        .iter()
-        .filter_map(|e| serde_json::to_string(e).ok())
-        .collect::<Vec<_>>()
-        .join("\n");
-    std::fs::write(args.output_dir.join("train.jsonl"), train_jsonl)?;
-
-    // Save stats
     let stats = SplitStats {
         train_repos: train_repos.len(),
         val_repos: val_repos.len(),
@@ -266,66 +185,13 @@ fn main() -> Result<()> {
         },
     };
 
-    let stats_path = args.output_dir.join("split_stats.json");
-    std::fs::write(&stats_path, serde_json::to_string_pretty(&stats)?)?;
+    std::fs::write(args.output_dir.join("split_stats.json"), serde_json::to_string_pretty(&stats)?)?;
 
-    // Print summary
     println!("\n📊 Split Summary:");
-    println!(
-        "   Train: {} repos, {} examples (Alive: {}, Dead: {})",
-        stats.train_repos, stats.train_examples, stats.train_alive, stats.train_dead
-    );
-    println!(
-        "   Val:   {} repos, {} examples (Alive: {}, Dead: {})",
-        stats.val_repos, stats.val_examples, stats.val_alive, stats.val_dead
-    );
-    println!(
-        "   Test:  {} repos, {} examples (Alive: {}, Dead: {})",
-        stats.test_repos, stats.test_examples, stats.test_alive, stats.test_dead
-    );
-
+    println!("   Train: {} repos, {} examples (Alive: {}, Dead: {})", stats.train_repos, stats.train_examples, stats.train_alive, stats.train_dead);
+    println!("   Val:   {} repos, {} examples (Alive: {}, Dead: {})", stats.val_repos, stats.val_examples, stats.val_alive, stats.val_dead);
+    println!("   Test:  {} repos, {} examples (Alive: {}, Dead: {})", stats.test_repos, stats.test_examples, stats.test_alive, stats.test_dead);
     println!("\n✅ Splits saved to: {:?}", args.output_dir);
-    println!("   - train.json ({} examples)", stats.train_examples);
-    println!("   - val.json ({} examples)", stats.val_examples);
-    println!("   - test.json ({} examples)", stats.test_examples);
-
-    // Check for label leakage
-    println!("\n🔍 Label Distribution Check:");
-    let train_ratio = if stats.train_examples > 0 {
-        stats.train_dead as f64 / stats.train_examples as f64
-    } else {
-        0.0
-    };
-    let val_ratio = if stats.val_examples > 0 {
-        stats.val_dead as f64 / stats.val_examples as f64
-    } else {
-        0.0
-    };
-    let test_ratio = if stats.test_examples > 0 {
-        stats.test_dead as f64 / stats.test_examples as f64
-    } else {
-        0.0
-    };
-
-    println!(
-        "   Dead ratio - Train: {:.1}%, Val: {:.1}%, Test: {:.1}%",
-        train_ratio * 100.0,
-        val_ratio * 100.0,
-        test_ratio * 100.0
-    );
-
-    let max_diff = (train_ratio - val_ratio)
-        .abs()
-        .max((train_ratio - test_ratio).abs());
-    if max_diff > 0.1 {
-        println!(
-            "   ⚠️ Warning: Large label distribution difference between splits (max diff: {:.1}%)",
-            max_diff * 100.0
-        );
-        println!("   Consider using stratified sampling for better balance.");
-    } else {
-        println!("   ✅ Label distributions are well balanced across splits.");
-    }
 
     Ok(())
 }
