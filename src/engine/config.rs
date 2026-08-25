@@ -8,8 +8,8 @@ pub struct PipelineConfig {
     pub llm_max_tokens: usize,
     pub max_files: usize,
     pub max_file_size: u64,
-    pub max_memory_mb: Option<usize>, // ⭐ NEW
-    pub timeout_seconds: Option<u64>, // ⭐ NEW
+    pub max_memory_mb: Option<usize>,
+    pub timeout_seconds: Option<u64>,
 }
 
 impl Default for PipelineConfig {

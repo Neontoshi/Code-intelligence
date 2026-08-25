@@ -71,8 +71,6 @@ impl Pipeline {
 
     pub fn get_rebuild_scope(&self) -> Option<RebuildScope> {
         if let Some(_tracker) = &self.file_tracker {
-            // This would be set during analysis
-            // For now, return None
             None
         } else {
             None
@@ -150,7 +148,6 @@ impl Pipeline {
         if let Some(tracker) = &mut self.file_tracker {
             let changed_files = tracker.detect_changes(files);
             if !changed_files.is_empty() {
-                // Cache hit - we can skip full analysis
                 let result = IncrementalResult {
                     changed_files,
                     affected_functions: Vec::new(),
@@ -531,8 +528,7 @@ impl Pipeline {
     }
 
     fn load_from_cache(&self, _project_hash: &str) -> Option<ProjectAnalysis> {
-        // Implementation to load cached analysis
-        None // Placeholder
+        None
     }
 
     pub async fn process_project_with_git(&mut self, root: &Path) -> Result<ProjectAnalysis> {
@@ -646,7 +642,7 @@ impl Pipeline {
                 // Reduce threads to half
                 let reduced = (default_threads / 2).max(1);
                 eprintln!(
-                    "🔽 Reducing parallelism from {} to {} threads (memory pressure)",
+                    " Reducing parallelism from {} to {} threads (memory pressure)",
                     default_threads, reduced
                 );
                 return reduced;
@@ -663,14 +659,14 @@ impl Pipeline {
                 let parts: Vec<&str> = contents.split_whitespace().collect();
                 if let Some(&size) = parts.first() {
                     if let Ok(pages) = size.parse::<f64>() {
-                        let page_size = 4096.0; // Typical page size
+                        let page_size = 4096.0;
                         return pages * page_size / 1024.0 / 1024.0;
                     }
                 }
             }
         }
         // Fallback: estimate from allocated bytes
-        let allocated = self.cache.len() * 1024; // Rough estimate
+        let allocated = self.cache.len() * 1024;
         allocated as f64 / 1024.0 / 1024.0
     }
 }

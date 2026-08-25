@@ -519,7 +519,6 @@ impl CallGraphBuilder {
                             }
                         }
 
-                        // TIER 0: Unified Self / This / Container Method Calls (Rust, Python, Java, Go)
                         let is_self_or_this = called_name.starts_with("self::")
                             || called_name.starts_with("self.")
                             || called_name.starts_with("this.")
@@ -554,7 +553,6 @@ impl CallGraphBuilder {
                             }
                         }
 
-                        // TIER 1.8: Handle constructor calls
                         if !found && called_name.contains("::") {
                             let is_constructor = called_name.ends_with("::new")
                                 || called_name.ends_with("::default")
@@ -859,7 +857,6 @@ impl CallGraphBuilder {
                             }
                         }
 
-                        // Mark unresolved if all tiers failed
                         if !found {
                             call_graph.mark_unresolved(&caller_path, called_name);
                         }
@@ -871,7 +868,6 @@ impl CallGraphBuilder {
         call_graph
     }
 
-    /// Normalizes a captured trait name for matching — strips generics
     fn base_trait_name(raw: &str) -> String {
         let no_generics = raw.split('<').next().unwrap_or(raw).trim();
         no_generics
