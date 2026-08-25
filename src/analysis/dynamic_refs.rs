@@ -325,9 +325,7 @@ impl DynamicRefDetector {
                 }
             }
 
-            // ============================================================
             // Polyglot Fallback & Pattern Scanners (All 10 Languages)
-            // ============================================================
             let content = &file.source;
             let lang_lower = file.language.to_lowercase();
 

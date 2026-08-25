@@ -7,7 +7,7 @@ use std::path::PathBuf;
 #[command(
     name = "ci",
     author = "Code Intelligence Team",
-    version = "0.1.0",
+    version = "0.1.2",
     about = "Semantic codebase intelligence: high-precision dead code detection, structural deduplication, and architectural mapping"
 )]
 pub struct Args {
@@ -17,9 +17,7 @@ pub struct Args {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    // ========================================================================
     // CORE COMMANDS (Visible in help)
-    // ========================================================================
     /// Full project analysis (dead code + duplicates + important functions)
     Analyze {
         /// Path to analyze (defaults to current directory)
@@ -205,9 +203,7 @@ pub enum Commands {
         action: ConfigAction,
     },
 
-    // ========================================================================
     // ADVANCED COMMANDS (Hidden)
-    // ========================================================================
     /// Train the ML model (advanced)
     #[cfg(feature = "advanced")]
     #[command(hide = true)]

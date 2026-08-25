@@ -28,6 +28,5 @@ pub use roots::{
 pub use training_data::TrainingDataCollector;
 pub use training_data::TrainingExample;
 pub use training_data::TrainingLabel;
-// Re-export from verdict_source instead
 pub use verdict_source::state::{VerdictConfig, VerdictEngine, VerdictStats};
 pub use verdict_source::{EvidenceSource, Signal, SignalDirection, Verdict, VerdictState};

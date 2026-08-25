@@ -9,8 +9,6 @@ use crate::graph::call_graph::{CallGraph, FunctionNode};
 use crate::graph::traits::GraphMetrics;
 use crate::ml::classifier::DeadCodeClassifier;
 
-// Signal Types - Now defined here (moved from old verdict.rs)
-
 #[derive(Debug, Clone)]
 pub struct Signal {
     pub name: String,
@@ -36,8 +34,6 @@ impl SignalDirection {
         }
     }
 }
-
-// Verdict Types - Now defined here (moved from old verdict.rs)
 
 #[derive(Debug, Clone)]
 pub struct Verdict {
@@ -87,7 +83,7 @@ pub enum EvidenceSource {
     StaticReachability,
     CallGraph,
     DynamicRefs,
-    MLModel(String), // model version
+    MLModel(String),
     GitHistory,
     HumanReview,
     ProductionTelemetry,
@@ -131,7 +127,7 @@ impl Verdict {
         self.state.confidence_label().to_string()
     }
 
-    /// ⭐ NEW: Format provenance as a string
+    /// Format provenance as a string
     pub fn format_provenance(&self) -> String {
         let mut s = String::new();
         s.push_str(&format!(
@@ -371,7 +367,6 @@ impl VerdictEngine {
         call_graph: &CallGraph,
         reachability: &ReachabilityMap,
     ) -> Verdict {
-        // Hard override: some function categories should never be scored as dead
         if is_never_dead(func) {
             return Verdict {
                 function_name: func.name.clone(),
@@ -429,7 +424,7 @@ impl VerdictEngine {
                 0.5
             }
         } else {
-            0.5 // neutral — let ML carry the verdict when static analysis is off
+            0.5
         };
 
         // 2. ML prediction (if enabled)

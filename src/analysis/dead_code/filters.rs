@@ -302,9 +302,6 @@ pub fn get_protection_level(func: &FunctionNode) -> ProtectionLevel {
         return ProtectionLevel::LikelyAlive;
     }
 
-    // Functions reachable from roots are likely alive
-    // (This is checked by the verdict engine)
-
     // 3. CANDIDATE - May be dead, needs analysis
     ProtectionLevel::Candidate
 }

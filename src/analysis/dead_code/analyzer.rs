@@ -119,7 +119,7 @@ impl DeadCodeAnalyzer {
                 let is_binary_only = self.is_binary_only_function(func);
                 let is_internal_call = func.fan_in == 0 && !is_binary_only && !func.is_public;
 
-                // ⭐ Use verdict's state for confidence level
+                // Use verdict's state for confidence level
                 let level = match verdict.state {
                     VerdictState::DefinitelyDead => ConfidenceLevel::Guaranteed,
                     VerdictState::ProbablyDead => ConfidenceLevel::VeryLikely,

@@ -203,7 +203,6 @@ impl GitAnalysis {
                 .unwrap_or(1);
             let commit_ratio = info.commits.len() as f64 / max_commits as f64;
 
-            // Normalize: files with many commits and recent activity score higher
             (commit_ratio * 0.7) + (1.0 / (recency_bonus + 1.0) * 0.3)
         } else {
             0.0

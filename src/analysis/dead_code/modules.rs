@@ -152,12 +152,12 @@ impl ModuleDeadCodeDetector {
     }
 
     fn calculate_import_confidence(import_graph: &ImportGraph, edge: &ImportEdge) -> f64 {
-        let mut confidence: f64 = 0.7; // Base confidence
+        let mut confidence: f64 = 0.7;
 
         // If the import is from a common module, it might be needed
         let import_count = import_graph.import_count(&edge.target_file);
         if import_count > 1 {
-            confidence += 0.2; // Multiple files import it, so it's probably useful
+            confidence += 0.2;
         }
 
         // If the import is from the standard library, it might be needed
@@ -173,7 +173,7 @@ impl ModuleDeadCodeDetector {
         // Check if the imported module has exports
         let exports = import_graph.get_exports(&edge.target_file);
         if exports.is_empty() {
-            confidence -= 0.2; // Importing a module with no exports is suspicious
+            confidence -= 0.2;
         }
 
         confidence.max(0.0).min(1.0)

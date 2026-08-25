@@ -1,5 +1,4 @@
 // src/analysis/explainability.rs
-//! Explainability module - makes every verdict explainable
 
 use crate::analysis::verdict_source::Verdict;
 use crate::graph::call_graph::FunctionNode;

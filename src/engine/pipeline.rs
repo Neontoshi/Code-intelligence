@@ -417,18 +417,17 @@ impl Pipeline {
         let start_time = std::time::Instant::now();
         let project_hash = self.cache.hash_content(&format!("{:?}", root));
 
-        // Check for incremental changes
+        // 1. Collect and parse project files once
         let raw = self.stage_collect(root);
         self.report(&format!("found {} files", raw.files.len()));
 
         let parsed = self.stage_parse_parallel(raw);
         self.report(&format!("parsed {} files", parsed.files.len()));
 
-        // Check if we can use incremental analysis
+        // 2. Check for incremental changes
         if let Some(incremental_result) = self.detect_changes(&parsed.files) {
             if incremental_result.cache_hit {
                 self.report("cache hit - using cached analysis");
-                // Return cached analysis if available
                 if let Some(cached) = self.load_from_cache(&project_hash) {
                     return Ok(cached);
                 }
@@ -440,7 +439,7 @@ impl Pipeline {
             }
         }
 
-        // Check if we have cached analysis
+        // 3. Check if cached analysis is valid
         if let Some(cache_mgr) = &self.analysis_cache {
             let file_entries = self.collect_file_hashes(root);
 
@@ -456,23 +455,16 @@ impl Pipeline {
             }
         }
 
-        let raw = self.stage_collect(root);
-        self.report(&format!("found {} files", raw.files.len()));
-
-        let parsed = self.stage_parse_parallel(raw);
-        self.report(&format!("parsed {} files", parsed.files.len()));
-
         if parsed.files.is_empty() {
             let analysis = ProjectAnalysisBuilder::new(root.to_path_buf())
                 .with_call_graph(CallGraph::new())
                 .build();
 
-            // Cache empty result
             self.save_to_cache(&project_hash, root, &analysis)?;
-
             return Ok(analysis);
         }
 
+        // 4. Run graph analysis, scoring, and optimization
         self.report("building graphs...");
         let analyzed = self.stage_analyze_parallel(parsed);
 
@@ -533,7 +525,6 @@ impl Pipeline {
 
         let _duration = start_time.elapsed();
 
-        // Save to cache
         self.save_to_cache(&project_hash, root, &analysis)?;
 
         Ok(analysis)

@@ -54,8 +54,6 @@ impl RootSet {
     }
 }
 
-// Root Detector
-
 #[derive(Debug, Clone)]
 pub struct RootDetectionConfig {
     /// Include public functions as roots (for library analysis)

@@ -99,8 +99,6 @@ impl OutcomeStats {
     }
 }
 
-// Outcome Tracker
-
 pub struct OutcomeTracker {
     verdicts: Vec<TrackedVerdict>,
     storage_path: PathBuf,
@@ -152,8 +150,6 @@ impl OutcomeTracker {
     ) -> String {
         use sha2::{Digest, Sha256};
 
-        // Use a stable hash based on the function's identity
-        // This stays the same across commits as long as the function exists
         let mut hasher = Sha256::new();
         hasher.update(project.as_bytes());
         hasher.update(b"::");
@@ -173,7 +169,6 @@ impl OutcomeTracker {
         }
 
         let hash = hex::encode(hasher.finalize());
-        // Use first 16 chars for readable IDs
         format!("outcome_{}", &hash[..16])
     }
 
@@ -472,7 +467,7 @@ impl OutcomeTracker {
 
         output
     }
-    /// ⭐ NEW: Export decisions as training examples
+    /// Export decisions as training examples
     pub fn export_decisions_as_training_data(&self) -> Vec<TrainingExample> {
         let mut examples = Vec::new();
 
@@ -536,7 +531,7 @@ impl OutcomeTracker {
         examples
     }
 
-    /// ⭐ NEW: Get feedback statistics
+    /// Get feedback statistics
     pub fn get_feedback_stats(&self) -> FeedbackStats {
         let total_decisions = self.verdicts.len();
         let removed = self
@@ -567,7 +562,7 @@ impl OutcomeTracker {
             })
             .count();
 
-        let true_positives = removed; // Removed = correctly identified as dead
+        let true_positives = removed;
         let true_negatives = self
             .verdicts
             .iter()
@@ -602,10 +597,8 @@ impl OutcomeTracker {
         }
     }
 
-    /// ⭐ NEW: Create features from a verdict (for training examples)
+    /// Create features from a verdict (for training examples)
     fn create_features_from_verdict(&self, verdict: &TrackedVerdict) -> FunctionFeatures {
-        // Create a simplified FunctionFeatures from the tracked verdict
-        // This is a best-effort reconstruction since we don't have the full AST
         use crate::analysis::training_data::FunctionFeatures;
 
         let name_lower = verdict.function_name.to_lowercase();
@@ -700,7 +693,7 @@ impl OutcomeTracker {
         }
     }
 
-    /// ⭐ NEW: Save feedback as training data
+    /// Save feedback as training data
     pub fn save_feedback_as_training_data(
         &self,
         output_path: &std::path::Path,

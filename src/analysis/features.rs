@@ -1,11 +1,9 @@
-//! Dedicated feature extraction - compute all features once, use everywhere
+// src/analysis/features.rs
 
 use crate::graph::call_graph::FunctionNode;
 use crate::optimize::dedup::core::{compute_ast_hash, compute_exact_hash, compute_signature_hash};
 use crate::parser::tree_sitter::ParsedFile;
 use std::collections::HashMap;
-
-// Function Features
 
 /// All features extracted from a function - computed once, used everywhere
 #[derive(Debug, Clone)]
@@ -120,8 +118,6 @@ impl FunctionFeatures {
         }
     }
 
-    // src/analysis/features.rs
-
     // Find this function and add bounds checking:
 
     fn compute_complexity_metrics(source: &str) -> (f64, f64, usize) {
@@ -148,7 +144,7 @@ impl FunctionFeatures {
             ("expect", 0.2),
         ];
 
-        // ⭐ FIX: Add bounds checking for empty source
+        // Add bounds checking for empty source
         if source.is_empty() {
             return (1.0, 1.0, 0);
         }
@@ -218,8 +214,6 @@ impl FunctionFeatures {
                     continue;
                 }
             }
-
-            // Keep as is
             tokens.push(word.to_string());
         }
 
@@ -261,8 +255,6 @@ impl FunctionFeatures {
 
         features
     }
-
-    // Similarity Methods
 
     /// Cosine similarity between two feature vectors
     pub fn cosine_similarity(&self, other: &FunctionFeatures) -> f64 {

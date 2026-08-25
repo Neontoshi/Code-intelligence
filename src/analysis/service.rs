@@ -1,10 +1,5 @@
 // src/analysis/service.rs
 
-//! Shared analysis service for CLI and Dashboard
-//!
-//! This service ensures that all consumers (CLI, Dashboard, CI)
-//! use the exact same analysis pipeline with the same configuration.
-
 use crate::analysis::dead_code::{DeadCodeAnalysis, DeadCodeAnalyzer};
 use crate::analysis::dynamic_refs::{DynamicRefDetector, DynamicReference};
 use crate::analysis::roots::{

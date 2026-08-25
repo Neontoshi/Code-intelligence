@@ -28,7 +28,7 @@ impl Whitelist {
         functions.insert("drop".to_string());
         functions.insert("handleInvoke".to_string());
 
-        // PATTERNS (minimal) — compiled once at construction
+        // PATTERNS
         patterns.push(Regex::new("^test_").expect("valid regex"));
         patterns.push(Regex::new("^bench_").expect("valid regex"));
 
@@ -48,8 +48,6 @@ impl Whitelist {
         self.patterns.iter().any(|re| re.is_match(name))
     }
 
-    /// Check if a function is whitelisted by file path
-    /// (Mostly handled by static analysis now)
     pub fn is_whitelisted_path(&self, full_path: &str) -> bool {
         if full_path.contains("build.rs") {
             return true;

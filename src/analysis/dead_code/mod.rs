@@ -6,7 +6,6 @@ mod modules;
 mod report;
 mod types;
 mod whitelist;
-// reachability.rs has been removed - using roots::ReachabilityAnalyzer instead
 
 pub use analyzer::{
     AnalysisSummary, ConfidenceLevel, DeadCodeAnalysis, DeadCodeAnalyzer, DeadFunction, DeadScore,

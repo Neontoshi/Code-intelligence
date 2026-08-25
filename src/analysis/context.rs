@@ -62,7 +62,6 @@ pub struct ProjectMetrics {
 }
 
 // Builder
-
 pub struct ProjectAnalysisBuilder {
     root: PathBuf,
     files: Vec<ParsedFile>,

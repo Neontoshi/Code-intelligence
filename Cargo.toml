@@ -1,6 +1,6 @@
 [package]
 name = "code-intelligence"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 default-run = "code-intelligence"
 description = "Semantic Code Intelligence Engine for AI"
