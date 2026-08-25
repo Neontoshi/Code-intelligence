@@ -110,7 +110,6 @@ pub fn render_summary(
     f.render_widget(gauge, rows[2]);
 
     //  Row 4: decision status
-    // Since DeadFunction doesn't have status, we show confidence distribution
     let mut conf_counts: HashMap<&str, u64> = HashMap::new();
     for func in &analysis.functions {
         let confidence_pct = func.score.score * 100.0;

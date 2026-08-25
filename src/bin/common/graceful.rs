@@ -1,7 +1,5 @@
 // src/bin/common/graceful.rs
 
-//! Graceful degradation for production
-
 use std::time::Duration;
 use tokio::time::timeout;
 

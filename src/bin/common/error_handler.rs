@@ -1,7 +1,5 @@
 // src/bin/common/error_handler.rs
 
-//! Production-grade error handling for CLI tools
-
 /// Error severity levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorSeverity {

@@ -11,7 +11,6 @@ use ratatui::{
 use super::styles::{
     confidence_color, impact_color, outer_block, ACCENT, ACCENT_DIM, BAD, GOOD, MUTED, TEXT, WARN,
 };
-// ⭐ NEW: Import RiskLevel
 use code_intelligence::analysis::explainability::RiskLevel;
 
 pub fn render_list(
@@ -108,13 +107,12 @@ pub fn render_list(
 
     f.render_stateful_widget(table, chunks[1], state);
 
-    // ⭐ Render evidence popup if available
     if let Some(evidence) = selected_evidence {
         render_evidence_card(f, area, evidence);
     }
 }
 
-/// ⭐ Render evidence card from VerdictExplanation
+/// Render evidence card from VerdictExplanation
 pub fn render_evidence_card(
     f: &mut Frame,
     area: Rect,

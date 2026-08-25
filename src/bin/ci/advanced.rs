@@ -61,9 +61,6 @@ pub async fn run_analyze(
     println!("🔍 DEAD CODE ANALYSIS");
     println!("{}", "═".repeat(60));
 
-    // service.analyze() already ran root detection, reachability, dynamic-ref
-    // detection, verdict evaluation, and structural dead-code analysis.
-    // Reuse those results instead of recomputing all of it a second time.
     let effective_threshold = result.effective_threshold;
     let dead_analysis = &result.dead_code_analysis;
 

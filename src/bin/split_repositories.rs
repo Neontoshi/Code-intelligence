@@ -1,8 +1,3 @@
-//! Repository-level train/validation/test split
-//!
-//! This tool loads all repository files from data/raw/jsonl/
-//! and splits them cleanly at the repository level to prevent data leakage.
-
 use clap::Parser;
 use code_intelligence::analysis::training_data::{TrainingExample, TrainingLabel};
 use code_intelligence::error::Result;
@@ -123,9 +118,23 @@ fn main() -> Result<()> {
     let val_count = (total_repos as f64 * args.val_ratio).round() as usize;
     let test_count = total_repos - train_count - val_count;
 
-    let train_repos: Vec<String> = repos.iter().take(train_count).map(|(n, _)| n.clone()).collect();
-    let val_repos: Vec<String> = repos.iter().skip(train_count).take(val_count).map(|(n, _)| n.clone()).collect();
-    let test_repos: Vec<String> = repos.iter().skip(train_count + val_count).take(test_count).map(|(n, _)| n.clone()).collect();
+    let train_repos: Vec<String> = repos
+        .iter()
+        .take(train_count)
+        .map(|(n, _)| n.clone())
+        .collect();
+    let val_repos: Vec<String> = repos
+        .iter()
+        .skip(train_count)
+        .take(val_count)
+        .map(|(n, _)| n.clone())
+        .collect();
+    let test_repos: Vec<String> = repos
+        .iter()
+        .skip(train_count + val_count)
+        .take(test_count)
+        .map(|(n, _)| n.clone())
+        .collect();
 
     let mut train_examples = Vec::new();
     let mut val_examples = Vec::new();
@@ -133,37 +142,70 @@ fn main() -> Result<()> {
 
     for repo in &train_repos {
         if let Some(mut ex) = by_repo.remove(repo) {
-            for e in &mut ex { e.dataset_split = Some("train".to_string()); }
+            for e in &mut ex {
+                e.dataset_split = Some("train".to_string());
+            }
             train_examples.extend(ex);
         }
     }
 
     for repo in &val_repos {
         if let Some(mut ex) = by_repo.remove(repo) {
-            for e in &mut ex { e.dataset_split = Some("val".to_string()); }
+            for e in &mut ex {
+                e.dataset_split = Some("val".to_string());
+            }
             val_examples.extend(ex);
         }
     }
 
     for repo in &test_repos {
         if let Some(mut ex) = by_repo.remove(repo) {
-            for e in &mut ex { e.dataset_split = Some("test".to_string()); }
+            for e in &mut ex {
+                e.dataset_split = Some("test".to_string());
+            }
             test_examples.extend(ex);
         }
     }
 
-    let train_alive = train_examples.iter().filter(|e| e.label == TrainingLabel::Alive).count();
-    let train_dead = train_examples.iter().filter(|e| e.label == TrainingLabel::Dead).count();
-    let val_alive = val_examples.iter().filter(|e| e.label == TrainingLabel::Alive).count();
-    let val_dead = val_examples.iter().filter(|e| e.label == TrainingLabel::Dead).count();
-    let test_alive = test_examples.iter().filter(|e| e.label == TrainingLabel::Alive).count();
-    let test_dead = test_examples.iter().filter(|e| e.label == TrainingLabel::Dead).count();
+    let train_alive = train_examples
+        .iter()
+        .filter(|e| e.label == TrainingLabel::Alive)
+        .count();
+    let train_dead = train_examples
+        .iter()
+        .filter(|e| e.label == TrainingLabel::Dead)
+        .count();
+    let val_alive = val_examples
+        .iter()
+        .filter(|e| e.label == TrainingLabel::Alive)
+        .count();
+    let val_dead = val_examples
+        .iter()
+        .filter(|e| e.label == TrainingLabel::Dead)
+        .count();
+    let test_alive = test_examples
+        .iter()
+        .filter(|e| e.label == TrainingLabel::Alive)
+        .count();
+    let test_dead = test_examples
+        .iter()
+        .filter(|e| e.label == TrainingLabel::Dead)
+        .count();
 
     std::fs::create_dir_all(&args.output_dir)?;
 
-    std::fs::write(args.output_dir.join("train.json"), serde_json::to_string_pretty(&train_examples)?)?;
-    std::fs::write(args.output_dir.join("val.json"), serde_json::to_string_pretty(&val_examples)?)?;
-    std::fs::write(args.output_dir.join("test.json"), serde_json::to_string_pretty(&test_examples)?)?;
+    std::fs::write(
+        args.output_dir.join("train.json"),
+        serde_json::to_string_pretty(&train_examples)?,
+    )?;
+    std::fs::write(
+        args.output_dir.join("val.json"),
+        serde_json::to_string_pretty(&val_examples)?,
+    )?;
+    std::fs::write(
+        args.output_dir.join("test.json"),
+        serde_json::to_string_pretty(&test_examples)?,
+    )?;
 
     let stats = SplitStats {
         train_repos: train_repos.len(),
@@ -185,12 +227,24 @@ fn main() -> Result<()> {
         },
     };
 
-    std::fs::write(args.output_dir.join("split_stats.json"), serde_json::to_string_pretty(&stats)?)?;
+    std::fs::write(
+        args.output_dir.join("split_stats.json"),
+        serde_json::to_string_pretty(&stats)?,
+    )?;
 
     println!("\n📊 Split Summary:");
-    println!("   Train: {} repos, {} examples (Alive: {}, Dead: {})", stats.train_repos, stats.train_examples, stats.train_alive, stats.train_dead);
-    println!("   Val:   {} repos, {} examples (Alive: {}, Dead: {})", stats.val_repos, stats.val_examples, stats.val_alive, stats.val_dead);
-    println!("   Test:  {} repos, {} examples (Alive: {}, Dead: {})", stats.test_repos, stats.test_examples, stats.test_alive, stats.test_dead);
+    println!(
+        "   Train: {} repos, {} examples (Alive: {}, Dead: {})",
+        stats.train_repos, stats.train_examples, stats.train_alive, stats.train_dead
+    );
+    println!(
+        "   Val:   {} repos, {} examples (Alive: {}, Dead: {})",
+        stats.val_repos, stats.val_examples, stats.val_alive, stats.val_dead
+    );
+    println!(
+        "   Test:  {} repos, {} examples (Alive: {}, Dead: {})",
+        stats.test_repos, stats.test_examples, stats.test_alive, stats.test_dead
+    );
     println!("\n✅ Splits saved to: {:?}", args.output_dir);
 
     Ok(())

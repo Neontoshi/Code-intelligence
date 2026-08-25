@@ -105,8 +105,6 @@ fn main() -> Result<()> {
         test_metrics.accuracy * 100.0
     );
 
-    // Note: For Random Forest and Gradient Boosting, we'd need to add
-    // dependencies. For now, we show what would be possible.
     println!("\n💡 To compare with Random Forest and Gradient Boosting:");
     println!("   Add linfa-trees and linfa-glm to dependencies");
     println!("   The current best model is: Logistic Regression");

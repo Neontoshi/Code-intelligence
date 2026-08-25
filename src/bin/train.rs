@@ -1,13 +1,5 @@
 // src/bin/train.rs
 
-//! Unified training tool with subcommands
-//!
-//! Usage:
-//!   train model --data <path> [--val-data <path>] [--output <path>]
-//!   train duplicate --input <path> [--output <path>]
-//!   train calibrate --model <path> --data <path>
-//!   train tune --model <path> --data <path> [--precision <f64>]
-
 use clap::{Parser, Subcommand};
 use code_intelligence::error::{err, Result};
 use std::path::{Path, PathBuf};

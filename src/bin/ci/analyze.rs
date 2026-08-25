@@ -45,7 +45,7 @@ pub async fn run_analyze(
     let mut service = AnalysisService::new(config);
     let result = service.analyze(&path).await?;
 
-    // 1. DEAD CODE ANALYSIS (Reusing canonical service result)
+    // 1. DEAD CODE ANALYSIS
     println!("\n{}", "═".repeat(60));
     println!("🔍 DEAD CODE ANALYSIS");
     println!("{}", "═".repeat(60));

@@ -1,7 +1,5 @@
 // src/bin/common/cleanup.rs
 
-//! Resource cleanup for production
-
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile;
@@ -74,7 +72,7 @@ impl ResourceManager {
     pub fn install_signal_handlers(&self) {
         let manager = self.clone();
 
-        // ⭐ Use the ctrlc crate with proper handling
+        // Use the ctrlc crate with proper handling
         let _ = ctrlc::set_handler(move || {
             println!("\n⚠️ Cleaning up resources...");
             let rt = tokio::runtime::Runtime::new().unwrap();

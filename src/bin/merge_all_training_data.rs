@@ -35,7 +35,7 @@ fn main() -> Result<()> {
                         match serde_json::from_str::<TrainingExample>(l) {
                             Ok(ex) => Some(ex),
                             Err(e) => {
-                                // ⭐ NEW: Try legacy parsing if modern fails
+                                // Try legacy parsing if modern fails
                                 match parse_legacy_example(l) {
                                     Ok(ex) => {
                                         println!("   ✅ Converted legacy example");
@@ -58,7 +58,7 @@ fn main() -> Result<()> {
                     Ok(examples) => examples,
                     Err(e) => {
                         eprintln!("   ⚠️ Failed to parse {} as modern JSON: {}", repo_name, e);
-                        // ⭐ NEW: Try legacy parsing
+                        // Try legacy parsing
                         parse_legacy_json_file(&data, &repo_name)?
                     }
                 }
@@ -72,10 +72,8 @@ fn main() -> Result<()> {
                 if example.commit_hash.is_none() {
                     example.commit_hash = Some("unknown".to_string());
                 }
-                // ⭐ Ensure label_source is set
-                if example.label_source == LabelSource::StaticHeuristic {
-                    // Already set
-                }
+                // Ensure label_source is set
+                if example.label_source == LabelSource::StaticHeuristic {}
             }
 
             println!("      {} examples", examples.len());
@@ -103,11 +101,8 @@ fn main() -> Result<()> {
         }
     }
     by_repo = by_repo_deduped;
-
-    // Split repos into train/validation/test sets
     let repo_names: Vec<String> = by_repo.keys().cloned().collect();
 
-    // Use deterministic shuffle with seed for reproducibility
     use rand::seq::SliceRandom;
     use rand::SeedableRng;
     let mut rng = rand::rngs::StdRng::seed_from_u64(42);
@@ -127,9 +122,6 @@ fn main() -> Result<()> {
         (&shuffled[0..1], &shuffled[1..2], &[][..])
     } else {
         // 3+ repos: guarantee at least 1 for val and 1 for test,
-        // everything else goes to train. Scales cleanly as repo
-        // count grows (unlike the old ceil(0.7*n) formula, which
-        // could zero out val or test entirely for small n like 4).
         let test_count = 1;
         let val_count = 1;
         let train_count = total - val_count - test_count;
@@ -275,23 +267,16 @@ fn deduplicate_examples(by_repo: &HashMap<String, Vec<TrainingExample>>) -> Vec<
 
     for examples in by_repo.values() {
         for example in examples {
-            // ⭐ Use a LESS aggressive key - only signature hash, not body hash
             let key = format!("{}", example.features.signature_hash);
-
-            // ⭐ Allow some duplicates if they have different function names
-            // This preserves more training examples
             if !seen.contains(&key) {
                 seen.insert(key);
                 deduped.push(example.clone());
             } else {
-                // If signature matches, still add if the function name is different
-                // This gives us more variety
                 let existing = deduped
                     .iter()
                     .find(|e| e.features.signature_hash == example.features.signature_hash);
                 if let Some(existing) = existing {
                     if existing.function_name != example.function_name {
-                        // Different name, same signature - keep both for variety
                         deduped.push(example.clone());
                     }
                 }
@@ -317,7 +302,7 @@ fn parse_legacy_json_file(data: &str, repo_name: &str) -> Result<Vec<TrainingExa
     Ok(examples)
 }
 
-// ⭐ NEW: Convert legacy JSON to TrainingExample
+// Convert legacy JSON to TrainingExample
 fn convert_legacy_to_training_example(
     item: serde_json::Value,
     repo_name: &str,
@@ -469,7 +454,7 @@ fn convert_legacy_to_training_example(
     })
 }
 
-// ⭐ NEW: Parse legacy single line
+// Parse legacy single line
 fn parse_legacy_example(line: &str) -> Result<TrainingExample> {
     let value: serde_json::Value = serde_json::from_str(line)
         .map_err(|e| err::internal(format!("Failed to parse JSON: {}", e)))?;

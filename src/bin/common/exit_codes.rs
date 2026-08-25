@@ -1,11 +1,9 @@
 // src/bin/common/exit_codes.rs
 
-//! Standard exit codes for CLI tools
-
 /// Exit codes for the code-intelligence CLI
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // ⭐ Used by binaries
+#[allow(dead_code)]
 pub enum ExitCode {
     /// Success - everything worked
     Success = 0,

@@ -1,7 +1,5 @@
 // src/bin/common/reporter.rs
 
-//! Structured error reporting for production
-
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::SystemTime;

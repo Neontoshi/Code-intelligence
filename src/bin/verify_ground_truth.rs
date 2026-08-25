@@ -1,12 +1,5 @@
 // src/bin/verify_ground_truth.rs
 
-//! Tool for building verified ground-truth datasets
-//!
-//! This tool helps collect human-verified examples by:
-//! 1. Taking a project and running analysis
-//! 2. Presenting candidates for review
-//! 3. Recording human decisions with reasons
-
 use clap::Parser;
 use code_intelligence::analysis::verdict_source::label_source::LabelSource;
 use code_intelligence::analysis::verdict_source::state::{VerdictConfig, VerdictEngine};
@@ -107,7 +100,7 @@ async fn main() -> Result<()> {
 
     println!("📋 Found {} candidates to verify", candidates.len());
 
-    // 3. Verify candidates - ⭐ FIXED: No unused assignment
+    // 3. Verify candidates - No unused assignment
     let verified = if args.batch {
         // Batch mode: auto-verify using Git history
         verify_with_git(&analysis, &candidates)
@@ -155,7 +148,7 @@ fn get_candidates(
     let root_set = RootDetector::detect_roots(&analysis.call_graph, &analysis.files, &root_config);
     let reachability = ReachabilityAnalyzer::compute_reachability(&analysis.call_graph, &root_set);
 
-    // ⭐ FIX: Use correct VerdictConfig from state module
+    // Use correct VerdictConfig from state module
     let verdict_engine = VerdictEngine::new(VerdictConfig::default());
     let mut verdicts = verdict_engine.evaluate_all(&analysis.call_graph, &reachability);
 
@@ -174,7 +167,6 @@ fn verify_with_git(
     let mut verified = Vec::new();
 
     for verdict in candidates {
-        // ⭐ FIX: Remove unused variable
         // Get the file path from the verdict
         let file = &verdict
             .full_path
@@ -200,7 +192,7 @@ fn verify_with_git(
                 function_name: verdict.function_name.clone(),
                 file: verdict.full_path.clone(),
                 line: 0,
-                label: TrainingLabel::Alive, // Used in Git = Alive
+                label: TrainingLabel::Alive,
                 confidence: 0.90,
                 label_source: LabelSource::GitVerified,
                 verified_by: "git".to_string(),
@@ -277,7 +269,6 @@ fn verify_interactive(
                 println!("✅ Marked DEAD");
             }
             "u" => {
-                // Unknown - not added to verified set
                 println!("⏭️ Skipped (Unknown)");
             }
             "s" => {
@@ -378,7 +369,7 @@ fn show_stats(verified: &[VerifiedEntry]) {
         dead as f64 / verified.len() as f64 * 100.0
     );
 
-    // ⭐ FIX: Use Display implementation for LabelSource
+    // Use Display implementation for LabelSource
     let source_counts: HashMap<String, usize> =
         verified.iter().fold(HashMap::new(), |mut acc, e| {
             *acc.entry(e.label_source.to_string()).or_insert(0) += 1;

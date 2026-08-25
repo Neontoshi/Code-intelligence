@@ -23,7 +23,6 @@ pub async fn run_dedup_report(
     }
     println!();
 
-    // Resolve duplicate model: custom CLI flag -> config path -> embedded binary
     let model = if ml {
         let loaded_model = match (duplicate_model, get_default_duplicate_model()) {
             (Some(custom_path), _) => {

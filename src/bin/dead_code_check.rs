@@ -603,7 +603,7 @@ async fn run(args: &Args) -> Result<()> {
         }
     }
 
-    // ⭐ INTEGRATE REPORTER
+    // INTEGRATE REPORTER
     let mut reporter = Reporter::new("dead_code_check", env!("CARGO_PKG_VERSION"), "production");
 
     // Record metrics

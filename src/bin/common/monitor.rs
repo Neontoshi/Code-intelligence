@@ -1,7 +1,5 @@
 // src/bin/common/monitor.rs
 
-//! Production monitoring utilities
-
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

@@ -13,7 +13,6 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum EvalCommand {
-    /// Basic metrics evaluation
     Metrics {
         /// Model file path
         #[arg(short, long)]
@@ -25,7 +24,6 @@ enum EvalCommand {
         #[arg(short, long, default_value = "evaluation_results.json")]
         output: PathBuf,
     },
-    /// Per-language evaluation
     PerLanguage {
         /// Model file path
         #[arg(short, long)]
@@ -40,7 +38,6 @@ enum EvalCommand {
         #[arg(long)]
         detailed: bool,
     },
-    /// Detailed evaluation with report
     Detailed {
         /// Model file path
         #[arg(short, long)]
@@ -243,8 +240,6 @@ fn run_detailed(
 
     Ok(())
 }
-
-// Common evaluation functions
 
 #[derive(Debug, Clone, serde::Serialize)]
 struct EvaluationMetrics {

@@ -1,12 +1,5 @@
 // src/bin/data.rs
 
-//! Unified data management tool with subcommands
-//!
-//! Usage:
-//!   data export <path> [--output <path>]
-//!   data merge [--input <glob>] [--output <path>] [--dedup]
-//!   data collect [--repos <urls>] [--output <dir>] [--max-repos <n>]
-
 use clap::{Parser, Subcommand};
 use code_intelligence::error::{err, Result};
 use std::path::{Path, PathBuf};
@@ -41,17 +34,6 @@ enum DataCommand {
         #[arg(long)]
         dedup: bool,
     },
-    /// Collect training data from repositories
-    Collect {
-        /// Repository URLs (space-separated)
-        repos: Vec<String>,
-        /// Output directory
-        #[arg(short, long, default_value = "training_data")]
-        output: PathBuf,
-        /// Max repos to process
-        #[arg(long, default_value = "50")]
-        max_repos: usize,
-    },
 }
 
 #[tokio::main]
@@ -68,13 +50,6 @@ async fn main() -> Result<()> {
             dedup,
         } => {
             run_merge(&input, &output, dedup)?;
-        }
-        DataCommand::Collect {
-            repos,
-            output,
-            max_repos,
-        } => {
-            run_collect(&repos, &output, max_repos).await?;
         }
     }
 
@@ -185,59 +160,5 @@ fn run_merge(input: &str, output: &Path, dedup: bool) -> Result<()> {
 
     println!("✅ Merged {} examples to: {:?}", all_examples.len(), output);
 
-    Ok(())
-}
-
-async fn run_collect(repos: &[String], output: &Path, max_repos: usize) -> Result<()> {
-    println!("📊 Collecting training data from repositories...");
-
-    let default_repos = vec![
-        "https://github.com/rust-lang/rust.git",
-        "https://github.com/rust-lang/cargo.git",
-        "https://github.com/rust-lang/rust-clippy.git",
-        "https://github.com/tokio-rs/tokio.git",
-        "https://github.com/serde-rs/serde.git",
-    ];
-
-    let repo_list: Vec<String> = if repos.is_empty() {
-        default_repos.iter().map(|s| s.to_string()).collect()
-    } else {
-        repos.to_vec()
-    };
-
-    let mut count = 0;
-    for repo_url in repo_list.iter().take(max_repos) {
-        let repo_name = repo_url
-            .split('/')
-            .last()
-            .unwrap_or("unknown")
-            .trim_end_matches(".git");
-        let repo_dir = output.join(repo_name);
-
-        println!("   Processing: {}", repo_name);
-
-        if !repo_dir.exists() {
-            let status = std::process::Command::new("git")
-                .args([
-                    "clone",
-                    "--depth",
-                    "1",
-                    repo_url,
-                    &repo_dir.to_string_lossy(),
-                ])
-                .status()?;
-
-            if !status.success() {
-                eprintln!("      ⚠️ Failed to clone {}", repo_name);
-                continue;
-            }
-        }
-
-        let output_file = output.join(format!("{}.json", repo_name));
-        let _ = run_export(&repo_dir, &output_file).await;
-        count += 1;
-    }
-
-    println!("✅ Processed {} repositories", count);
     Ok(())
 }

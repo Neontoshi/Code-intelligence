@@ -1,10 +1,5 @@
 // src/bin/temporal_evaluation.rs
 
-//! Temporal evaluation - train on past, test on future
-//!
-//! This tool evaluates how well the model generalizes to future code
-//! by training on data from earlier time periods and testing on later periods.
-
 use clap::Parser;
 use code_intelligence::analysis::training_data::{TrainingExample, TrainingLabel};
 use code_intelligence::error::Result;
@@ -307,7 +302,6 @@ fn parse_commit_time(commit_hash: &str) -> Option<i64> {
     }
 
     // Try to get commit timestamp from git
-    // Only if it looks like a git hash (40 chars hex)
     if commit_hash.chars().all(|c| c.is_ascii_hexdigit()) && commit_hash.len() == 40 {
         let output = Command::new("git")
             .args(["show", "-s", "--format=%ct", commit_hash])

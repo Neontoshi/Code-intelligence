@@ -29,7 +29,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 // Data Structures
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DecisionType {
     ConfirmedDead,
@@ -74,7 +73,6 @@ pub struct AnalysisMetadata {
 }
 
 // App State
-
 struct App {
     analysis: Option<DeadCodeAnalysis>,
     table_state: TableState,
@@ -229,7 +227,7 @@ impl App {
         let result = std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async {
-                // ⭐ NEW: Use the shared AnalysisService
+                // Use the shared AnalysisService
                 use code_intelligence::analysis::service::{
                     AnalysisService, AnalysisServiceConfig,
                 };
@@ -263,8 +261,6 @@ impl App {
 
         match outcome {
             Ok(result) => {
-                // Build metadata from the provenance actually attached to this run's
-                // verdicts, instead of a stale .code-intelligence-metadata.json file.
                 let provenance = result.verdicts.first().map(|v| v.provenance.clone());
 
                 self.analysis_metadata = Some(AnalysisMetadata {
@@ -585,7 +581,6 @@ fn handle_actions(app: &mut App, key: KeyCode) -> bool {
                     }
                 }
             }
-            // If evidence is showing, close it
             if app.selected_evidence.is_some() {
                 app.selected_evidence = None;
                 return true;

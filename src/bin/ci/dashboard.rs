@@ -10,7 +10,6 @@ pub async fn run_dashboard(path: &Path, model: Option<PathBuf>) -> Result<()> {
 
     let model_path = model.or_else(get_default_model);
 
-    // Try finding `dead_code_dashboard` in the same directory as the current `ci` executable first
     let current_exe = std::env::current_exe().ok();
     let sibling_exe = current_exe
         .as_ref()

@@ -48,9 +48,6 @@ pub async fn run_list(path: &Path, all: bool) -> Result<()> {
         })
     })?;
 
-    // Everything below used to be recomputed by hand (root detection,
-    // reachability, dynamic refs, verdict evaluation). service.analyze()
-    // already did all of that once — reuse it instead of doing it twice.
     let dead_verdicts = &result.dead_verdicts;
     let unknown_verdicts: Vec<_> = if all {
         result.unknown_verdicts.iter().collect()
