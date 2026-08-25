@@ -231,3 +231,20 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_dart_factory_ast() {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_dart::LANGUAGE.into())
+        .expect("Failed to set Dart language");
+
+    let src = "class Todo { factory Todo.fromJson(Map<String, dynamic> j) => _$TodoFromJson(j); }";
+    let tree = parser
+        .parse(src, None)
+        .expect("Failed to parse Dart source");
+
+    println!("\n=== DART FACTORY S-EXPRESSION ===");
+    println!("{}", tree.root_node().to_sexp());
+    println!("=================================\n");
+}

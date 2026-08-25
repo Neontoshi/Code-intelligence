@@ -6,6 +6,7 @@ pub mod explainability;
 pub mod features;
 pub mod git_analysis;
 pub mod importance;
+pub mod layers;
 pub mod outcomes;
 pub mod roots;
 pub mod service;

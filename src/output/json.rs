@@ -1,6 +1,7 @@
 // src/output/json.rs
 
 use crate::analysis::dead_code::DeadCodeDetector;
+use crate::analysis::layers::LayerOrchestrator;
 use crate::graph::call_graph::CallGraph;
 use crate::graph::traits::GraphMetrics;
 use crate::parser::tree_sitter::ParsedFile;
@@ -82,7 +83,7 @@ impl JsonOutput {
             .collect();
         report["architecture"]["entry_points"] = json!(entry_points);
 
-        // Detect layers (handlers, services, repositories, etc.)
+        // Detect layers using the new orchestrator
         let layers = Self::detect_layers(files);
         report["architecture"]["layers"] = json!(layers);
 
@@ -241,36 +242,17 @@ impl JsonOutput {
         serde_json::to_string_pretty(&pairs).unwrap_or_default()
     }
 
-    /// Detect architectural layers from file paths
+    /// Detect architectural layers from file paths using the LayerOrchestrator
     pub fn detect_layers(files: &[ParsedFile]) -> Vec<Value> {
         use std::collections::HashMap;
 
+        let orchestrator = LayerOrchestrator::new();
         let mut layers: HashMap<String, Vec<String>> = HashMap::new();
 
         for file in files {
-            let parts: Vec<&str> = file.path.split('/').collect();
-            let layer = if parts.len() >= 2 {
-                match parts[parts.len() - 2] {
-                    "handlers" | "controllers" | "routes" => "api/handlers",
-                    "services" | "domain" => "services",
-                    "db" | "repository" | "repositories" | "models" => "data",
-                    "middleware" => "middleware",
-                    "config" => "config",
-                    "workers" | "jobs" => "workers",
-                    "solana" | "blockchain" => "blockchain",
-                    "telemetry" | "metrics" | "tracing" => "observability",
-                    "auth" => "auth",
-                    _ => "other",
-                }
-            } else {
-                "root"
-            };
-
+            let layer = orchestrator.detect_layer(file);
             let filename = file.path.split('/').last().unwrap_or(&file.path);
-            layers
-                .entry(layer.to_string())
-                .or_default()
-                .push(filename.to_string());
+            layers.entry(layer).or_default().push(filename.to_string());
         }
 
         layers
@@ -278,6 +260,8 @@ impl JsonOutput {
             .map(|(layer, files)| {
                 json!({
                     "name": layer,
+                    "description": orchestrator.get_layer_description(&layer),
+                    "color": orchestrator.get_layer_color(&layer),
                     "files": files,
                     "file_count": files.len(),
                 })

@@ -2,7 +2,7 @@
 
 use clap::Parser;
 use code_intelligence::analysis::dead_code::DeadCodeAnalyzer;
-use code_intelligence::analysis::dynamic_refs::DynamicRefDetector;
+use code_intelligence::analysis::dynamic_refs::DynamicRefOrchestrator;
 use code_intelligence::analysis::git_analysis::GitAnalyzer;
 use code_intelligence::analysis::roots::{ReachabilityAnalyzer, RootDetectionConfig, RootDetector};
 use code_intelligence::analysis::verdict_source::{Verdict, VerdictConfig, VerdictEngine};
@@ -367,7 +367,7 @@ async fn run(args: &Args) -> Result<()> {
         verdict_engine = verdict_engine.with_ml(model);
     }
 
-    let dynamic_detector = DynamicRefDetector::new();
+    let dynamic_detector = DynamicRefOrchestrator::new();
     let dynamic_refs = dynamic_detector.detect_all(&analysis.call_graph, &analysis.files);
 
     if args.verbose && !dynamic_refs.is_empty() {

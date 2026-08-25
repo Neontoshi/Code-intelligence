@@ -46,11 +46,11 @@ pub struct IncrementalResult {
     pub added_functions: Vec<String>,
     pub modified_functions: Vec<String>,
     pub cache_hit: bool,
-    /// ⭐ NEW: Rebuild instructions for the pipeline
+    /// Rebuild instructions for the pipeline
     pub rebuild_scope: RebuildScope,
 }
 
-/// ⭐ NEW: Defines what needs to be rebuilt
+/// Defines what needs to be rebuilt
 #[derive(Debug, Clone, Default)]
 pub struct RebuildScope {
     /// Functions that need full re-analysis
@@ -111,7 +111,7 @@ impl FileTracker {
         }
     }
 
-    /// ⭐ NEW: Build dependency graph from call graph
+    /// Build dependency graph from call graph
     pub fn build_dependency_graph(&mut self, call_graph: &CallGraph) {
         self.reverse_deps.clear();
         self.forward_deps.clear();
@@ -139,7 +139,7 @@ impl FileTracker {
         }
     }
 
-    /// ⭐ NEW: Get all functions affected by changes (full dependency propagation)
+    /// Get all functions affected by changes (full dependency propagation)
     pub fn get_affected_functions_full(
         &self,
         changed_files: &[PathBuf],
@@ -190,7 +190,7 @@ impl FileTracker {
         affected
     }
 
-    /// ⭐ NEW: Determine rebuild scope
+    /// Determine rebuild scope
     pub fn determine_rebuild_scope(
         &self,
         changed_files: &[PathBuf],
