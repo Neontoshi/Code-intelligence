@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 fn main() -> Result<()> {
-    let training_dir = PathBuf::from("training_data");
+    let training_dir = PathBuf::from("data/raw/jsonl");
 
     // Create output directory if it doesn't exist
     std::fs::create_dir_all("data")?;

@@ -257,6 +257,7 @@ impl Pipeline {
 
         let total = raw.files.len();
         let completed = Arc::new(AtomicUsize::new(0));
+        let failed = Arc::new(AtomicUsize::new(0));
 
         let parsed_files: Vec<ParsedFile> = raw
             .files
@@ -269,13 +270,26 @@ impl Pipeline {
                 self.report(&format!("parsing files ({}/{})", count, total));
 
                 match result {
-                    Ok(parsed) if !parsed.functions.is_empty() || !parsed.types.is_empty() => {
-                        Some(parsed)
+                    Ok(parsed) => Some(parsed),
+                    Err(e) => {
+                        failed.fetch_add(1, Ordering::Relaxed);
+                        eprintln!("⚠️ Parse failed for {:?}: {}", file, e);
+                        None
                     }
-                    _ => None,
                 }
             })
             .collect();
+
+        let total_funcs: usize = parsed_files.iter().map(|f| f.functions.len()).sum();
+        let total_types: usize = parsed_files.iter().map(|f| f.types.len()).sum();
+
+        println!(
+            "🔎 Parsed {} files: {} functions, {} types (failures: {})",
+            parsed_files.len(),
+            total_funcs,
+            total_types,
+            failed.load(Ordering::Relaxed)
+        );
 
         ParsedProject {
             root: raw.root,

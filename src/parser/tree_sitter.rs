@@ -84,7 +84,6 @@ pub struct TreeSitterParser {
     languages: HashMap<String, LanguageConfig>,
 }
 
-// In LanguageConfig definition:
 #[derive(Clone)]
 struct LanguageConfig {
     name: String,
@@ -401,6 +400,9 @@ impl TreeSitterParser {
                     "local_function_statement".to_string(),
                     "operator_declaration".to_string(),
                     "conversion_operator_declaration".to_string(),
+                    "property_declaration".to_string(),
+                    "indexer_declaration".to_string(),
+                    "arrow_expression_clause".to_string(),
                 ],
                 import_kinds: vec!["using_directive".to_string()],
                 type_kinds: vec![
@@ -409,10 +411,12 @@ impl TreeSitterParser {
                     "struct_declaration".to_string(),
                     "enum_declaration".to_string(),
                     "record_declaration".to_string(),
+                    "record_struct_declaration".to_string(),
+                    "namespace_declaration".to_string(),
+                    "file_scoped_namespace_declaration".to_string(),
                 ],
             },
         );
-
         langs
     }
 
@@ -441,9 +445,10 @@ impl TreeSitterParser {
 
         let mut child_cursor = node.walk();
         for child in node.children(&mut child_cursor) {
-            if child.kind() == "decorator" {
+            if child.kind() == "decorator" || child.kind() == "attribute_list" {
                 if let Ok(text) = child.utf8_text(source.as_bytes()) {
-                    decorators.push(text.trim_start_matches('@').to_string());
+                    let cleaned = text.trim_matches(|c| c == '@' || c == '[' || c == ']');
+                    decorators.push(cleaned.to_string());
                 }
             }
         }
@@ -469,9 +474,14 @@ impl TreeSitterParser {
             .parse(&source, None)
             .ok_or_else(|| "Failed to parse".to_string())?;
 
-        let functions = Self::extract_functions(&tree, &source, config);
-        let imports = Self::extract_imports(&tree, &source, config);
-        let types = Self::extract_types(&tree, &source, config);
+        let (functions, imports, types) = if config.name == "CSharp" {
+            Self::extract_csharp(&tree, &source)
+        } else {
+            let funcs = Self::extract_functions(&tree, &source, config);
+            let imps = Self::extract_imports(&tree, &source, config);
+            let typs = Self::extract_types(&tree, &source, config);
+            (funcs, imps, typs)
+        };
 
         Ok(ParsedFile {
             path: path.to_string_lossy().to_string(),
@@ -482,6 +492,246 @@ impl TreeSitterParser {
             source,
         })
     }
+
+    // ============================================================
+    // Dedicated C# AST Extractor
+    // ============================================================
+
+    fn extract_csharp(
+        tree: &Tree,
+        source: &str,
+    ) -> (Vec<FunctionInfo>, Vec<ImportInfo>, Vec<TypeInfo>) {
+        let mut functions = Vec::new();
+        let mut imports = Vec::new();
+        let mut types = Vec::new();
+        let root = tree.root_node();
+
+        Self::walk_csharp_node(
+            root,
+            source,
+            None,
+            None,
+            &mut functions,
+            &mut imports,
+            &mut types,
+        );
+        (functions, imports, types)
+    }
+
+    fn walk_csharp_node(
+        node: Node,
+        source: &str,
+        current_namespace: Option<&str>,
+        current_type: Option<&str>,
+        functions: &mut Vec<FunctionInfo>,
+        imports: &mut Vec<ImportInfo>,
+        types: &mut Vec<TypeInfo>,
+    ) {
+        let kind = node.kind();
+        let mut next_namespace = current_namespace;
+        let mut next_type = current_type;
+
+        match kind {
+            "using_directive" => {
+                if let Ok(text) = node.utf8_text(source.as_bytes()) {
+                    let (module, items) = Self::parse_import(text);
+                    imports.push(ImportInfo {
+                        module,
+                        items,
+                        line: node.start_position().row + 1,
+                    });
+                }
+            }
+            "namespace_declaration" | "file_scoped_namespace_declaration" => {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    if let Ok(ns_text) = name_node.utf8_text(source.as_bytes()) {
+                        next_namespace = Some(ns_text.trim());
+                    }
+                }
+            }
+            "class_declaration"
+            | "interface_declaration"
+            | "struct_declaration"
+            | "enum_declaration"
+            | "record_declaration"
+            | "record_struct_declaration" => {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    if let Ok(type_name) = name_node.utf8_text(source.as_bytes()) {
+                        let clean_name = type_name.trim();
+                        let type_kind = match kind {
+                            "interface_declaration" => TypeKind::Interface,
+                            "enum_declaration" => TypeKind::Enum,
+                            "struct_declaration" | "record_struct_declaration" => TypeKind::Struct,
+                            _ => TypeKind::Class,
+                        };
+
+                        types.push(TypeInfo {
+                            name: clean_name.to_string(),
+                            kind: type_kind,
+                            line: node.start_position().row + 1,
+                        });
+
+                        next_type = Some(clean_name);
+                    }
+                }
+            }
+            "method_declaration"
+            | "constructor_declaration"
+            | "destructor_declaration"
+            | "local_function_statement"
+            | "operator_declaration"
+            | "conversion_operator_declaration"
+            | "property_declaration" => {
+                if let Some(func) =
+                    Self::parse_csharp_function(&node, source, next_namespace, next_type)
+                {
+                    functions.push(func);
+                }
+            }
+            _ => {}
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            Self::walk_csharp_node(
+                child,
+                source,
+                next_namespace,
+                next_type,
+                functions,
+                imports,
+                types,
+            );
+        }
+    }
+
+    fn parse_csharp_function(
+        node: &Node,
+        source: &str,
+        namespace: Option<&str>,
+        container_type: Option<&str>,
+    ) -> Option<FunctionInfo> {
+        let name = node
+            .child_by_field_name("name")
+            .and_then(|n| {
+                if n.kind() == "generic_name" {
+                    n.child_by_field_name("name")
+                } else {
+                    Some(n)
+                }
+            })
+            .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+            .map(|s| s.trim().to_string())
+            .or_else(|| {
+                node.children(&mut node.walk())
+                    .find(|c| c.kind() == "identifier")
+                    .and_then(|c| c.utf8_text(source.as_bytes()).ok())
+                    .map(|s| s.trim().to_string())
+            })?;
+
+        if name.is_empty() {
+            return None;
+        }
+
+        let line = node.start_position().row + 1;
+        let full_text = node.utf8_text(source.as_bytes()).unwrap_or("");
+
+        let is_interface_member = node
+            .parent()
+            .map(|p| {
+                p.kind() == "interface_declaration"
+                    || p.parent()
+                        .map(|pp| pp.kind() == "interface_declaration")
+                        .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        let is_public = is_interface_member
+            || full_text.contains("public ")
+            || full_text.contains("protected ");
+
+        let is_async = full_text.contains("async ");
+
+        let return_type = node
+            .child_by_field_name("type")
+            .or_else(|| node.child_by_field_name("returns"))
+            .and_then(|r| r.utf8_text(source.as_bytes()).ok())
+            .map(|s| s.trim().to_string());
+
+        let params = node
+            .child_by_field_name("parameters")
+            .or_else(|| node.child_by_field_name("parameter_list"))
+            .map(|p| Self::parse_parameters(&p, source))
+            .unwrap_or_default();
+
+        let doc_comment = Self::extract_doc_comment(node, source);
+
+        let body_node = node
+            .child_by_field_name("body")
+            .or_else(|| {
+                node.children(&mut node.walk())
+                    .find(|c| c.kind() == "block")
+            })
+            .or_else(|| node.child_by_field_name("arrow_expression_clause"))
+            .or_else(|| {
+                node.children(&mut node.walk())
+                    .find(|c| c.kind() == "arrow_expression_clause")
+            });
+
+        let calls = body_node
+            .map(|b| Self::extract_calls(&b, source))
+            .unwrap_or_default();
+
+        let (body_start, body_end) = if let Some(body) = body_node {
+            (body.start_byte(), body.end_byte())
+        } else {
+            (node.start_byte(), node.end_byte())
+        };
+
+        let resolved_container = match (namespace, container_type) {
+            (Some(ns), Some(ty)) => Some(format!("{}::{}", ns, ty)),
+            (None, Some(ty)) => Some(ty.to_string()),
+            _ => None,
+        };
+
+        let role = Self::infer_role(&name, &params);
+        let purpose = Self::infer_purpose(&name, &params, &return_type);
+
+        let decorators = Self::extract_decorators(node, source);
+
+        let is_test = Self::has_test_attribute(node, source)
+            || full_text.contains("[Fact]")
+            || full_text.contains("[Theory]")
+            || full_text.contains("[Test]");
+
+        let is_trait_method = is_interface_member;
+        let is_trait_default = is_interface_member && body_node.is_some();
+
+        Some(FunctionInfo {
+            name,
+            line,
+            is_public,
+            is_async,
+            params,
+            return_type,
+            doc_comment,
+            calls,
+            body_range: (body_start, body_end),
+            body_start_line: line,
+            body_end_line: node.end_position().row + 1,
+            container: resolved_container,
+            role,
+            purpose,
+            trait_impl: None,
+            decorators,
+            is_test,
+            is_trait_method,
+            is_trait_default,
+        })
+    }
+
+    // ============================================================
+    // Universal AST Functions Extractor (Rust, Python, JS/TS, Go, Java, Dart, PHP, C++)
+    // ============================================================
 
     fn extract_functions(tree: &Tree, source: &str, config: &LanguageConfig) -> Vec<FunctionInfo> {
         let mut functions = Vec::new();
@@ -500,10 +750,9 @@ impl TreeSitterParser {
     ) {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            let matches_function_kind = if child.kind() == "variable_declarator" {
-                // A `const X = ...` only counts as a function if X is a plain name
-                // (not a destructuring pattern like `[a, b]` or `{a, b}`) and the
-                // right-hand side is actually a function/arrow function.
+            let child_kind = child.kind();
+
+            let matches_function_kind = if child_kind == "variable_declarator" {
                 let name_is_identifier = child
                     .child_by_field_name("name")
                     .map(|n| n.kind() == "identifier")
@@ -519,7 +768,7 @@ impl TreeSitterParser {
                     .unwrap_or(false);
                 name_is_identifier && value_is_function
             } else {
-                config.function_kinds.contains(&child.kind().to_string())
+                config.function_kinds.iter().any(|k| k == child_kind)
             };
 
             if matches_function_kind {
@@ -533,19 +782,117 @@ impl TreeSitterParser {
                     out.push(func);
                 }
             }
-            let (next_container, next_trait) = if child.kind() == "impl_item" {
+
+            let (mut next_container, mut next_trait) = (container, trait_impl);
+
+            if child_kind == "impl_item" {
                 let ty = child
                     .child_by_field_name("type")
                     .and_then(|t| t.utf8_text(source.as_bytes()).ok());
                 let tr = child
                     .child_by_field_name("trait")
                     .and_then(|t| t.utf8_text(source.as_bytes()).ok());
-                (ty, tr)
-            } else {
-                (container, trait_impl)
-            };
+                next_container = ty;
+                next_trait = tr;
+            } else if matches!(
+                child_kind,
+                "class_declaration"
+                    | "class_definition"
+                    | "struct_specifier"
+                    | "class_specifier"
+                    | "struct_declaration"
+                    | "interface_declaration"
+                    | "record_declaration"
+            ) {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    if let Ok(cname) = name_node.utf8_text(source.as_bytes()) {
+                        next_container = Some(cname.trim());
+                    }
+                }
+            }
+
             Self::walk_for_functions(child, source, config, next_container, next_trait, out);
         }
+    }
+
+    fn extract_function_name(node: &Node, source: &str, lang_name: &str) -> Option<String> {
+        if let Some(name_node) = node.child_by_field_name("name") {
+            if name_node.kind() == "generic_name" {
+                if let Some(ident) = name_node.child_by_field_name("name") {
+                    if let Ok(name) = ident.utf8_text(source.as_bytes()) {
+                        return Some(name.trim().to_string());
+                    }
+                }
+            }
+            if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                let clean = name.trim();
+                if !clean.is_empty() {
+                    return Some(clean.to_string());
+                }
+            }
+        }
+
+        if lang_name == "CPP" {
+            if let Some(decl) = node.child_by_field_name("declarator") {
+                let mut cur = decl;
+                while cur.kind() == "function_declarator"
+                    || cur.kind() == "pointer_declarator"
+                    || cur.kind() == "reference_declarator"
+                {
+                    if let Some(inner) = cur.child_by_field_name("declarator") {
+                        cur = inner;
+                    } else if let Some(first_child) = cur.named_child(0) {
+                        cur = first_child;
+                    } else {
+                        break;
+                    }
+                }
+                if let Ok(text) = cur.utf8_text(source.as_bytes()) {
+                    let clean = text.trim();
+                    if !clean.is_empty() {
+                        return Some(clean.to_string());
+                    }
+                }
+            }
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            let k = child.kind();
+            if k == "identifier" || k == "property_identifier" || k == "type_identifier" {
+                if let Ok(text) = child.utf8_text(source.as_bytes()) {
+                    let clean = text.trim();
+                    let keywords = [
+                        "public",
+                        "private",
+                        "protected",
+                        "internal",
+                        "static",
+                        "virtual",
+                        "override",
+                        "async",
+                        "void",
+                        "task",
+                        "int",
+                        "string",
+                        "bool",
+                        "extern",
+                        "const",
+                        "readonly",
+                        "sealed",
+                        "partial",
+                        "abstract",
+                        "class",
+                        "struct",
+                    ];
+                    if !clean.is_empty() && !keywords.contains(&clean.to_lowercase().as_str()) {
+                        return Some(clean.to_string());
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     fn parse_function(
@@ -555,16 +902,11 @@ impl TreeSitterParser {
         trait_impl: Option<&str>,
         lang_name: &str,
     ) -> Option<FunctionInfo> {
-        let name = node
-            .child_by_field_name("name")?
-            .utf8_text(source.as_bytes())
-            .ok()?
-            .to_string();
+        let name = Self::extract_function_name(node, source, lang_name)?;
 
         let line = node.start_position().row + 1;
         let is_public = Self::is_public(node, source, lang_name, &name);
 
-        // Extract Go receiver type: func (r *Repo) Get() -> container = "Repo"
         let mut resolved_container = container.map(|s| s.to_string());
         if node.kind() == "method_declaration" && resolved_container.is_none() {
             if let Some(receiver) = node.child_by_field_name("receiver") {
@@ -580,23 +922,36 @@ impl TreeSitterParser {
                 }
             }
         }
+
         let is_async = Self::is_async(node, source);
         let return_type = node
             .child_by_field_name("return_type")
+            .or_else(|| node.child_by_field_name("type"))
             .and_then(|r| r.utf8_text(source.as_bytes()).ok())
             .map(|s| s.to_string());
 
         let params = node
             .child_by_field_name("parameters")
+            .or_else(|| node.child_by_field_name("parameter_list"))
             .map(|p| Self::parse_parameters(&p, source))
             .unwrap_or_default();
 
         let doc_comment = Self::extract_doc_comment(node, source);
 
-        let calls = node
+        let body_node = node
             .child_by_field_name("body")
+            .or_else(|| node.child_by_field_name("arrow_expression_clause"))
+            .or_else(|| node.child_by_field_name("expression"));
+
+        let calls = body_node
             .map(|body| Self::extract_calls(&body, source))
             .unwrap_or_default();
+
+        let (body_start, body_end) = if let Some(body) = body_node {
+            (body.start_byte(), body.end_byte())
+        } else {
+            (node.start_byte(), node.end_byte())
+        };
 
         let role = Self::infer_role(&name, &params);
         let purpose = Self::infer_purpose(&name, &params, &return_type);
@@ -606,7 +961,6 @@ impl TreeSitterParser {
         let body_start_line = node.start_position().row + 1;
         let body_end_line = node.end_position().row + 1;
 
-        // Detect test, trait methods, and trait defaults
         let is_test = Self::has_test_attribute(node, source);
         let is_trait_method = Self::is_trait_method(node, source);
         let is_trait_default = Self::is_trait_default_method(node, source);
@@ -620,7 +974,7 @@ impl TreeSitterParser {
             return_type,
             doc_comment,
             calls,
-            body_range: (node.start_byte(), node.end_byte()),
+            body_range: (body_start, body_end),
             body_start_line,
             body_end_line,
             container: resolved_container,
@@ -634,7 +988,6 @@ impl TreeSitterParser {
         })
     }
 
-    // Check if function has test attribute
     fn has_test_attribute(node: &Node, source: &str) -> bool {
         let start_byte = node.start_byte();
         let text_before = if start_byte > 0 && start_byte <= source.len() {
@@ -674,12 +1027,10 @@ impl TreeSitterParser {
             } else if text == "::" {
                 buf.push_str("::");
             } else if kind == "token_tree" && text.starts_with('(') {
-                // A parenthesized group right after an identifier chain = a call
                 if !buf.is_empty() && !buf.ends_with("::") {
                     calls.push(buf.clone());
                 }
                 buf.clear();
-                // Recurse into the call's arguments — they may contain calls too
                 Self::scan_token_tree_for_calls(&child, source, calls);
             } else {
                 buf.clear();
@@ -690,7 +1041,6 @@ impl TreeSitterParser {
         }
     }
 
-    // Check if this is a trait method definition
     fn is_trait_method(node: &Node, _source: &str) -> bool {
         let mut current = node.parent();
         while let Some(parent) = current {
@@ -703,12 +1053,10 @@ impl TreeSitterParser {
         false
     }
 
-    // Check if this is a trait default method (has a body in the trait)
     fn is_trait_default_method(node: &Node, source: &str) -> bool {
         if !Self::is_trait_method(node, source) {
             return false;
         }
-        // Check if it has a body (block)
         node.child_by_field_name("body").is_some()
     }
 
@@ -721,7 +1069,14 @@ impl TreeSitterParser {
                 let name = child
                     .child_by_field_name("name")
                     .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-                    .unwrap_or("unknown")
+                    .unwrap_or_else(|| {
+                        child
+                            .children(&mut child.walk())
+                            .filter(|c| c.kind() == "identifier")
+                            .last()
+                            .and_then(|c| c.utf8_text(source.as_bytes()).ok())
+                            .unwrap_or("unknown")
+                    })
                     .to_string();
 
                 let type_hint = child
@@ -740,11 +1095,8 @@ impl TreeSitterParser {
         let mut calls = Vec::new();
         Self::walk_for_calls_with_context(node, source, &mut calls, None);
         Self::walk_for_jsx_components(node, source, &mut calls);
-
-        // Extract closures and their inner calls
         Self::extract_closure_calls(node, source, &mut calls);
 
-        // Deduplicate calls
         let mut seen = std::collections::HashSet::new();
         calls.retain(|call| {
             if seen.contains(call) {
@@ -758,23 +1110,19 @@ impl TreeSitterParser {
         calls
     }
 
-    /// Extract function calls inside closures
     fn extract_closure_calls(node: &Node, source: &str, calls: &mut Vec<String>) {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             if child.kind() == "closure_expression" || child.kind() == "closure" {
-                // Extract calls inside the closure body
                 if let Some(body) = child.child_by_field_name("body") {
                     Self::walk_for_calls_with_context(&body, source, calls, None);
                 }
             }
-            // Also look for function names passed as arguments (not inside closures)
             if child.kind() == "argument_list" || child.kind() == "arguments" {
                 let mut arg_cursor = child.walk();
                 for arg in child.children(&mut arg_cursor) {
                     if arg.kind() == "identifier" || arg.kind() == "scoped_identifier" {
                         if let Ok(name) = arg.utf8_text(source.as_bytes()) {
-                            // Add as a potential function reference
                             calls.push(name.to_string());
                         }
                     }
@@ -788,8 +1136,6 @@ impl TreeSitterParser {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             if child.kind() == "jsx_element" || child.kind() == "jsx_self_closing_element" {
-                // jsx_element wraps its attrs in a separate open_tag node;
-                // jsx_self_closing_element carries them directly on the element.
                 let attr_container = child.child_by_field_name("open_tag").unwrap_or(child);
 
                 if let Some(open_tag) = child.child_by_field_name("open_tag") {
@@ -844,18 +1190,27 @@ impl TreeSitterParser {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             match child.kind() {
-                "call_expression" => {
-                    if let Some(func) = child.child_by_field_name("function") {
-                        if func.kind() == "field_expression" {
+                "call_expression" | "invocation_expression" => {
+                    if let Some(func) = child
+                        .child_by_field_name("function")
+                        .or_else(|| child.child_by_field_name("expression"))
+                    {
+                        if func.kind() == "field_expression"
+                            || func.kind() == "member_access_expression"
+                        {
                             let receiver = func
                                 .child_by_field_name("value")
+                                .or_else(|| func.child_by_field_name("expression"))
                                 .and_then(|v| v.utf8_text(source.as_bytes()).ok())
                                 .unwrap_or("")
                                 .trim();
 
-                            if let Some(method) = func.child_by_field_name("field") {
+                            if let Some(method) = func
+                                .child_by_field_name("field")
+                                .or_else(|| func.child_by_field_name("name"))
+                            {
                                 if let Ok(method_name) = method.utf8_text(source.as_bytes()) {
-                                    if receiver == "self" {
+                                    if receiver == "self" || receiver == "this" {
                                         calls.push(format!("self::{}", method_name));
                                     } else if receiver == "Self" {
                                         calls.push(format!("Self::{}", method_name));
@@ -889,7 +1244,7 @@ impl TreeSitterParser {
 
                         if let Some(method) = child.child_by_field_name("method") {
                             if let Ok(method_name) = method.utf8_text(source.as_bytes()) {
-                                if receiver_text == "self" {
+                                if receiver_text == "self" || receiver_text == "this" {
                                     calls.push(format!("self::{}", method_name));
                                 } else if receiver_text == "Self" {
                                     calls.push(format!("Self::{}", method_name));
@@ -961,17 +1316,21 @@ impl TreeSitterParser {
                         }
                     }
                 }
-                "field_expression" => {
+                "field_expression" | "member_access_expression" => {
                     if let (Some(value), Some(field)) = (
-                        child.child_by_field_name("value"),
-                        child.child_by_field_name("field"),
+                        child
+                            .child_by_field_name("value")
+                            .or_else(|| child.child_by_field_name("expression")),
+                        child
+                            .child_by_field_name("field")
+                            .or_else(|| child.child_by_field_name("name")),
                     ) {
                         if let (Ok(receiver), Ok(method_name)) = (
                             value.utf8_text(source.as_bytes()),
                             field.utf8_text(source.as_bytes()),
                         ) {
                             let receiver = receiver.trim();
-                            if receiver == "self" {
+                            if receiver == "self" || receiver == "this" {
                                 calls.push(format!("self::{}", method_name));
                             } else if receiver == "Self" {
                                 calls.push(format!("Self::{}", method_name));
@@ -1043,6 +1402,13 @@ impl TreeSitterParser {
         }
         if trimmed.starts_with("import ") {
             let rest = &trimmed[7..].trim();
+            return (rest.to_string(), vec![rest.to_string()]);
+        }
+        if trimmed.starts_with("using ") {
+            let rest = trimmed
+                .trim_start_matches("using ")
+                .trim_end_matches(';')
+                .trim();
             return (rest.to_string(), vec![rest.to_string()]);
         }
         (trimmed.to_string(), vec![])
@@ -1166,18 +1532,12 @@ impl TreeSitterParser {
                     false
                 }
             }
-            "Go" => {
-                // Go: Capitalized function/method identifier indicates export
-                func_name
-                    .chars()
-                    .next()
-                    .map(|c| c.is_uppercase())
-                    .unwrap_or(false)
-            }
-            "Python" => {
-                // Python: Non-underscore prefixed names are public module exports
-                !func_name.starts_with('_') || func_name.starts_with("__init__")
-            }
+            "Go" => func_name
+                .chars()
+                .next()
+                .map(|c| c.is_uppercase())
+                .unwrap_or(false),
+            "Python" => !func_name.starts_with('_') || func_name.starts_with("__init__"),
             "Java" => {
                 if let Ok(text) = node.utf8_text(source.as_bytes()) {
                     text.contains("public ")
@@ -1185,10 +1545,7 @@ impl TreeSitterParser {
                     false
                 }
             }
-            "Dart" => {
-                // Dart: Identifiers without a leading underscore are public
-                !func_name.starts_with('_')
-            }
+            "Dart" => !func_name.starts_with('_'),
             "PHP" => {
                 if let Ok(text) = node.utf8_text(source.as_bytes()) {
                     text.contains("public ")
@@ -1199,7 +1556,6 @@ impl TreeSitterParser {
             }
             "CPP" => {
                 if let Ok(text) = node.utf8_text(source.as_bytes()) {
-                    // Exported if declared with export, extern, or in a header
                     text.contains("extern ")
                         || text.contains("export ")
                         || !text.contains("static ")
@@ -1209,12 +1565,13 @@ impl TreeSitterParser {
             }
             "CSharp" => {
                 if let Ok(text) = node.utf8_text(source.as_bytes()) {
-                    text.contains("public ") || text.contains("protected ")
+                    text.contains("public ")
+                        || text.contains("protected ")
+                        || text.contains("internal ")
                 } else {
                     false
                 }
             }
-
             "JavaScript" | "TypeScript" => {
                 let mut curr = Some(*node);
                 while let Some(n) = curr {

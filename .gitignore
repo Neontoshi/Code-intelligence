@@ -53,6 +53,9 @@ call_graph.dot
 focused_graph.dot
 layer_summary.dot
 full_report.md
+training_repos
+data
+scripts
 
 # Dead code reports
 dead_code_report.md

@@ -27,28 +27,67 @@ impl FileCollector {
             "__pycache__",
             ".venv",
             "venv",
-            "dist",
-            "build",
             ".idea",
             ".vscode",
             ".dart_tool",
             ".pub",
             ".gradle",
+            "bin",
+            "obj",
             "vendor",
             "remote-dist",
             "assets",
         ];
 
-        let supported_extensions = ["rs", "py", "js", "jsx", "ts", "tsx", "go", "java"];
+        let supported_extensions = [
+            "rs", "py", "js", "jsx", "ts", "tsx", "go", "java", "dart", "php", "cs", "cpp", "cc",
+            "cxx", "hpp", "h",
+        ];
 
         let skip_files = [
+            // JavaScript / TypeScript / Node.js
             "package-lock.json",
             "yarn.lock",
+            "pnpm-lock.yaml",
+            "bun.lockb",
+            "bun.lock",
+            "npm-shrinkwrap.json",
+
+            // Rust
             "Cargo.lock",
-            "Gemfile.lock",
+
+            // Python
             "poetry.lock",
             "Pipfile.lock",
-            "pnpm-lock.yaml",
+            "pdm.lock",
+            "requirements.txt",
+            "requirements-dev.txt",
+
+            // Go
+            "go.sum",
+
+            // PHP / Composer
+            "composer.lock",
+
+            // Dart / Flutter / Pub
+            "pubspec.lock",
+            ".packages",
+
+            // Java / Gradle / Maven
+            "gradle-wrapper.jar",
+            "gradle-wrapper.properties",
+            "pom.xml.tag",
+
+            // C# / .NET / NuGet
+            "packages.lock.json",
+            "nuget.config",
+
+            // C++ / CMake / Build metadata
+            "CMakeCache.txt",
+            "compile_commands.json",
+
+            // Ruby (misc build tools)
+            "Gemfile.lock",
         ];
 
         let files: Vec<PathBuf> = WalkDir::new(root)

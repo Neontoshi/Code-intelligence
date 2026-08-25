@@ -704,11 +704,13 @@ impl DynamicRefDetector {
     ) where
         F: FnMut(String, Node),
     {
+        use streaming_iterator::StreamingIterator;
+
         if let Ok(query) = Query::new(language, query_str) {
             let mut cursor = QueryCursor::new();
-            let matches = cursor.matches(&query, root, source.as_bytes());
+            let mut matches = cursor.matches(&query, root, source.as_bytes());
 
-            for m in matches {
+            while let Some(m) = matches.next() {
                 for capture in m.captures {
                     let capture_name = &query.capture_names()[capture.index as usize];
                     if *capture_name == "target_str" {

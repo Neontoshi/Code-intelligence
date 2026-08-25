@@ -114,13 +114,22 @@ async fn run_export(path: &Path, output: &Path) -> Result<()> {
                 0.90,
                 "reachable",
             );
-        } else if !func.is_public && func.fan_in == 0 {
+        } else if func.is_public {
+            // Public API exports without callers in libraries are Alive library entrypoints
+            collector.add_high_confidence_example(
+                func,
+                &analysis.call_graph,
+                TrainingLabel::Alive,
+                0.80,
+                "public_export",
+            );
+        } else if func.fan_in == 0 {
             collector.add_high_confidence_example(
                 func,
                 &analysis.call_graph,
                 TrainingLabel::Dead,
                 0.85,
-                "unreachable",
+                "unreachable_private",
             );
         }
     }
