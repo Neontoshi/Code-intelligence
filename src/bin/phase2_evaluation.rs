@@ -69,6 +69,18 @@ struct Phase2Results {
     model_comparison: ModelComparisonResult,
     calibration: CalibrationMetrics,
     summary: SummaryReport,
+    reproducibility: ReproducibilityInfo,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ReproducibilityInfo {
+    command: String,
+    train_data: String,
+    val_data: String,
+    test_data: String,
+    feature_schema_version: u32,
+    timestamp: i64,
+    seed: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -243,6 +255,20 @@ fn main() -> Result<()> {
         model_comparison,
         calibration,
         summary,
+        reproducibility: ReproducibilityInfo {
+            command: format!(
+                "cargo run --bin phase2_evaluation -- --train-data {} --val-data {} --test-data {}",
+                args.train_data.display(),
+                args.val_data.display(),
+                args.test_data.display()
+            ),
+            train_data: args.train_data.display().to_string(),
+            val_data: args.val_data.display().to_string(),
+            test_data: args.test_data.display().to_string(),
+            feature_schema_version: 1,
+            timestamp: chrono::Utc::now().timestamp(),
+            seed: args.seed,
+        },
     };
 
     let results_path = args.output_dir.join("phase2_results.json");

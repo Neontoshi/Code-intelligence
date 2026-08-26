@@ -336,7 +336,6 @@ impl FunctionFeatures {
             "open",
             "close",
             "connect",
-            "disconnect",
             "send",
             "receive",
             "delete",

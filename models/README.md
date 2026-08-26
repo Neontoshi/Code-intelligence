@@ -1,131 +1,152 @@
+Here's the complete updated `models/README.md`:
+
+```markdown
 # Code Intelligence Models
 
-This directory contains trained ML models for dead code and duplicate detection.
+This directory contains trained ML models for dead code detection.
 
-## Model Format
+## Current Model
 
-Models are stored as versioned JSON files containing:
-- Model weights and bias
-- Feature schema (ensures compatibility)
-- Calibration parameters (if calibrated)
-- Training metadata (dataset info, date, etc.)
-- Performance metrics (accuracy, precision, recall, F1)
-- Threshold settings
-
-## Dead Code Detection Models
-
-### model.bin
-- **Version**: v1
+### model.bin (v3.0)
 - **Status**: ✅ Production ready
-- **Features**: 46 features (graph, signature, name, file, type, complexity)
+- **Features**: 235 features
+- **Schema Version**: 1
 - **Calibration**: Temperature scaling
-- **Performance** (on held-out test set):
-  - Accuracy: 95.3%
-  - Precision: 96.8%
-  - Recall: 92.1%
-  - F1: 94.4%
-  - FPR: 2.1%
-- **Training Data**: 15,847 examples from 23 repositories
-- **Languages**: Rust, Python, TypeScript, Go, Java
-- **Threshold**: 0.80 (optimal F1 balance)
-- **Created**: 2026-08-22
+- **Training Data**: Verified labels only (Phase 1+)
+- **Performance**: See `manifest.json` for latest metrics
+- **Threshold**: 0.80 (see `manifest.json` for authoritative value)
 
-### Legacy Models (v1-v3)
-These are kept for reference but are no longer recommended for production use.
-Use `model.bin` for best results.
+## Model History
 
-## Duplicate Detection Models
+| Version | Date | Status | Notes |
+|---------|------|--------|-------|
+| v3.0 | 2026-08-26 | ✅ Current | 235 features, verified labels |
+| v2.1 | 2026-08-21 | ❌ Obsolete | 46 features, heuristic labels |
+| v1 | 2026-08-22 | ❌ Obsolete | Initial version |
 
-### duplicate_model_v4.bin
-- **Version**: v4
-- **Status**: ✅ Production ready
-- **Features**: 101 features (function signatures + type context)
-- **Training Data**: Balanced dataset from multiple repositories
-- **Threshold**: 0.70
-- **Languages**: Rust, Python, TypeScript, Go, Java
+## Training a New Model
 
-## How to Use
+```bash
+# 1. Collect verified training data
+cargo run --bin verify_ground_truth -- --interactive
+
+# 2. Train with validation data
+cargo run --bin train -- model \
+    --data data/train.json \
+    --val-data data/val.json \
+    --output models/model.bin \
+    --precision 0.95
+```
+
+The `--val-data` flag is now **required** for proper training:
+- Validates model performance during training
+- Calibrates probability outputs
+- Tunes threshold to achieve target precision
+
+## Evaluation Report
+
+To reproduce the evaluation report:
+
+```bash
+cargo run --bin phase2_evaluation \
+    --train-data data/train.json \
+    --val-data data/val.json \
+    --test-data data/test.json \
+    --output-dir evaluation_results
+```
+
+The report will be generated at:
+- `evaluation_results/phase2_results.json` - Full metrics
+- `evaluation_results/phase2_report.md` - Human-readable report
+
+The evaluation includes:
+1. Feature ablation study (235 features)
+2. Repository-isolated evaluation
+3. Temporal evaluation (if timestamps available)
+4. Static vs ML vs Static+ML comparison
+5. Calibration metrics (ECE, Brier score, log loss)
+
+## Cleaning Up Obsolete Models
+
+```bash
+# See what would be removed
+cargo run --bin cleanup_models -- --dry-run
+
+# Actually remove obsolete models
+cargo run --bin cleanup_models
+```
+
+## Using the Model
 
 ### Dead Code Detection
+
 ```bash
-# Use the recommended v4 model
+# Direct usage
 cargo run --bin dead_code_check -- ~/project --model models/model.bin
 
-# Or via the CI command
+# Via CI command
 ci analyze ~/project --model models/model.bin
 ```
 
-### Duplicate Detection
-```bash
-cargo run --bin dedup_check -- ~/project --duplicate-model models/duplicate_model_v4.bin
+### Safety Notes
 
-# Or via the CI command
-ci dedup ~/project --ml --duplicate-model models/duplicate_model_v4.bin
-```
+⚠️ **The model NEVER recommends deletion by itself.**
 
-## Model Training
+The verdict system enforces:
+- **Dynamic/runtime evidence overrides ML predictions** - if code is used at runtime, it's marked alive regardless of ML
+- **Evidence conflict detection** - disagreements between ML, static, and dynamic evidence are flagged
+- **No ML-only deletions** - deletion recommendations require BOTH static AND ML agreement
+- **Human verification required** - all deletion recommendations need human review
 
-To train a new model:
-```bash
-# Collect training data
-cargo run --bin collect_training_data
+### Understanding Verdicts
 
-# Merge and split data
-cargo run --bin merge_all_training_data
-cargo run --bin split_repositories
+| Verdict | Meaning | Action |
+|---------|---------|--------|
+| 🟢 DEFINITELY ALIVE | Strong evidence of usage | Keep |
+| 🟡 PROBABLY ALIVE | Some evidence of usage | Keep |
+| ⚪ UNKNOWN | Insufficient evidence | Review required |
+| 🟠 PROBABLY DEAD | Some evidence of dead code | Review required |
+| 🔴 DEFINITELY DEAD | Strong evidence of dead code | Review required before deletion |
 
-# Train model
-cargo run --bin train_model -- --train-data data/train.json --val-data data/val.json
+**Note**: Even "DEFINITELY DEAD" requires human review before deletion. The system is conservative by default.
 
-# Calibrate model
-cargo run --bin calibrate_model -- --model model.bin --val-data data/val.json
+## Feature Schema
 
-# Tune threshold
-cargo run --bin tune_threshold -- --model model.bin --val-data data/val.json
+Current schema version: **1** (235 features)
 
-# Evaluate model
-cargo run --bin evaluate_metrics -- --model model.bin --test-data data/test.json
-```
-
-## Version History
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v1 | 2026-08-22 | Calibrated, balanced dataset, 46 features |
-
-## Performance Comparison
-
-| Model | Accuracy | Precision | Recall | F1 | FPR |
-|-------|----------|-----------|--------|-----|-----|
-| v4 | 95.3% | 96.8% | 92.1% | 94.4% | 2.1% |
-| v3 | 93.7% | 94.8% | 89.6% | 92.1% | 3.2% |
-| v2 | 74.8% | - | - | - | - |
-| v1 | 74.8% | - | - | - | - |
+The feature schema is versioned to ensure compatibility:
+- Models trained with schema v1 will only work with tools using schema v1
+- Schema changes require retraining
+- Check `src/ml/feature_schema.rs` for the authoritative feature list
 
 ## Troubleshooting
 
 ### "Model schema mismatch"
-The model was trained with a different feature schema. Retrain with current schema.
+The model was trained with a different feature schema. Retrain with the current schema.
 
 ### "Model not found"
 Ensure the model path is correct and the file exists.
 
 ### "Poor performance on my code"
-- Consider retraining on your specific codebase
-- Run `ci evaluate-lang` to check per-language performance
-- Collect more training data from your repositories
+- Run `cargo run --bin phase2_evaluation` to check performance
+- Check per-language performance with `analyze_features_per_language`
+- Consider collecting more verified training data from your repositories
+
+### "Model calibration is poor"
+- Run `cargo run --bin train -- calibrate --model model.bin --data data/val.json`
+- Check the ECE metric in the evaluation report
+
+## Data Requirements
+
+Training data must use **verified labels only**:
+- ✅ HumanVerified (developer reviewed)
+- ✅ GitVerified (function removal confirmed)
+- ✅ ProductionVerified (telemetry confirmed)
+- ✅ DatasetVerified (curated benchmark)
+- ⚠️ Silver (multiple heuristics agree - weak signal)
+- ❌ StaticHeuristic (NOT for training)
+- ❌ Weak (NOT for training)
+
+This prevents circular training where the model learns from its own predictions.
 ```
-
-### model.bin
-...
-- **Threshold**: 0.92 (optimal F1 balance)
-...
-## Threshold Policy
-
-The model manifest contains the authoritative threshold. When this model is loaded:
-
-1. The model's threshold is used by default
-2. Users can override with `--threshold` flag
-3. The threshold is documented in the model manifest
-
----
+```

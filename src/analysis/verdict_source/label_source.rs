@@ -40,9 +40,14 @@ impl LabelSource {
         }
     }
 
-    /// Whether this label can be used for training at all
     pub fn is_trainable(&self) -> bool {
-        self.training_weight() > 0.0
+        matches!(
+            self,
+            LabelSource::ProductionVerified
+                | LabelSource::HumanVerified
+                | LabelSource::GitVerified
+                | LabelSource::DatasetVerified
+        )
     }
 
     /// Confidence multiplier for display purposes

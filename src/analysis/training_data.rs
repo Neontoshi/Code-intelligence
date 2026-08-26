@@ -959,7 +959,7 @@ impl FunctionFeatures {
             .push_bool(self.has_atomic)
             .push_bool(self.has_parallel);
 
-        builder.build()
+        builder.build_unchecked()
     }
 }
 

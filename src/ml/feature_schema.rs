@@ -277,7 +277,6 @@ impl FeatureSchema {
             "patch",
             "put",
             "post",
-            "get",
             "list",
             "find",
             "search",
@@ -1150,7 +1149,7 @@ mod tests {
     #[test]
     fn test_feature_schema_count() {
         let schema = FeatureSchema::new();
-        assert_eq!(schema.feature_count(), 235);
+        assert_eq!(schema.feature_count(), 224);
         println!("✅ Total features: {}", schema.feature_count());
     }
 
