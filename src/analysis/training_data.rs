@@ -34,13 +34,8 @@ pub enum TrainingLabel {
     Unknown,
 }
 
-// src/analysis/training_data.rs
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionFeatures {
-    // ================================================================
-    // EXISTING FIELDS (keep all)
-    // ================================================================
     pub param_count: usize,
     pub return_count: usize,
     pub is_public: bool,
@@ -92,25 +87,18 @@ pub struct FunctionFeatures {
     pub trait_name: Option<String>,
     pub is_associated: bool,
 
-    // ================================================================
-    // NEW SIGNATURE FEATURES (3)
-    // ================================================================
+    // SIGNATURE FEATURES (3)
     pub is_generator: bool,
     pub is_static: bool,
     pub is_abstract: bool,
     pub is_override: bool,
 
-    // ================================================================
-    // NEW COMPLEXITY FEATURES (3)
-    // ================================================================
+    // COMPLEXITY FEATURES (3)
     pub cognitive_complexity: usize,
     pub line_count: usize,
     pub token_count: usize,
 
-    // ================================================================
-    // NEW NAME PATTERNS (expanded)
-    // ================================================================
-    // Additional contains patterns
+    // NAME PATTERNS (expanded)
     pub name_contains_main: bool,
     pub name_contains_start: bool,
     pub name_contains_run: bool,
@@ -155,7 +143,7 @@ pub struct FunctionFeatures {
     pub name_contains_subscribe: bool,
     pub name_contains_unsubscribe: bool,
 
-    // Starts with patterns (additional)
+    // Starts with patterns
     pub starts_with_get: bool,
     pub starts_with_set: bool,
     pub starts_with_is: bool,
@@ -173,7 +161,7 @@ pub struct FunctionFeatures {
     pub starts_with_do: bool,
     pub starts_with_apply: bool,
 
-    // Ends with patterns (additional)
+    // Ends with patterns
     pub ends_with_handler: bool,
     pub ends_with_processor: bool,
     pub ends_with_service: bool,
@@ -196,14 +184,10 @@ pub struct FunctionFeatures {
     pub ends_with_renderer: bool,
     pub ends_with_serializer: bool,
 
-    // ================================================================
-    // NEW LANGUAGE FEATURES (1 - others are in feature vector)
-    // ================================================================
+    // LANGUAGE FEATURES (1 - others are in feature vector)
     pub language: String,
 
-    // ================================================================
-    // NEW FRAMEWORK FEATURES (20)
-    // ================================================================
+    // FRAMEWORK FEATURES (20)
     pub is_flask_route: bool,
     pub is_fastapi_route: bool,
     pub is_express_route: bool,
@@ -225,9 +209,7 @@ pub struct FunctionFeatures {
     pub is_rust_trait_impl: bool,
     pub is_rust_ffi: bool,
 
-    // ================================================================
-    // NEW TYPE FEATURES (5)
-    // ================================================================
+    // TYPE FEATURES (5)
     pub has_receiver: bool,
     pub has_self: bool,
     pub has_generics: bool,
@@ -235,18 +217,14 @@ pub struct FunctionFeatures {
     pub has_type_annotation: bool,
     pub has_lifetime: bool,
 
-    // ================================================================
-    // NEW FILE CONTEXT FEATURES (4)
-    // ================================================================
+    // FILE CONTEXT FEATURES (4)
     pub is_in_lib: bool,
     pub is_in_bin: bool,
     pub is_in_proto: bool,
     pub is_in_migrations: bool,
     pub is_in_fixtures: bool,
 
-    // ================================================================
-    // NEW DECORATOR FEATURES (15)
-    // ================================================================
+    // DECORATOR FEATURES (15)
     pub has_decorator_route: bool,
     pub has_decorator_get: bool,
     pub has_decorator_post: bool,
@@ -263,9 +241,7 @@ pub struct FunctionFeatures {
     pub has_decorator_parametrize: bool,
     pub has_decorator_test: bool,
 
-    // ================================================================
-    // NEW DYNAMIC BEHAVIOR FEATURES (7)
-    // ================================================================
+    // DYNAMIC BEHAVIOR FEATURES (7)
     pub has_dynamic_call: bool,
     pub has_ffi: bool,
     pub has_macro: bool,
@@ -274,9 +250,7 @@ pub struct FunctionFeatures {
     pub has_await: bool,
     pub has_thread: bool,
 
-    // ================================================================
-    // NEW ERROR HANDLING FEATURES (6)
-    // ================================================================
+    // ERROR HANDLING FEATURES (6)
     pub has_try_catch: bool,
     pub has_result_type: bool,
     pub has_throw: bool,
@@ -284,33 +258,25 @@ pub struct FunctionFeatures {
     pub has_question_mark: bool,
     pub has_error_propagation: bool,
 
-    // ================================================================
-    // NEW DOCUMENTATION FEATURES (3)
-    // ================================================================
+    // DOCUMENTATION FEATURES (3)
     pub has_doc_comment: bool,
     pub doc_comment_length: usize,
     pub has_attr_doc: bool,
 
-    // ================================================================
-    // NEW VISIBILITY FEATURES (5)
-    // ================================================================
+    // VISIBILITY FEATURES (5)
     pub vis_pub_crate: bool,
     pub vis_pub_super: bool,
     pub vis_pub_self: bool,
     pub vis_private: bool,
     pub vis_protected: bool,
 
-    // ================================================================
-    // NEW OWNERSHIP FEATURES (4)
-    // ================================================================
+    // OWNERSHIP FEATURES (4)
     pub has_borrow: bool,
     pub has_mut_ref: bool,
     pub has_move: bool,
     pub has_clone: bool,
 
-    // ================================================================
-    // NEW PATTERN FEATURES (6)
-    // ================================================================
+    // PATTERN FEATURES (6)
     pub pattern_singleton: bool,
     pub pattern_factory: bool,
     pub pattern_builder: bool,
@@ -318,16 +284,12 @@ pub struct FunctionFeatures {
     pub pattern_strategy: bool,
     pub pattern_decorator: bool,
 
-    // ================================================================
-    // NEW CONCURRENCY FEATURES (4)
-    // ================================================================
+    // CONCURRENCY FEATURES (4)
     pub has_channel: bool,
     pub has_mutex: bool,
     pub has_atomic: bool,
     pub has_parallel: bool,
 }
-
-// src/analysis/training_data.rs
 
 // Add this implementation for FunctionFeatures
 impl Default for FunctionFeatures {
@@ -723,18 +685,14 @@ impl FunctionFeatures {
     pub fn to_feature_vector(&self) -> Vec<f64> {
         let mut builder = FeatureVectorBuilder::new();
 
-        // ================================================================
         // 1. GRAPH FEATURES (4)
-        // ================================================================
         builder
             .push_normalized(self.fan_in as f64, 50.0)
             .push_normalized(self.fan_out as f64, 50.0)
             .push_normalized(self.call_depth as f64, 10.0)
             .push_bool(self.is_cycle);
 
-        // ================================================================
         // 2. SIGNATURE FEATURES (8)
-        // ================================================================
         builder
             .push_normalized(self.param_count as f64, 10.0)
             .push_normalized(self.return_count as f64, 5.0)
@@ -745,18 +703,14 @@ impl FunctionFeatures {
             .push_bool(self.is_abstract)
             .push_bool(self.is_override);
 
-        // ================================================================
         // 3. COMPLEXITY FEATURES (4)
-        // ================================================================
         builder
             .push_normalized(self.complexity, 50.0)
             .push_normalized(self.cognitive_complexity as f64, 20.0)
             .push_normalized(self.line_count as f64, 100.0)
             .push_normalized(self.token_count as f64, 500.0);
 
-        // ================================================================
         // 4. NAME FEATURES (40)
-        // ================================================================
         // Contains patterns (30+)
         builder
             .push_bool(self.name_contains_use)
@@ -875,14 +829,10 @@ impl FunctionFeatures {
         // Name length
         builder.push_normalized(self.name_length as f64, 50.0);
 
-        // ================================================================
         // 5. LANGUAGE FEATURES (10)
-        // ================================================================
         builder.push_language(&self.language);
 
-        // ================================================================
         // 6. FRAMEWORK FEATURES (20)
-        // ================================================================
         builder
             .push_bool(self.is_flask_route)
             .push_bool(self.is_fastapi_route)
@@ -905,9 +855,7 @@ impl FunctionFeatures {
             .push_bool(self.is_rust_trait_impl)
             .push_bool(self.is_rust_ffi);
 
-        // ================================================================
         // 7. TYPE FEATURES (12)
-        // ================================================================
         builder
             .push_bool(self.is_method)
             .push_bool(self.is_trait_impl)
@@ -922,9 +870,7 @@ impl FunctionFeatures {
             .push_bool(self.has_type_annotation)
             .push_bool(self.has_lifetime);
 
-        // ================================================================
         // 8. FILE CONTEXT FEATURES (10)
-        // ================================================================
         builder
             .push_bool(self.is_in_test_file)
             .push_bool(self.is_in_benches)
@@ -937,9 +883,7 @@ impl FunctionFeatures {
             .push_bool(self.is_in_migrations)
             .push_bool(self.is_in_fixtures);
 
-        // ================================================================
         // 9. DECORATOR FEATURES (15)
-        // ================================================================
         builder
             .push_bool(self.has_decorator_route)
             .push_bool(self.has_decorator_get)
@@ -957,9 +901,7 @@ impl FunctionFeatures {
             .push_bool(self.has_decorator_parametrize)
             .push_bool(self.has_decorator_test);
 
-        // ================================================================
         // 10. DYNAMIC BEHAVIOR FEATURES (7)
-        // ================================================================
         builder
             .push_bool(self.has_dynamic_call)
             .push_bool(self.has_ffi)
@@ -969,9 +911,7 @@ impl FunctionFeatures {
             .push_bool(self.has_await)
             .push_bool(self.has_thread);
 
-        // ================================================================
         // 11. ERROR HANDLING FEATURES (6)
-        // ================================================================
         builder
             .push_bool(self.has_try_catch)
             .push_bool(self.has_result_type)
@@ -980,17 +920,13 @@ impl FunctionFeatures {
             .push_bool(self.has_question_mark)
             .push_bool(self.has_error_propagation);
 
-        // ================================================================
         // 12. DOCUMENTATION FEATURES (3)
-        // ================================================================
         builder
             .push_bool(self.has_doc_comment)
             .push_normalized(self.doc_comment_length as f64, 100.0)
             .push_bool(self.has_attr_doc);
 
-        // ================================================================
         // 13. VISIBILITY FEATURES (5)
-        // ================================================================
         builder
             .push_bool(self.vis_pub_crate)
             .push_bool(self.vis_pub_super)
@@ -998,22 +934,16 @@ impl FunctionFeatures {
             .push_bool(self.vis_private)
             .push_bool(self.vis_protected);
 
-        // ================================================================
         // 14. OWNERSHIP FEATURES (4)
-        // ================================================================
         builder
             .push_bool(self.has_borrow)
             .push_bool(self.has_mut_ref)
             .push_bool(self.has_move)
             .push_bool(self.has_clone);
 
-        // ================================================================
         // 15. GENERICS FEATURES (Already added above)
-        // ================================================================
 
-        // ================================================================
         // 16. PATTERN FEATURES (6)
-        // ================================================================
         builder
             .push_bool(self.pattern_singleton)
             .push_bool(self.pattern_factory)
@@ -1022,9 +952,7 @@ impl FunctionFeatures {
             .push_bool(self.pattern_strategy)
             .push_bool(self.pattern_decorator);
 
-        // ================================================================
         // 17. CONCURRENCY FEATURES (4)
-        // ================================================================
         builder
             .push_bool(self.has_channel)
             .push_bool(self.has_mutex)

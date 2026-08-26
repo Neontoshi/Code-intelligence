@@ -39,6 +39,16 @@ impl RustParser {
                 "impl_item",
                 "type_alias",
             ],
+            branch_kinds: vec![
+                "if_expression",
+                "if_let_expression",
+                "match_arm", // each arm is a branch, not the match_expression itself
+                "for_expression",
+                "while_expression",
+                "while_let_expression",
+                "loop_expression",
+                "try_expression", // the `?` operator
+            ],
             has_attributes: false,
             go_export_rules: false,
             has_decorators: false,

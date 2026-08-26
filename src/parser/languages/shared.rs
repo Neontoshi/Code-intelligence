@@ -19,6 +19,8 @@ pub struct LanguageParserConfig {
     pub import_kinds: Vec<&'static str>,
     /// Type node kinds
     pub type_kinds: Vec<&'static str>,
+    /// Branch node kinds
+    pub branch_kinds: Vec<&'static str>,
     /// Whether to parse C#-style attributes
     pub has_attributes: bool,
     /// Whether to parse Go-style exported names
@@ -210,6 +212,9 @@ impl SharedParser {
             (node.start_byte(), node.end_byte())
         };
 
+        let complexity = 1 + body_node
+            .map(|body| Self::count_branches(body, source, &config.branch_kinds))
+            .unwrap_or(0);
         let role = infer_role(&name);
         let purpose = infer_purpose(&name, &return_type);
 
@@ -235,6 +240,7 @@ impl SharedParser {
             body_range: (body_start, body_end),
             body_start_line: line,
             body_end_line: node.end_position().row + 1,
+            complexity,
             container: resolved_container,
             role,
             purpose,
@@ -244,6 +250,33 @@ impl SharedParser {
             is_trait_method,
             is_trait_default,
         })
+    }
+
+    /// Count real decision-point nodes under a function body (McCabe-style: 1 + branches)
+    fn count_branches(node: Node, source: &str, branch_kinds: &[&str]) -> usize {
+        let mut count = if branch_kinds.contains(&node.kind()) {
+            1
+        } else {
+            0
+        };
+
+        // && / || share the generic "binary_expression" kind with everything else,
+        // so they need a text check on the operator field rather than a kind match
+        if node.kind() == "binary_expression" {
+            if let Some(op) = node.child_by_field_name("operator") {
+                if let Ok(text) = op.utf8_text(source.as_bytes()) {
+                    if text == "&&" || text == "||" {
+                        count += 1;
+                    }
+                }
+            }
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            count += Self::count_branches(child, source, branch_kinds);
+        }
+        count
     }
 
     /// Walk the AST and extract types

@@ -28,10 +28,11 @@ pub struct FunctionInfo {
     pub params: Vec<ParamInfo>,
     pub return_type: Option<String>,
     pub doc_comment: Option<String>,
-    pub calls: Vec<String>,
+    pub calls: Vec<CallSite>,
     pub body_range: (usize, usize),
     pub body_start_line: usize,
     pub body_end_line: usize,
+    pub complexity: usize,
     pub container: Option<String>,
     pub role: FunctionRole,
     pub purpose: String,
@@ -40,6 +41,15 @@ pub struct FunctionInfo {
     pub is_test: bool,
     pub is_trait_method: bool,
     pub is_trait_default: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum CallSite {
+    SelfMethod(String),
+    Qualified(String, String),
+    OnReceiver(String, String),
+    Chained(String),
+    Bare(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -92,6 +102,18 @@ pub enum TypeKind {
 /// Main Tree-sitter parser
 pub struct TreeSitterParser {
     languages: HashMap<String, LanguageConfig>,
+}
+
+impl std::fmt::Display for CallSite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CallSite::SelfMethod(m) => write!(f, "self.{}", m),
+            CallSite::Qualified(q, m) => write!(f, "{}::{}", q, m),
+            CallSite::OnReceiver(r, m) => write!(f, "{}.{}", r, m),
+            CallSite::Chained(m) => write!(f, "().{}", m),
+            CallSite::Bare(n) => write!(f, "{}", n),
+        }
+    }
 }
 
 impl TreeSitterParser {

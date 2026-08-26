@@ -2,45 +2,13 @@
 
 use crate::graph::call_graph::{CallEdge, CallGraph, FunctionNode};
 use crate::graph::resolution::ResolutionConfidence;
-use crate::parser::tree_sitter::ParsedFile;
+use crate::parser::tree_sitter::{CallSite, ParsedFile};
 use std::collections::HashMap;
 
 /// Builds call graphs from parsed files
 pub struct CallGraphBuilder;
 
 impl CallGraphBuilder {
-    fn calculate_complexity(source: &str) -> f64 {
-        let mut complexity = 1.0;
-        let patterns = [
-            ("if", 0.5),
-            ("else", 0.3),
-            ("for", 0.5),
-            ("while", 0.5),
-            ("match", 0.5),
-            ("switch", 0.5),
-            ("case", 0.2),
-            ("&&", 0.2),
-            ("||", 0.2),
-            ("?", 0.3),
-            ("catch", 0.3),
-            ("try", 0.2),
-        ];
-
-        for (pattern, weight) in patterns {
-            let count = source.matches(pattern).count();
-            complexity += count as f64 * weight;
-        }
-
-        // Function length impact
-        let lines = source.lines().count();
-        if lines > 20 {
-            complexity += (lines - 20) as f64 * 0.05;
-        }
-
-        // Cap at reasonable maximum
-        complexity.min(50.0)
-    }
-
     /// Build a call graph from parsed files
     pub fn build(files: &[ParsedFile]) -> CallGraph {
         let mut call_graph = CallGraph::new();
@@ -70,15 +38,6 @@ impl CallGraphBuilder {
                 };
 
                 // Calculate complexity from the function body
-                let body_start = func.body_range.0;
-                let body_end = func.body_range.1;
-                let body_source = if body_end <= file.source.len() && body_start <= body_end {
-                    &file.source[body_start..body_end]
-                } else {
-                    ""
-                };
-                let complexity = Self::calculate_complexity(body_source);
-
                 let node = FunctionNode {
                     name: func.name.clone(),
                     full_path: full_path.clone(),
@@ -90,7 +49,7 @@ impl CallGraphBuilder {
                     is_async: func.is_async,
                     params: func.params.iter().map(|p| p.name.clone()).collect(),
                     returns: func.return_type.clone().into_iter().collect(),
-                    complexity,
+                    complexity: func.complexity as f64,
                     importance_score: 0.0,
                     doc_comment: func.doc_comment.clone(),
                     writes_to: Vec::new(),
@@ -262,6 +221,7 @@ impl CallGraphBuilder {
         }
 
         // Third pass: Build edges with import resolution and internal call detection
+        // Third pass: Build edges with import resolution and internal call detection
         for file in files {
             let file_path = file.path.clone();
             for func in &file.functions {
@@ -270,76 +230,38 @@ impl CallGraphBuilder {
                     None => format!("{}::{}", file_path, func.name),
                 };
                 if let Some(&caller_idx) = func_index.get(&caller_path) {
-                    for called_name in &func.calls {
+                    for call_site in &func.calls {
                         let mut found = false;
 
-                        // TIER OP: Operator overloads (index/add/sub/mul/div/rem)
-                        if called_name.starts_with("op::") {
-                            let method = called_name.trim_start_matches("op::");
-                            let expected: &[(&str, &str)] = match method {
-                                "index" => &[("Index", "index"), ("IndexMut", "index_mut")],
-                                "add" => &[("Add", "add")],
-                                "sub" => &[("Sub", "sub")],
-                                "mul" => &[("Mul", "mul")],
-                                "div" => &[("Div", "div")],
-                                "rem" => &[("Rem", "rem")],
-                                _ => &[],
-                            };
-                            for (trait_name, method_name) in expected {
-                                if let Some(idxs) = trait_method_index
-                                    .get(&(trait_name.to_string(), method_name.to_string()))
-                                {
-                                    for &callee_idx in idxs {
-                                        let target_path = call_graph[callee_idx].full_path.clone();
+                        match call_site {
+                            CallSite::SelfMethod(method_name) => {
+                                // Direct method call on self/this
+                                if let Some(container) = &func.container {
+                                    let full_path =
+                                        format!("{}::{}::{}", file_path, container, method_name);
+                                    if let Some(&callee_idx) = func_index.get(&full_path) {
                                         call_graph.add_call(
                                             caller_idx,
                                             callee_idx,
                                             CallEdge {
-                                                call_type: "operator_overload".to_string(),
+                                                call_type: "self_method".to_string(),
                                                 line: func.line,
                                             },
                                         );
                                         call_graph.set_resolution_confidence(
                                             &caller_path,
-                                            &target_path,
-                                            ResolutionConfidence::Inferred,
+                                            &full_path,
+                                            ResolutionConfidence::Exact,
                                         );
+                                        found = true;
                                     }
                                 }
                             }
-                            continue;
-                        }
 
-                        // TIER 0: Method call on self (self.method_name)
-                        if !found && called_name.starts_with("self::") {
-                            let method_name = called_name.trim_start_matches("self::");
-                            if let Some(container) = &func.container {
-                                let full_path =
-                                    format!("{}::{}::{}", file_path, container, method_name);
-                                if let Some(&callee_idx) = func_index.get(&full_path) {
-                                    call_graph.add_call(
-                                        caller_idx,
-                                        callee_idx,
-                                        CallEdge {
-                                            call_type: "self_method".to_string(),
-                                            line: func.line,
-                                        },
-                                    );
-                                    call_graph.set_resolution_confidence(
-                                        &caller_path,
-                                        &full_path,
-                                        ResolutionConfidence::Exact,
-                                    );
-                                    found = true;
-                                }
-                            }
-                        }
-
-                        // TIER 1: Qualified call (Type::method)
-                        if !found {
-                            if let Some((qualifier, method)) = called_name.rsplit_once("::") {
+                            CallSite::Qualified(qualifier, method_name) => {
+                                // Type::method() or namespace::function()
                                 let qualified_path =
-                                    format!("{}::{}::{}", file_path, qualifier, method);
+                                    format!("{}::{}::{}", file_path, qualifier, method_name);
                                 if let Some(&callee_idx) = func_index.get(&qualified_path) {
                                     call_graph.add_call(
                                         caller_idx,
@@ -355,22 +277,40 @@ impl CallGraphBuilder {
                                         ResolutionConfidence::Exact,
                                     );
                                     found = true;
+                                } else {
+                                    // Try as constructor
+                                    let constructor_path =
+                                        format!("{}::{}::{}", file_path, qualifier, method_name);
+                                    if method_name == "new"
+                                        || method_name == "default"
+                                        || method_name == "from"
+                                        || method_name == "with_capacity"
+                                    {
+                                        if let Some(&callee_idx) = func_index.get(&constructor_path)
+                                        {
+                                            call_graph.add_call(
+                                                caller_idx,
+                                                callee_idx,
+                                                CallEdge {
+                                                    call_type: "constructor".to_string(),
+                                                    line: func.line,
+                                                },
+                                            );
+                                            call_graph.set_resolution_confidence(
+                                                &caller_path,
+                                                &constructor_path,
+                                                ResolutionConfidence::Exact,
+                                            );
+                                            found = true;
+                                        }
+                                    }
                                 }
                             }
-                        }
 
-                        let simple_name = called_name.rsplit("::").next().unwrap_or(called_name);
-
-                        // TIER 1.5: IMPROVED Method calls (variable.method)
-                        if !found && called_name.contains(".") {
-                            let parts: Vec<&str> = called_name.split('.').collect();
-                            if parts.len() == 2 {
-                                let receiver = parts[0];
-                                let method = parts[1];
-
-                                // Check if receiver is a known type from variable tracking
+                            CallSite::OnReceiver(receiver, method_name) => {
+                                // variable.method() - resolve receiver type
                                 if let Some(var_type) = var_to_type.get(receiver) {
-                                    let type_method = format!("{}::{}", var_type, method);
+                                    let type_method = format!("{}::{}", var_type, method_name);
                                     if let Some(&callee_idx) = func_index.get(&type_method) {
                                         call_graph.add_call(
                                             caller_idx,
@@ -389,32 +329,13 @@ impl CallGraphBuilder {
                                     }
                                 }
 
-                                // Try to find method in the same file
-                                if !found {
-                                    let full_path = format!("{}::{}", file_path, method);
-                                    if let Some(&callee_idx) = func_index.get(&full_path) {
-                                        call_graph.add_call(
-                                            caller_idx,
-                                            callee_idx,
-                                            CallEdge {
-                                                call_type: "method_call_same_file".to_string(),
-                                                line: func.line,
-                                            },
-                                        );
-                                        call_graph.set_resolution_confidence(
-                                            &caller_path,
-                                            &full_path,
-                                            ResolutionConfidence::Exact,
-                                        );
-                                        found = true;
-                                    }
-                                }
-
                                 // Try to find method in the same container
                                 if !found {
                                     if let Some(container) = &func.container {
-                                        let full_path =
-                                            format!("{}::{}::{}", file_path, container, method);
+                                        let full_path = format!(
+                                            "{}::{}::{}",
+                                            file_path, container, method_name
+                                        );
                                         if let Some(&callee_idx) = func_index.get(&full_path) {
                                             call_graph.add_call(
                                                 caller_idx,
@@ -436,7 +357,7 @@ impl CallGraphBuilder {
 
                                 // Try to find method by name (unambiguous)
                                 if !found {
-                                    if let Some(paths) = method_to_impls.get(method) {
+                                    if let Some(paths) = method_to_impls.get(method_name) {
                                         if paths.len() == 1 {
                                             if let Some(&callee_idx) = func_index.get(&paths[0]) {
                                                 call_graph.add_call(
@@ -459,39 +380,7 @@ impl CallGraphBuilder {
                                     }
                                 }
 
-                                // Try common method patterns (heuristic)
-                                if !found {
-                                    let common_methods = vec![
-                                        "new", "default", "clone", "from", "into", "try_from",
-                                        "is_empty", "len", "capacity", "clear", "push", "pop",
-                                    ];
-                                    if common_methods.contains(&method) {
-                                        if let Some(paths) = func_by_name.get(method) {
-                                            if paths.len() == 1 {
-                                                if let Some(&callee_idx) = func_index.get(&paths[0])
-                                                {
-                                                    call_graph.add_call(
-                                                        caller_idx,
-                                                        callee_idx,
-                                                        CallEdge {
-                                                            call_type: "method_call_common"
-                                                                .to_string(),
-                                                            line: func.line,
-                                                        },
-                                                    );
-                                                    call_graph.set_resolution_confidence(
-                                                        &caller_path,
-                                                        &paths[0],
-                                                        ResolutionConfidence::Heuristic,
-                                                    );
-                                                    found = true;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Try to infer from context (if receiver is a struct literal)
+                                // Try to infer from context (if receiver is capitalized)
                                 if !found
                                     && receiver
                                         .chars()
@@ -499,7 +388,7 @@ impl CallGraphBuilder {
                                         .map(|c| c.is_uppercase())
                                         .unwrap_or(false)
                                 {
-                                    let type_method = format!("{}::{}", receiver, method);
+                                    let type_method = format!("{}::{}", receiver, method_name);
                                     if let Some(&callee_idx) = func_index.get(&type_method) {
                                         call_graph.add_call(
                                             caller_idx,
@@ -518,340 +407,220 @@ impl CallGraphBuilder {
                                     }
                                 }
                             }
-                        }
 
-                        let is_self_or_this = called_name.starts_with("self::")
-                            || called_name.starts_with("self.")
-                            || called_name.starts_with("this.")
-                            || called_name.starts_with("cls.");
-
-                        if !found && is_self_or_this {
-                            let method_name = called_name
-                                .trim_start_matches("self::")
-                                .trim_start_matches("self.")
-                                .trim_start_matches("this.")
-                                .trim_start_matches("cls.");
-
-                            if let Some(container) = &func.container {
-                                let full_path =
-                                    format!("{}::{}::{}", file_path, container, method_name);
-                                if let Some(&callee_idx) = func_index.get(&full_path) {
-                                    call_graph.add_call(
-                                        caller_idx,
-                                        callee_idx,
-                                        CallEdge {
-                                            call_type: "self_method".to_string(),
-                                            line: func.line,
-                                        },
-                                    );
-                                    call_graph.set_resolution_confidence(
-                                        &caller_path,
-                                        &full_path,
-                                        ResolutionConfidence::Exact,
-                                    );
-                                    found = true;
+                            CallSite::Chained(method_name) => {
+                                // Chained call - the inner call is resolved separately
+                                // Try to resolve just this method
+                                if let Some(paths) = method_to_impls.get(method_name) {
+                                    if paths.len() == 1 {
+                                        if let Some(&callee_idx) = func_index.get(&paths[0]) {
+                                            call_graph.add_call(
+                                                caller_idx,
+                                                callee_idx,
+                                                CallEdge {
+                                                    call_type: "chained_method".to_string(),
+                                                    line: func.line,
+                                                },
+                                            );
+                                            call_graph.set_resolution_confidence(
+                                                &caller_path,
+                                                &paths[0],
+                                                ResolutionConfidence::Heuristic,
+                                            );
+                                            found = true;
+                                        }
+                                    }
                                 }
-                            }
-                        }
 
-                        if !found && called_name.contains("::") {
-                            let is_constructor = called_name.ends_with("::new")
-                                || called_name.ends_with("::default")
-                                || called_name.ends_with("::from")
-                                || called_name.ends_with("::with_capacity");
-
-                            if is_constructor {
-                                if let Some(&callee_idx) = func_index.get(called_name) {
-                                    call_graph.add_call(
-                                        caller_idx,
-                                        callee_idx,
-                                        CallEdge {
-                                            call_type: "constructor".to_string(),
-                                            line: func.line,
-                                        },
-                                    );
-                                    call_graph.set_resolution_confidence(
-                                        &caller_path,
-                                        called_name,
-                                        ResolutionConfidence::Exact,
-                                    );
-                                    found = true;
-                                }
-                            }
-                        }
-
-                        // TIER 2: Internal calls within the same file (React callbacks, helper functions)
-                        if !found {
-                            let candidates: Vec<String> = func_by_file
-                                .get(&file_path)
-                                .unwrap_or(&vec![])
-                                .iter()
-                                .filter(|path| {
-                                    path.ends_with(&format!("::{}", simple_name))
-                                        && *path != &caller_path
-                                })
-                                .cloned()
-                                .collect();
-
-                            if candidates.len() == 1 {
-                                if let Some(&callee_idx) = func_index.get(&candidates[0]) {
-                                    call_graph.add_call(
-                                        caller_idx,
-                                        callee_idx,
-                                        CallEdge {
-                                            call_type: "internal_call".to_string(),
-                                            line: func.line,
-                                        },
-                                    );
-                                    call_graph.set_resolution_confidence(
-                                        &caller_path,
-                                        &candidates[0],
-                                        ResolutionConfidence::Exact,
-                                    );
-                                    found = true;
-                                }
-                            } else if candidates.len() > 1 {
-                                if let Some(container) = &func.container {
-                                    let container_key = format!("{}::{}", file_path, container);
-                                    if let Some(container_funcs) =
-                                        container_to_functions.get(&container_key)
-                                    {
-                                        let container_candidates: Vec<_> = candidates
-                                            .iter()
-                                            .filter(|path| container_funcs.contains(*path))
-                                            .collect();
-                                        if container_candidates.len() == 1 {
-                                            if let Some(&callee_idx) =
-                                                func_index.get(container_candidates[0])
-                                            {
-                                                call_graph.add_call(
-                                                    caller_idx,
-                                                    callee_idx,
-                                                    CallEdge {
-                                                        call_type: "internal_call".to_string(),
-                                                        line: func.line,
-                                                    },
-                                                );
-                                                call_graph.set_resolution_confidence(
-                                                    &caller_path,
-                                                    container_candidates[0],
-                                                    ResolutionConfidence::Exact,
-                                                );
-                                                found = true;
-                                            }
+                                // Try same container
+                                if !found {
+                                    if let Some(container) = &func.container {
+                                        let full_path = format!(
+                                            "{}::{}::{}",
+                                            file_path, container, method_name
+                                        );
+                                        if let Some(&callee_idx) = func_index.get(&full_path) {
+                                            call_graph.add_call(
+                                                caller_idx,
+                                                callee_idx,
+                                                CallEdge {
+                                                    call_type: "chained_container".to_string(),
+                                                    line: func.line,
+                                                },
+                                            );
+                                            call_graph.set_resolution_confidence(
+                                                &caller_path,
+                                                &full_path,
+                                                ResolutionConfidence::Inferred,
+                                            );
+                                            found = true;
                                         }
                                     }
                                 }
                             }
-                        }
 
-                        // TIER 3: Import resolution
-                        if !found {
-                            if let Some(imported_paths) = import_map.get(simple_name) {
-                                for imported_path in imported_paths {
-                                    if let Some(&callee_idx) = func_index.get(imported_path) {
-                                        call_graph.add_call(
-                                            caller_idx,
-                                            callee_idx,
-                                            CallEdge {
-                                                call_type: "imported".to_string(),
-                                                line: func.line,
-                                            },
-                                        );
-                                        call_graph.set_resolution_confidence(
-                                            &caller_path,
-                                            imported_path,
-                                            ResolutionConfidence::Inferred,
-                                        );
-                                        found = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
+                            CallSite::Bare(name) => {
+                                // Simple function call - use existing resolution
+                                let simple_name = name.as_str();
 
-                        // TIER 4: Name match across files (only if unambiguous)
-                        if !found {
-                            if let Some(paths) = func_by_name.get(simple_name) {
-                                let candidates: Vec<_> =
-                                    paths.iter().filter(|p| *p != &caller_path).collect();
+                                // TIER 2: Internal calls within the same file
+                                let candidates: Vec<String> = func_by_file
+                                    .get(&file_path)
+                                    .unwrap_or(&vec![])
+                                    .iter()
+                                    .filter(|path| {
+                                        path.ends_with(&format!("::{}", simple_name))
+                                            && *path != &caller_path
+                                    })
+                                    .cloned()
+                                    .collect();
+
                                 if candidates.len() == 1 {
-                                    if let Some(&callee_idx) = func_index.get(candidates[0]) {
+                                    if let Some(&callee_idx) = func_index.get(&candidates[0]) {
                                         call_graph.add_call(
                                             caller_idx,
                                             callee_idx,
                                             CallEdge {
-                                                call_type: "by_name".to_string(),
+                                                call_type: "internal_call".to_string(),
                                                 line: func.line,
                                             },
                                         );
                                         call_graph.set_resolution_confidence(
                                             &caller_path,
-                                            candidates[0],
-                                            ResolutionConfidence::Heuristic,
+                                            &candidates[0],
+                                            ResolutionConfidence::Exact,
+                                        );
+                                        found = true;
+                                    }
+                                } else if candidates.len() > 1 {
+                                    if let Some(container) = &func.container {
+                                        let container_key = format!("{}::{}", file_path, container);
+                                        if let Some(container_funcs) =
+                                            container_to_functions.get(&container_key)
+                                        {
+                                            let container_candidates: Vec<_> = candidates
+                                                .iter()
+                                                .filter(|path| container_funcs.contains(*path))
+                                                .collect();
+                                            if container_candidates.len() == 1 {
+                                                if let Some(&callee_idx) =
+                                                    func_index.get(container_candidates[0])
+                                                {
+                                                    call_graph.add_call(
+                                                        caller_idx,
+                                                        callee_idx,
+                                                        CallEdge {
+                                                            call_type: "internal_call".to_string(),
+                                                            line: func.line,
+                                                        },
+                                                    );
+                                                    call_graph.set_resolution_confidence(
+                                                        &caller_path,
+                                                        container_candidates[0],
+                                                        ResolutionConfidence::Exact,
+                                                    );
+                                                    found = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // TIER 3: Import resolution
+                                if !found {
+                                    if let Some(imported_paths) = import_map.get(simple_name) {
+                                        for imported_path in imported_paths {
+                                            if let Some(&callee_idx) = func_index.get(imported_path)
+                                            {
+                                                call_graph.add_call(
+                                                    caller_idx,
+                                                    callee_idx,
+                                                    CallEdge {
+                                                        call_type: "imported".to_string(),
+                                                        line: func.line,
+                                                    },
+                                                );
+                                                call_graph.set_resolution_confidence(
+                                                    &caller_path,
+                                                    imported_path,
+                                                    ResolutionConfidence::Inferred,
+                                                );
+                                                found = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // TIER 4: Name match across files (only if unambiguous)
+                                if !found {
+                                    if let Some(paths) = func_by_name.get(simple_name) {
+                                        let candidates: Vec<_> =
+                                            paths.iter().filter(|p| *p != &caller_path).collect();
+                                        if candidates.len() == 1 {
+                                            if let Some(&callee_idx) = func_index.get(candidates[0])
+                                            {
+                                                call_graph.add_call(
+                                                    caller_idx,
+                                                    callee_idx,
+                                                    CallEdge {
+                                                        call_type: "by_name".to_string(),
+                                                        line: func.line,
+                                                    },
+                                                );
+                                                call_graph.set_resolution_confidence(
+                                                    &caller_path,
+                                                    candidates[0],
+                                                    ResolutionConfidence::Heuristic,
+                                                );
+                                                found = true;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // TIER 5: Self reference (functions calling themselves)
+                                if !found && simple_name == func.name {
+                                    if let Some(&callee_idx) = func_index.get(&caller_path) {
+                                        call_graph.add_call(
+                                            caller_idx,
+                                            callee_idx,
+                                            CallEdge {
+                                                call_type: "recursive".to_string(),
+                                                line: func.line,
+                                            },
+                                        );
+                                        call_graph.set_resolution_confidence(
+                                            &caller_path,
+                                            &caller_path,
+                                            ResolutionConfidence::Exact,
                                         );
                                         found = true;
                                     }
                                 }
-                            }
-                        }
 
-                        // TIER 5: Self reference (functions calling themselves)
-                        if !found && simple_name == func.name {
-                            if let Some(&callee_idx) = func_index.get(&caller_path) {
-                                call_graph.add_call(
-                                    caller_idx,
-                                    callee_idx,
-                                    CallEdge {
-                                        call_type: "recursive".to_string(),
-                                        line: func.line,
-                                    },
-                                );
-                                call_graph.set_resolution_confidence(
-                                    &caller_path,
-                                    &caller_path,
-                                    ResolutionConfidence::Exact,
-                                );
-                                found = true;
-                            }
-                        }
-
-                        // TIER 6: Function calls within the same container
-                        if !found {
-                            if let Some(container) = &func.container {
-                                let full_path =
-                                    format!("{}::{}::{}", file_path, container, simple_name);
-                                if let Some(&callee_idx) = func_index.get(&full_path) {
-                                    call_graph.add_call(
-                                        caller_idx,
-                                        callee_idx,
-                                        CallEdge {
-                                            call_type: "container_method".to_string(),
-                                            line: func.line,
-                                        },
-                                    );
-                                    call_graph.set_resolution_confidence(
-                                        &caller_path,
-                                        &full_path,
-                                        ResolutionConfidence::Inferred,
-                                    );
-                                    found = true;
-                                }
-                            }
-                        }
-
-                        // TIER 7: Try method resolution by receiver type (heuristic)
-                        if !found && called_name.contains(".") {
-                            let parts: Vec<&str> = called_name.split('.').collect();
-                            if parts.len() == 2 {
-                                let method = parts[1];
-                                if let Some(paths) = func_by_name.get(method) {
-                                    for path in paths {
-                                        if path.starts_with(&file_path) && path != &caller_path {
-                                            if let Some(&callee_idx) = func_index.get(path) {
-                                                call_graph.add_call(
-                                                    caller_idx,
-                                                    callee_idx,
-                                                    CallEdge {
-                                                        call_type: "method_call_heuristic"
-                                                            .to_string(),
-                                                        line: func.line,
-                                                    },
-                                                );
-                                                call_graph.set_resolution_confidence(
-                                                    &caller_path,
-                                                    path,
-                                                    ResolutionConfidence::Heuristic,
-                                                );
-                                                found = true;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // TIER 8: Trait method resolution (for dynamic dispatch)
-                        if !found && called_name.contains("::") {
-                            let parts: Vec<&str> = called_name.split("::").collect();
-                            if parts.len() >= 2 {
-                                let trait_name = parts[0];
-                                let method_name = parts[parts.len() - 1];
-
-                                let matched_trait = call_graph.node_indices().find_map(|idx| {
-                                    let func_node = &call_graph[idx];
-                                    if func_node.name == method_name
-                                        && func_node.trait_impl.is_some()
-                                    {
-                                        if let Some(trait_impl) = &func_node.trait_impl {
-                                            if trait_impl.contains(trait_name)
-                                                || trait_name.contains(trait_impl)
-                                            {
-                                                return Some((idx, func_node.full_path.clone()));
-                                            }
-                                        }
-                                    }
-                                    None
-                                });
-
-                                if let Some((target_idx, target_full_path)) = matched_trait {
-                                    call_graph.add_call(
-                                        caller_idx,
-                                        target_idx,
-                                        CallEdge {
-                                            call_type: "trait_method".to_string(),
-                                            line: func.line,
-                                        },
-                                    );
-                                    call_graph.set_resolution_confidence(
-                                        &caller_path,
-                                        &target_full_path,
-                                        ResolutionConfidence::Ambiguous,
-                                    );
-                                    found = true;
-                                }
-                            }
-                        }
-
-                        // TIER 9: Higher-order function calls
-                        if !found
-                            && (called_name.contains("unwrap_or_else")
-                                || called_name.contains("unwrap_or")
-                                || called_name.contains("map")
-                                || called_name.contains("and_then")
-                                || called_name.contains("or_else")
-                                || called_name.contains("then")
-                                || called_name.contains("map_or")
-                                || called_name.contains("map_or_else")
-                                || called_name.contains("unwrap")
-                                || called_name.contains("expect")
-                                || called_name.contains("unwrap_or_default"))
-                        {
-                            for other_call in &func.calls {
-                                if other_call != called_name
-                                    && !other_call.contains('.')
-                                    && !other_call.contains("::")
-                                {
-                                    if let Some(paths) = func_by_name.get(other_call) {
-                                        if paths.len() == 1 {
-                                            if let Some(&callee_idx) = func_index.get(&paths[0]) {
-                                                call_graph.add_call(
-                                                    caller_idx,
-                                                    callee_idx,
-                                                    CallEdge {
-                                                        call_type: "higher_order".to_string(),
-                                                        line: func.line,
-                                                    },
-                                                );
-                                                call_graph.set_resolution_confidence(
-                                                    &caller_path,
-                                                    &paths[0],
-                                                    ResolutionConfidence::Heuristic,
-                                                );
-                                                found = true;
-                                                break;
-                                            }
+                                // TIER 6: Function calls within the same container
+                                if !found {
+                                    if let Some(container) = &func.container {
+                                        let full_path = format!(
+                                            "{}::{}::{}",
+                                            file_path, container, simple_name
+                                        );
+                                        if let Some(&callee_idx) = func_index.get(&full_path) {
+                                            call_graph.add_call(
+                                                caller_idx,
+                                                callee_idx,
+                                                CallEdge {
+                                                    call_type: "container_method".to_string(),
+                                                    line: func.line,
+                                                },
+                                            );
+                                            call_graph.set_resolution_confidence(
+                                                &caller_path,
+                                                &full_path,
+                                                ResolutionConfidence::Inferred,
+                                            );
+                                            found = true;
                                         }
                                     }
                                 }
@@ -859,13 +628,19 @@ impl CallGraphBuilder {
                         }
 
                         if !found {
-                            call_graph.mark_unresolved(&caller_path, called_name);
+                            let display_name = match call_site {
+                                CallSite::SelfMethod(m) => format!("self.{}", m),
+                                CallSite::Qualified(q, m) => format!("{}::{}", q, m),
+                                CallSite::OnReceiver(r, m) => format!("{}.{}", r, m),
+                                CallSite::Chained(m) => format!("().{}", m),
+                                CallSite::Bare(n) => n.clone(),
+                            };
+                            call_graph.mark_unresolved(&caller_path, &display_name);
                         }
                     }
                 }
             }
         }
-
         call_graph
     }
 

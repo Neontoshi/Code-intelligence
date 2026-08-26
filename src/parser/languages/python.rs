@@ -38,6 +38,16 @@ impl PythonParser {
             ],
             import_kinds: vec!["import_statement", "import_from_statement"],
             type_kinds: vec!["class_definition"],
+            branch_kinds: vec![
+                "if_statement",
+                "elif_clause",
+                "for_statement",
+                "while_statement",
+                "except_clause",
+                "match_statement",
+                "case_clause",
+            ],
+
             has_attributes: false,
             go_export_rules: false,
             has_decorators: true,

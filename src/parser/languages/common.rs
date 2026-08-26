@@ -1,7 +1,5 @@
 // src/parser/languages/common.rs
 
-//! Common utilities for language parsers
-
 use crate::parser::tree_sitter::{FunctionRole, ParamInfo};
 use tree_sitter::Node;
 
@@ -119,7 +117,7 @@ pub fn extract_function_name(node: &Node, source: &str, lang_name: &str) -> Opti
 }
 
 /// Extract calls from a node
-pub fn extract_calls(node: &Node, source: &str) -> Vec<String> {
+pub fn extract_calls(node: &Node, source: &str) -> Vec<crate::parser::tree_sitter::CallSite> {
     let mut calls = Vec::new();
     walk_for_calls(node, source, &mut calls);
     let mut seen = std::collections::HashSet::new();
@@ -134,7 +132,13 @@ pub fn extract_calls(node: &Node, source: &str) -> Vec<String> {
     calls
 }
 
-fn walk_for_calls(node: &Node, source: &str, calls: &mut Vec<String>) {
+fn walk_for_calls(
+    node: &Node,
+    source: &str,
+    calls: &mut Vec<crate::parser::tree_sitter::CallSite>,
+) {
+    use crate::parser::tree_sitter::CallSite;
+
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         match child.kind() {
@@ -143,32 +147,130 @@ fn walk_for_calls(node: &Node, source: &str, calls: &mut Vec<String>) {
                     .child_by_field_name("function")
                     .or_else(|| child.child_by_field_name("expression"))
                 {
-                    if let Ok(name) = func.utf8_text(source.as_bytes()) {
-                        calls.push(name.to_string());
-                    }
+                    extract_call_site(&func, source, calls);
                 }
             }
             "method_call" | "method_invocation" => {
                 if let Some(method) = child.child_by_field_name("method") {
                     if let Ok(name) = method.utf8_text(source.as_bytes()) {
-                        calls.push(name.to_string());
-                    }
-                }
-            }
-            "scoped_identifier" | "qualified_identifier" => {
-                if let Ok(text) = child.utf8_text(source.as_bytes()) {
-                    if text.contains("::") {
-                        if let Some(parent) = child.parent() {
-                            if parent.kind() == "call_expression" {
-                                calls.push(text.to_string());
-                            }
-                        }
+                        calls.push(CallSite::Bare(name.to_string()));
                     }
                 }
             }
             _ => {}
         }
         walk_for_calls(&child, source, calls);
+    }
+}
+
+fn extract_call_site(
+    func: &Node,
+    source: &str,
+    calls: &mut Vec<crate::parser::tree_sitter::CallSite>,
+) {
+    use crate::parser::tree_sitter::CallSite;
+
+    match func.kind() {
+        // Bare function call: foo()
+        "identifier" | "property_identifier" | "type_identifier" => {
+            if let Ok(name) = func.utf8_text(source.as_bytes()) {
+                let clean = name.trim();
+                if !clean.is_empty() {
+                    calls.push(CallSite::Bare(clean.to_string()));
+                }
+            }
+        }
+
+        // Qualified call: Type::method() or namespace::function()
+        "scoped_identifier" | "qualified_identifier" => {
+            if let (Some(scope), Some(name)) = (
+                func.child_by_field_name("scope"),
+                func.child_by_field_name("name"),
+            ) {
+                if let (Ok(q), Ok(m)) = (
+                    scope.utf8_text(source.as_bytes()),
+                    name.utf8_text(source.as_bytes()),
+                ) {
+                    let qualifier = q.trim();
+                    let method = m.trim();
+                    if !qualifier.is_empty() && !method.is_empty() {
+                        calls.push(CallSite::Qualified(
+                            qualifier.to_string(),
+                            method.to_string(),
+                        ));
+                    }
+                }
+            } else if let Ok(text) = func.utf8_text(source.as_bytes()) {
+                // Fallback: split on ::
+                if let Some((qualifier, method)) = text.rsplit_once("::") {
+                    let q = qualifier.trim();
+                    let m = method.trim();
+                    if !q.is_empty() && !m.is_empty() {
+                        calls.push(CallSite::Qualified(q.to_string(), m.to_string()));
+                    }
+                }
+            }
+        }
+
+        // Method call: receiver.method() or self.method()
+        "field_expression" | "member_expression" => {
+            let receiver = func
+                .child_by_field_name("object")
+                .or_else(|| func.child_by_field_name("receiver"));
+            let method = func
+                .child_by_field_name("field")
+                .or_else(|| func.child_by_field_name("property"));
+
+            if let (Some(recv), Some(meth)) = (receiver, method) {
+                if let (Ok(recv_text), Ok(meth_text)) = (
+                    recv.utf8_text(source.as_bytes()),
+                    meth.utf8_text(source.as_bytes()),
+                ) {
+                    let r = recv_text.trim();
+                    let m = meth_text.trim();
+
+                    if r.is_empty() || m.is_empty() {
+                        return;
+                    }
+
+                    // Check if receiver is self/this
+                    if r == "self" || r == "this" || r == "cls" {
+                        calls.push(CallSite::SelfMethod(m.to_string()));
+                    } else if recv.kind() == "call_expression"
+                        || recv.kind() == "invocation_expression"
+                    {
+                        // Chained call: foo().bar()
+                        calls.push(CallSite::Chained(m.to_string()));
+                    } else {
+                        // Regular method call on a variable/object
+                        calls.push(CallSite::OnReceiver(r.to_string(), m.to_string()));
+                    }
+                }
+            }
+        }
+
+        // Chained call: the function field itself is a call expression
+        "call_expression" | "invocation_expression" => {
+            // This is foo().bar() - extract method name from the outer expression
+            if let Ok(text) = func.utf8_text(source.as_bytes()) {
+                if let Some(last_dot) = text.rfind('.') {
+                    let method = text[last_dot + 1..].trim();
+                    if !method.is_empty() && !method.contains('(') {
+                        calls.push(CallSite::Chained(method.to_string()));
+                    }
+                }
+            }
+        }
+
+        // Fallback: try to extract something useful
+        _ => {
+            if let Ok(text) = func.utf8_text(source.as_bytes()) {
+                let clean = text.trim();
+                if !clean.is_empty() && !clean.contains('(') && !clean.contains(')') {
+                    calls.push(CallSite::Bare(clean.to_string()));
+                }
+            }
+        }
     }
 }
 

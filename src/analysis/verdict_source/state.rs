@@ -270,6 +270,8 @@ pub struct VerdictEngine {
 }
 
 impl VerdictEngine {
+    const ML_WEIGHT: f64 = 0.4;
+
     pub fn new(config: VerdictConfig) -> Self {
         Self {
             config,
@@ -466,7 +468,7 @@ impl VerdictEngine {
                     } else {
                         SignalDirection::SupportsAlive
                     },
-                    weight: 0.4,
+                    weight: Self::ML_WEIGHT,
                     explanation: format!(
                         "ML model predicts {:.1}% chance of being dead",
                         dead_prob * 100.0
@@ -494,7 +496,7 @@ impl VerdictEngine {
 
         // 4. Combined score
         let combined_score = if let Some(ml) = ml_probability {
-            normalized_static * 0.6 + ml * 0.4
+            normalized_static * (1.0 - Self::ML_WEIGHT) + ml * Self::ML_WEIGHT
         } else {
             normalized_static
         };

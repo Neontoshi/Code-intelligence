@@ -164,7 +164,7 @@ impl JsonOutput {
         };
 
         report["dead_code"] = json!({
-            "unused_functions": Vec::<String>::new(), // Use verdict-based detection instead
+            "unused_functions": Vec::<String>::new(),
             "dead_modules": dead_modules,
             "ratio": dead_ratio,
             "unused_count": stats.dead,
@@ -208,7 +208,7 @@ impl JsonOutput {
             let all_calls: Vec<String> = file
                 .functions
                 .iter()
-                .flat_map(|f| f.calls.clone())
+                .flat_map(|f| f.calls.iter().map(|c| c.to_string()))
                 .collect::<std::collections::HashSet<_>>()
                 .into_iter()
                 .collect();
