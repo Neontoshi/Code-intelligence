@@ -149,9 +149,11 @@ path = "src/bin/dead_code_dashboard.rs"
 name = "dedup_check"
 path = "src/bin/dedup_check.rs"
 
+# Phase 2 Evaluation (replaces evaluate, feature_ablation, temporal_evaluation,
+# split_repositories, and model_comparison)
 [[bin]]
-name = "evaluate"
-path = "src/bin/evaluate.rs"
+name = "phase2_evaluation"
+path = "src/bin/phase2_evaluation.rs"
 
 [[bin]]
 name = "train"
