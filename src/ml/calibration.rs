@@ -33,7 +33,6 @@ pub struct CalibrationBin {
     pub count: usize,
 }
 
-// ⭐ FIX: Removed IsotonicRegression from the enum
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum CalibrationMethod {
     TemperatureScaling,

@@ -29,7 +29,6 @@ pub enum DependencyType {
     Local,
 }
 
-// ⭐ The macro creates the struct and new() function
 define_graph!(DependencyGraph, DependencyNode, DependencyEdge);
 
 // ⭐ All other methods go in a separate impl block

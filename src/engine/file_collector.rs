@@ -75,7 +75,7 @@ impl FileCollector {
             // Android / Gradle
             ".gradle",
             "gradle",
-            "build", // Android build output
+            "build",
             "libs",
             "generated",
             "intermediates",

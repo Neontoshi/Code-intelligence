@@ -34,6 +34,13 @@ pub struct FunctionFeatures {
     pub normalized_tokens: Vec<String>,
     pub body: Option<String>,
     pub doc_comment: Option<String>,
+    pub is_method: bool,
+    pub container: Option<String>,
+    pub trait_impl: Option<String>,
+    pub is_trait_method: bool,
+    pub is_trait_default: bool,
+    pub is_test: bool,
+    pub is_override: bool,
 }
 
 impl FunctionFeatures {
@@ -41,7 +48,7 @@ impl FunctionFeatures {
     pub fn from_function(func: &FunctionNode, source: Option<&str>, language: &str) -> Self {
         let body = source.map(|s| s.to_string());
 
-        // Compute hashes
+        // 1. COMPUTE HASHES
         let signature_hash = compute_signature_hash(func);
         let ast_hash = if let Some(src) = source {
             compute_ast_hash(func, src)
@@ -54,42 +61,45 @@ impl FunctionFeatures {
             compute_exact_hash(func, None)
         };
 
-        // Compute complexity
+        // 2. COMPUTE COMPLEXITY
         let (complexity, cyclomatic, nesting) = if let Some(src) = source {
             Self::compute_complexity_metrics(src)
         } else {
             (1.0, 1.0, 0)
         };
 
-        // Compute tokens
+        // 3. COMPUTE TOKENS
         let normalized_tokens = if let Some(src) = source {
             Self::normalize_tokens(src)
         } else {
             Vec::new()
         };
 
-        // Build feature vector
-        let feature_vector = Self::build_feature_vector(
-            &signature_hash,
-            &ast_hash,
-            func,
-            complexity,
-            &normalized_tokens,
-        );
-
-        // Line count
+        // 4. COMPUTE BASIC METRICS
         let line_count = source.map(|s| s.lines().count()).unwrap_or(1);
         let token_count = source.map(|s| s.split_whitespace().count()).unwrap_or(0);
 
-        Self {
+        // 5. COMPUTE TYPE-RELATED FIELDS
+        let is_method = func
+            .params
+            .iter()
+            .any(|p| p == "self" || p == "&self" || p == "&mut self");
+
+        let container = None;
+
+        let trait_impl = func.trait_impl.clone();
+        let is_override = func.is_override();
+
+        // 6. CREATE THE FEATURES STRUCT (WITHOUT FEATURE_VECTOR YET)
+        let mut features = Self {
             full_path: func.full_path.clone(),
             name: func.name.clone(),
             file: func.file.clone(),
             line: func.line,
 
-            signature_hash,
-            ast_hash,
-            body_hash,
+            signature_hash: signature_hash.clone(),
+            ast_hash: ast_hash.clone(),
+            body_hash: body_hash.clone(),
 
             complexity,
             cyclomatic_complexity: cyclomatic,
@@ -110,12 +120,39 @@ impl FunctionFeatures {
             language: language.to_string(),
             layer: func.layer.clone(),
 
-            feature_vector,
-            normalized_tokens,
+            // ⭐ These will be set after building the feature vector
+            feature_vector: Vec::new(),
+            normalized_tokens: normalized_tokens.clone(),
 
             body,
             doc_comment: func.doc_comment.clone(),
-        }
+
+            // ⭐ Type-related fields
+            is_method,
+            container,
+            trait_impl: trait_impl.clone(),
+            is_trait_method: func.is_trait_method,
+            is_trait_default: func.is_trait_default,
+            is_test: func.is_test,
+            is_override,
+        };
+
+        // 7. BUILD THE FEATURE VECTOR (USING THE CREATED FEATURES)
+        let feature_vector = Self::build_feature_vector(
+            &signature_hash,
+            &ast_hash,
+            func,
+            complexity,
+            &features.normalized_tokens,
+            language,
+            source,
+            &features,
+        );
+
+        // 8. SET THE FEATURE VECTOR AND RETURN
+        features.feature_vector = feature_vector;
+
+        features
     }
 
     // Find this function and add bounds checking:
@@ -221,77 +258,863 @@ impl FunctionFeatures {
     }
 
     fn build_feature_vector(
-        signature_hash: &str,
-        ast_hash: &str,
+        _signature_hash: &str,
+        _ast_hash: &str,
         func: &FunctionNode,
         complexity: f64,
-        tokens: &[String],
+        _tokens: &[String],
+        language: &str,
+        source: Option<&str>,
+        features: &FunctionFeatures,
     ) -> Vec<f64> {
-        let mut features = Vec::new();
+        use crate::ml::feature_schema::FeatureVectorBuilder;
 
-        // 1. Complexity
-        features.push(complexity / 50.0);
+        let mut builder = FeatureVectorBuilder::new();
 
-        // 2. Parameter count
-        features.push(func.params.len() as f64 / 10.0);
+        // 1. GRAPH FEATURES (4)
+        builder
+            .push_normalized(func.fan_in as f64, 50.0)
+            .push_normalized(func.fan_out as f64, 50.0)
+            .push_normalized(func.depth as f64, 10.0)
+            .push_bool(func.is_cycle);
 
-        // 3. Return count
-        features.push(func.returns.len() as f64 / 5.0);
+        // 2. SIGNATURE FEATURES (8)
+        builder
+            .push_normalized(func.params.len() as f64, 10.0)
+            .push_normalized(func.returns.len() as f64, 5.0)
+            .push_bool(func.is_public)
+            .push_bool(func.is_async)
+            .push_bool(Self::is_generator(source))
+            .push_bool(Self::is_static_method(func))
+            .push_bool(Self::is_abstract_method(func))
+            .push_bool(Self::is_override_method(func));
 
-        // 4. Public/Async flags
-        features.push(if func.is_public { 1.0 } else { 0.0 });
-        features.push(if func.is_async { 1.0 } else { 0.0 });
+        // 3. COMPLEXITY FEATURES (4)
+        let cognitive = Self::calculate_cognitive_complexity(source);
+        let line_count = source.map(|s| s.lines().count()).unwrap_or(0);
+        let token_count = source.map(|s| s.split_whitespace().count()).unwrap_or(0);
 
-        // 5. Token count
-        features.push(tokens.len() as f64 / 100.0);
+        builder
+            .push_normalized(complexity, 50.0)
+            .push_normalized(cognitive as f64, 20.0)
+            .push_normalized(line_count as f64, 100.0)
+            .push_normalized(token_count as f64, 500.0);
 
-        // 6. Fan-in/Fan-out
-        features.push(func.fan_in as f64 / 10.0);
-        features.push(func.fan_out as f64 / 10.0);
+        // 4. NAME FEATURES (110)
+        let name_lower = func.name.to_lowercase();
 
-        // 7. Hash entropy (simplified)
-        features.push(signature_hash.chars().take(8).filter(|&c| c > '7').count() as f64 / 8.0);
-        features.push(ast_hash.chars().take(8).filter(|&c| c > '7').count() as f64 / 8.0);
+        // Contains patterns
+        let contains_patterns = vec![
+            "use",
+            "test",
+            "init",
+            "get",
+            "set",
+            "new",
+            "create",
+            "build",
+            "parse",
+            "validate",
+            "handle",
+            "process",
+            "convert",
+            "commit",
+            "reveal",
+            "submit",
+            "upload",
+            "download",
+            "fetch",
+            "verify",
+            "audit",
+            "main",
+            "start",
+            "run",
+            "load",
+            "save",
+            "read",
+            "write",
+            "open",
+            "close",
+            "connect",
+            "disconnect",
+            "send",
+            "receive",
+            "delete",
+            "update",
+            "patch",
+            "put",
+            "post",
+            "list",
+            "find",
+            "search",
+            "filter",
+            "map",
+            "reduce",
+            "clone",
+            "copy",
+            "move",
+            "swap",
+            "sort",
+            "is",
+            "has",
+            "can",
+            "should",
+            "will",
+            "do",
+            "make",
+            "take",
+            "give",
+            "call",
+            "apply",
+            "register",
+            "unregister",
+            "subscribe",
+            "unsubscribe",
+        ];
 
-        features
+        for pattern in contains_patterns {
+            builder.push_bool(name_lower.contains(pattern));
+        }
+
+        // Starts with patterns
+        let start_patterns = vec![
+            "use", "test", "bench", "get", "set", "is", "has", "can", "should", "will", "on",
+            "handle", "process", "parse", "create", "build", "make", "do", "apply",
+        ];
+
+        for pattern in start_patterns {
+            builder.push_bool(func.name.starts_with(pattern));
+        }
+
+        // Ends with patterns
+        let end_patterns = vec![
+            "test",
+            "handler",
+            "processor",
+            "service",
+            "repository",
+            "controller",
+            "manager",
+            "factory",
+            "builder",
+            "validator",
+            "converter",
+            "mapper",
+            "filter",
+            "loader",
+            "saver",
+            "creator",
+            "updater",
+            "deleter",
+            "finder",
+            "parser",
+            "renderer",
+            "serializer",
+        ];
+
+        for pattern in end_patterns {
+            builder.push_bool(func.name.ends_with(pattern));
+        }
+
+        // Name length
+        builder.push_normalized(func.name.len() as f64, 50.0);
+
+        // 5. LANGUAGE FEATURES (10)
+        builder.push_language(language);
+
+        // 6. FRAMEWORK FEATURES (23)
+        builder
+            .push_bool(Self::is_flask_route(func, source))
+            .push_bool(Self::is_fastapi_route(func, source))
+            .push_bool(Self::is_express_route(func, source))
+            .push_bool(Self::is_nextjs_route(func, source))
+            .push_bool(Self::is_spring_controller(func, source))
+            .push_bool(Self::is_aspnet_controller(func, source))
+            .push_bool(Self::is_laravel_controller(func, source))
+            .push_bool(Self::is_django_view(func, source))
+            .push_bool(Self::is_rails_action(func, source))
+            .push_bool(Self::is_react_component(func))
+            .push_bool(Self::is_react_hook(func))
+            .push_bool(Self::is_vue_component(func, source))
+            .push_bool(Self::is_svelte_component(func, source))
+            .push_bool(Self::is_flutter_widget(func))
+            .push_bool(Self::is_flutter_state(func))
+            .push_bool(Self::is_go_init(func))
+            .push_bool(Self::is_go_interface(func))
+            .push_bool(Self::is_go_goroutine(func, source))
+            .push_bool(Self::is_rust_trait_impl(func))
+            .push_bool(Self::is_rust_ffi(func, source));
+
+        // 7. TYPE FEATURES (12)
+        builder
+            .push_bool(features.is_method)
+            .push_bool(features.container.is_some())
+            .push_bool(func.trait_impl.is_some())
+            .push_bool(Self::has_receiver(func))
+            .push_bool(Self::has_self(func))
+            .push_opt(
+                features.container.as_ref().map(|c| c.len() as f64 / 20.0),
+                0.0,
+            )
+            .push_opt(func.trait_impl.as_ref().map(|t| t.len() as f64 / 20.0), 0.0)
+            .push_bool(Self::type_trait_match(features))
+            .push_bool(Self::has_generics(func, source))
+            .push_normalized(Self::generic_count(func, source) as f64, 5.0)
+            .push_bool(Self::has_type_annotation(func, source))
+            .push_bool(Self::has_lifetime(func, source));
+
+        // 8. FILE CONTEXT FEATURES (10)
+        let file_path = &func.file;
+        builder
+            .push_bool(Self::is_in_test_file(file_path))
+            .push_bool(Self::is_in_benches(file_path))
+            .push_bool(Self::is_in_meta(file_path))
+            .push_bool(Self::is_in_examples(file_path))
+            .push_bool(Self::is_generated(file_path))
+            .push_bool(Self::is_in_lib(file_path))
+            .push_bool(Self::is_in_bin(file_path))
+            .push_bool(Self::is_in_proto(file_path))
+            .push_bool(Self::is_in_migrations(file_path))
+            .push_bool(Self::is_in_fixtures(file_path));
+
+        // 9. DECORATOR FEATURES (19)
+        let decorator_patterns = vec![
+            "route",
+            "get",
+            "post",
+            "put",
+            "delete",
+            "patch",
+            "override",
+            "staticmethod",
+            "classmethod",
+            "property",
+            "cached_property",
+            "pytest",
+            "fixture",
+            "parametrize",
+            "test",
+        ];
+
+        for pattern in decorator_patterns {
+            builder.push_bool(Self::has_decorator(func, pattern));
+        }
+
+        // 10. DYNAMIC BEHAVIOR FEATURES (7)
+        builder
+            .push_bool(Self::has_dynamic_call(source))
+            .push_bool(Self::has_ffi(func, source))
+            .push_bool(Self::has_macro(func, source))
+            .push_bool(Self::has_closure(source))
+            .push_bool(Self::has_yield(source))
+            .push_bool(Self::has_await(source))
+            .push_bool(Self::has_thread(source));
+
+        // 11. ERROR HANDLING FEATURES (6)
+        builder
+            .push_bool(Self::has_try_catch(source))
+            .push_bool(Self::has_result_type(func))
+            .push_bool(Self::has_throw(source))
+            .push_bool(Self::has_panic(source))
+            .push_bool(Self::has_question_mark(source))
+            .push_bool(Self::has_error_propagation(source));
+
+        // 12. DOCUMENTATION FEATURES (3)
+        let doc_len = func.doc_comment.as_ref().map(|d| d.len()).unwrap_or(0);
+        builder
+            .push_bool(func.doc_comment.is_some())
+            .push_normalized(doc_len as f64, 100.0)
+            .push_bool(Self::has_attr_doc(func, source));
+
+        // 13. VISIBILITY FEATURES (5)
+        builder
+            .push_bool(Self::is_pub_crate(func, source))
+            .push_bool(Self::is_pub_super(func, source))
+            .push_bool(Self::is_pub_self(func, source))
+            .push_bool(Self::is_private(func))
+            .push_bool(Self::is_protected(func, source));
+
+        // 14. OWNERSHIP FEATURES (4)
+        builder
+            .push_bool(Self::has_borrow(source))
+            .push_bool(Self::has_mut_ref(source))
+            .push_bool(Self::has_move(source))
+            .push_bool(Self::has_clone(source));
+
+        // 15. GENERICS FEATURES (Already added above)
+
+        // 16. PATTERN FEATURES (6)
+        builder
+            .push_bool(Self::is_singleton_pattern(func, source))
+            .push_bool(Self::is_factory_pattern(func, source))
+            .push_bool(Self::is_builder_pattern(func, source))
+            .push_bool(Self::is_observer_pattern(func, source))
+            .push_bool(Self::is_strategy_pattern(func, source))
+            .push_bool(Self::is_decorator_pattern(func, source));
+
+        // 17. CONCURRENCY FEATURES (4)
+        builder
+            .push_bool(Self::has_channel(source))
+            .push_bool(Self::has_mutex(source))
+            .push_bool(Self::has_atomic(source))
+            .push_bool(Self::has_parallel(source));
+
+        // Total: 224 features!
+        builder.build()
     }
 
-    /// Cosine similarity between two feature vectors
-    pub fn cosine_similarity(&self, other: &FunctionFeatures) -> f64 {
-        let a = &self.feature_vector;
-        let b = &other.feature_vector;
+    // ================================================================
+    // HELPER METHODS FOR FEATURE EXTRACTION
+    // ================================================================
 
-        if a.is_empty() || b.is_empty() || a.len() != b.len() {
-            return 0.0;
-        }
+    fn is_generator(source: Option<&str>) -> bool {
+        source.map(|s| s.contains("yield")).unwrap_or(false)
+    }
 
-        let dot: f64 = a.iter().zip(b).map(|(x, y)| x * y).sum();
-        let norm_a: f64 = a.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
-        let norm_b: f64 = b.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
+    fn is_static_method(func: &FunctionNode) -> bool {
+        func.decorators
+            .iter()
+            .any(|d| d.contains("staticmethod") || d.contains("classmethod"))
+            || func.name.contains("static")
+    }
 
-        if norm_a > 0.0 && norm_b > 0.0 {
-            dot / (norm_a * norm_b)
+    fn is_abstract_method(func: &FunctionNode) -> bool {
+        func.decorators
+            .iter()
+            .any(|d| d.contains("abstract") || d.contains("virtual"))
+            || func.is_trait_method
+    }
+
+    fn is_override_method(func: &FunctionNode) -> bool {
+        func.decorators.iter().any(|d| d.contains("override")) || func.is_override()
+    }
+
+    fn calculate_cognitive_complexity(source: Option<&str>) -> usize {
+        if let Some(src) = source {
+            let mut depth: usize = 0;
+            let mut max_depth = 0;
+            for line in src.lines() {
+                if line.contains('{') {
+                    depth += 1;
+                }
+                if line.contains('}') {
+                    depth = depth.saturating_sub(1);
+                }
+                max_depth = max_depth.max(depth);
+            }
+            max_depth
         } else {
-            0.0
+            0
         }
     }
 
-    /// Token overlap similarity
-    pub fn token_overlap(&self, other: &FunctionFeatures) -> f64 {
-        let a: std::collections::HashSet<_> = self.normalized_tokens.iter().collect();
-        let b: std::collections::HashSet<_> = other.normalized_tokens.iter().collect();
+    fn has_receiver(func: &FunctionNode) -> bool {
+        func.params
+            .iter()
+            .any(|p| p == "self" || p == "&self" || p == "&mut self")
+            || func.file.ends_with(".go")
+                && func
+                    .params
+                    .first()
+                    .map(|p| p.contains('*'))
+                    .unwrap_or(false)
+    }
 
-        let intersection = a.intersection(&b).count();
-        let union = a.len() + b.len() - intersection;
+    fn has_self(func: &FunctionNode) -> bool {
+        func.params
+            .iter()
+            .any(|p| p == "self" || p == "&self" || p == "&mut self")
+            || func.name.contains("self")
+    }
 
-        if union == 0 {
-            1.0
+    fn type_trait_match(features: &FunctionFeatures) -> bool {
+        if let (Some(container), Some(trait_impl)) = (&features.container, &features.trait_impl) {
+            container == trait_impl
         } else {
-            intersection as f64 / union as f64
+            false
         }
+    }
+
+    fn has_generics(_func: &FunctionNode, source: Option<&str>) -> bool {
+        source
+            .map(|s| s.contains('<') && s.contains('>'))
+            .unwrap_or(false)
+    }
+
+    fn generic_count(_func: &FunctionNode, source: Option<&str>) -> usize {
+        if let Some(src) = source {
+            src.matches('<').count()
+        } else {
+            0
+        }
+    }
+
+    fn has_type_annotation(_func: &FunctionNode, source: Option<&str>) -> bool {
+        source
+            .map(|s| s.contains(':') && !s.contains("::"))
+            .unwrap_or(false)
+    }
+
+    fn has_lifetime(_func: &FunctionNode, source: Option<&str>) -> bool {
+        source.map(|s| s.contains('\'')).unwrap_or(false)
+    }
+
+    // File context helpers
+    fn is_in_test_file(file: &str) -> bool {
+        file.contains("/test/")
+            || file.contains("/tests/")
+            || file.ends_with("_test.rs")
+            || file.ends_with("_test.go")
+            || file.ends_with("_test.py")
+            || file.ends_with(".test.ts")
+            || file.ends_with(".test.js")
+            || file.ends_with("_test.dart")
+            || file.ends_with("Test.java")
+    }
+
+    fn is_in_benches(file: &str) -> bool {
+        file.contains("/benches/") || file.ends_with("_bench.rs") || file.ends_with("_bench.go")
+    }
+
+    fn is_in_meta(file: &str) -> bool {
+        file.contains("/.meta/")
+    }
+
+    fn is_in_examples(file: &str) -> bool {
+        file.contains("/examples/") || file.contains("/example/")
+    }
+
+    fn is_generated(file: &str) -> bool {
+        file.contains(".gen.")
+            || file.contains("_gen.")
+            || file.contains(".generated.")
+            || file.contains(".pb.go")
+            || file.contains("_pb2.py")
+            || file.ends_with(".g.dart")
+            || file.ends_with(".freezed.dart")
+    }
+
+    fn is_in_lib(file: &str) -> bool {
+        file.contains("/lib/") || file.ends_with("lib.rs") || file.contains("/src/lib")
+    }
+
+    fn is_in_bin(file: &str) -> bool {
+        file.contains("/bin/")
+            || file.contains("/cmd/")
+            || file.ends_with("main.rs")
+            || file.contains("/src/bin/")
+    }
+
+    fn is_in_proto(file: &str) -> bool {
+        file.contains("/proto/")
+            || file.contains("/protobuf/")
+            || file.ends_with(".proto")
+            || file.ends_with(".pb.go")
+    }
+
+    fn is_in_migrations(file: &str) -> bool {
+        file.contains("/migrations/") || file.contains("/db/migrate/")
+    }
+
+    fn is_in_fixtures(file: &str) -> bool {
+        file.contains("/fixtures/") || file.contains("/testdata/")
+    }
+
+    // Framework detection helpers
+    fn is_flask_route(_func: &FunctionNode, source: Option<&str>) -> bool {
+        source
+            .map(|s| s.contains("@app.route") || s.contains("@router.route"))
+            .unwrap_or(false)
+    }
+
+    fn is_fastapi_route(_func: &FunctionNode, source: Option<&str>) -> bool {
+        source
+            .map(|s| {
+                s.contains("@app.get")
+                    || s.contains("@app.post")
+                    || s.contains("@app.put")
+                    || s.contains("@router.get")
+                    || s.contains("@router.post")
+            })
+            .unwrap_or(false)
+    }
+
+    fn is_express_route(_func: &FunctionNode, source: Option<&str>) -> bool {
+        source
+            .map(|s| {
+                s.contains("app.get")
+                    || s.contains("app.post")
+                    || s.contains("app.put")
+                    || s.contains("router.get")
+                    || s.contains("router.post")
+            })
+            .unwrap_or(false)
+    }
+
+    fn is_nextjs_route(_func: &FunctionNode, source: Option<&str>) -> bool {
+        source
+            .map(|s| {
+                s.contains("export default") && (s.contains("Page") || s.contains("Component"))
+            })
+            .unwrap_or(false)
+    }
+
+    fn is_spring_controller(_func: &FunctionNode, source: Option<&str>) -> bool {
+        source
+            .map(|s| {
+                s.contains("@RestController")
+                    || s.contains("@Controller")
+                    || s.contains("@GetMapping")
+                    || s.contains("@PostMapping")
+            })
+            .unwrap_or(false)
+    }
+
+    fn is_aspnet_controller(_func: &FunctionNode, source: Option<&str>) -> bool {
+        source
+            .map(|s| {
+                s.contains("[ApiController]") || s.contains("[HttpGet") || s.contains("[HttpPost")
+            })
+            .unwrap_or(false)
+    }
+
+    fn is_laravel_controller(_func: &FunctionNode, source: Option<&str>) -> bool {
+        source
+            .map(|s| {
+                s.contains("use Illuminate\\Http\\Request")
+                    && s.contains("class")
+                    && s.contains("Controller")
+            })
+            .unwrap_or(false)
+    }
+
+    fn is_django_view(_func: &FunctionNode, source: Option<&str>) -> bool {
+        source
+            .map(|s| s.contains("def ") && (s.contains("request") || s.contains("HttpResponse")))
+            .unwrap_or(false)
+    }
+
+    fn is_rails_action(_func: &FunctionNode, source: Option<&str>) -> bool {
+        source
+            .map(|s| s.contains("def ") && s.contains("render") && !s.contains("private"))
+            .unwrap_or(false)
+    }
+
+    fn is_react_component(func: &FunctionNode) -> bool {
+        func.name
+            .chars()
+            .next()
+            .map(|c| c.is_uppercase())
+            .unwrap_or(false)
+            && (func.file.ends_with(".tsx") || func.file.ends_with(".jsx"))
+    }
+
+    fn is_react_hook(func: &FunctionNode) -> bool {
+        func.name.starts_with("use")
+            && func
+                .name
+                .chars()
+                .nth(3)
+                .map(|c| c.is_uppercase())
+                .unwrap_or(false)
+    }
+
+    fn is_vue_component(_func: &FunctionNode, _source: Option<&str>) -> bool {
+        false // Vue uses SFC files, not functions
+    }
+
+    fn is_svelte_component(_func: &FunctionNode, _source: Option<&str>) -> bool {
+        false // Svelte uses SFC files
+    }
+
+    fn is_flutter_widget(func: &FunctionNode) -> bool {
+        func.name == "build"
+            && func.file.ends_with(".dart")
+            && func
+                .trait_impl
+                .as_ref()
+                .map(|c| c.contains("Widget"))
+                .unwrap_or(false)
+    }
+
+    fn is_flutter_state(func: &FunctionNode) -> bool {
+        matches!(
+            func.name.as_str(),
+            "initState" | "dispose" | "didUpdateWidget" | "didChangeDependencies"
+        ) && func.file.ends_with(".dart")
+    }
+
+    fn is_go_init(func: &FunctionNode) -> bool {
+        func.name == "init" && func.file.ends_with(".go")
+    }
+
+    fn is_go_interface(func: &FunctionNode) -> bool {
+        func.trait_impl.is_some() && func.file.ends_with(".go")
+    }
+
+    fn is_go_goroutine(_func: &FunctionNode, source: Option<&str>) -> bool {
+        source
+            .map(|s| s.contains("go ") && s.contains("func("))
+            .unwrap_or(false)
+    }
+
+    fn is_rust_trait_impl(func: &FunctionNode) -> bool {
+        func.trait_impl.is_some() && func.file.ends_with(".rs")
+    }
+
+    fn is_rust_ffi(_func: &FunctionNode, source: Option<&str>) -> bool {
+        source
+            .map(|s| s.contains("extern \"C\"") || s.contains("#[no_mangle]"))
+            .unwrap_or(false)
+    }
+
+    // Decorator helpers
+    fn has_decorator(func: &FunctionNode, pattern: &str) -> bool {
+        func.decorators
+            .iter()
+            .any(|d| d.to_lowercase().contains(pattern))
+    }
+
+    // Dynamic behavior helpers
+    fn has_dynamic_call(source: Option<&str>) -> bool {
+        source
+            .map(|s| {
+                s.contains("getattr")
+                    || s.contains("setattr")
+                    || s.contains("hasattr")
+                    || s.contains("importlib")
+                    || s.contains("__import__")
+                    || s.contains("reflect")
+                    || s.contains("MethodByName")
+                    || s.contains("call_user_func")
+            })
+            .unwrap_or(false)
+    }
+
+    fn has_ffi(_func: &FunctionNode, source: Option<&str>) -> bool {
+        source
+            .map(|s| {
+                s.contains("extern \"C\"")
+                    || s.contains("#[no_mangle]")
+                    || s.contains("extern") && s.contains("C")
+                    || s.contains("ffi")
+            })
+            .unwrap_or(false)
+    }
+
+    fn has_macro(_func: &FunctionNode, source: Option<&str>) -> bool {
+        source
+            .map(|s| {
+                s.contains("macro_rules") || s.contains("#[derive") || s.contains("proc_macro")
+            })
+            .unwrap_or(false)
+    }
+
+    fn has_closure(source: Option<&str>) -> bool {
+        source
+            .map(|s| {
+                s.contains("||")
+                    || s.contains("lambda")
+                    || s.contains("=>")
+                    || s.contains("function(") && s.contains(") =>")
+            })
+            .unwrap_or(false)
+    }
+
+    fn has_yield(source: Option<&str>) -> bool {
+        source.map(|s| s.contains("yield")).unwrap_or(false)
+    }
+
+    fn has_await(source: Option<&str>) -> bool {
+        source
+            .map(|s| s.contains("await") || s.contains(".await"))
+            .unwrap_or(false)
+    }
+
+    fn has_thread(source: Option<&str>) -> bool {
+        source
+            .map(|s| {
+                s.contains("tokio::spawn")
+                    || s.contains("thread::spawn")
+                    || s.contains("go ")
+                    || s.contains("async_std::spawn")
+            })
+            .unwrap_or(false)
+    }
+
+    // Error handling helpers
+    fn has_try_catch(source: Option<&str>) -> bool {
+        source
+            .map(|s| {
+                s.contains("try") && s.contains("catch")
+                    || s.contains("try:") && s.contains("except")
+                    || s.contains("try {") && s.contains("catch (")
+            })
+            .unwrap_or(false)
+    }
+
+    fn has_result_type(func: &FunctionNode) -> bool {
+        func.returns.iter().any(|r| {
+            r.contains("Result")
+                || r.contains("Option")
+                || r.contains("Either")
+                || r.contains("?")
+                || r.contains("anyhow::Result")
+        })
+    }
+
+    fn has_throw(source: Option<&str>) -> bool {
+        source
+            .map(|s| s.contains("throw") || s.contains("raise"))
+            .unwrap_or(false)
+    }
+
+    fn has_panic(source: Option<&str>) -> bool {
+        source
+            .map(|s| s.contains("unwrap") || s.contains("expect") || s.contains("panic"))
+            .unwrap_or(false)
+    }
+
+    fn has_question_mark(source: Option<&str>) -> bool {
+        source.map(|s| s.contains("?")).unwrap_or(false)
+    }
+
+    fn has_error_propagation(source: Option<&str>) -> bool {
+        source
+            .map(|s| s.contains("?") || s.contains("try!") || s.contains("catch"))
+            .unwrap_or(false)
+    }
+
+    // Documentation helpers
+    fn has_attr_doc(_func: &FunctionNode, _source: Option<&str>) -> bool {
+        false // Custom attribute docs
+    }
+
+    // Visibility helpers
+    fn is_pub_crate(_func: &FunctionNode, _source: Option<&str>) -> bool {
+        false // Rust-specific: pub(crate)
+    }
+
+    fn is_pub_super(_func: &FunctionNode, _source: Option<&str>) -> bool {
+        false // Rust-specific: pub(super)
+    }
+
+    fn is_pub_self(_func: &FunctionNode, _source: Option<&str>) -> bool {
+        false // Rust-specific: pub(self)
+    }
+
+    fn is_private(func: &FunctionNode) -> bool {
+        !func.is_public
+    }
+
+    fn is_protected(_func: &FunctionNode, _source: Option<&str>) -> bool {
+        false // Language-specific
+    }
+
+    // Ownership helpers
+    fn has_borrow(source: Option<&str>) -> bool {
+        source
+            .map(|s| s.contains("&") && !s.contains("&mut"))
+            .unwrap_or(false)
+    }
+
+    fn has_mut_ref(source: Option<&str>) -> bool {
+        source.map(|s| s.contains("&mut")).unwrap_or(false)
+    }
+
+    fn has_move(source: Option<&str>) -> bool {
+        source.map(|s| s.contains("move")).unwrap_or(false)
+    }
+
+    fn has_clone(source: Option<&str>) -> bool {
+        source
+            .map(|s| s.contains("clone") || s.contains("Clone"))
+            .unwrap_or(false)
+    }
+
+    // Concurrency helpers
+    fn has_channel(source: Option<&str>) -> bool {
+        source
+            .map(|s| s.contains("channel") || s.contains("mpsc") || s.contains("watch"))
+            .unwrap_or(false)
+    }
+
+    fn has_mutex(source: Option<&str>) -> bool {
+        source
+            .map(|s| s.contains("Mutex") || s.contains("RwLock"))
+            .unwrap_or(false)
+    }
+
+    fn has_atomic(source: Option<&str>) -> bool {
+        source
+            .map(|s| s.contains("Atomic") || s.contains("Ordering"))
+            .unwrap_or(false)
+    }
+
+    fn has_parallel(source: Option<&str>) -> bool {
+        source
+            .map(|s| s.contains("rayon") || s.contains("par_iter") || s.contains("parallel"))
+            .unwrap_or(false)
+    }
+
+    // Pattern detection helpers
+    fn is_singleton_pattern(_func: &FunctionNode, _source: Option<&str>) -> bool {
+        false // Complex pattern detection
+    }
+
+    fn is_factory_pattern(_func: &FunctionNode, _source: Option<&str>) -> bool {
+        false // Complex pattern detection
+    }
+
+    fn is_builder_pattern(_func: &FunctionNode, _source: Option<&str>) -> bool {
+        false // Complex pattern detection
+    }
+
+    fn is_observer_pattern(_func: &FunctionNode, _source: Option<&str>) -> bool {
+        false // Complex pattern detection
+    }
+
+    fn is_strategy_pattern(_func: &FunctionNode, _source: Option<&str>) -> bool {
+        false // Complex pattern detection
+    }
+
+    fn is_decorator_pattern(_func: &FunctionNode, _source: Option<&str>) -> bool {
+        false // Complex pattern detection
     }
 }
 
+pub fn cosine_similarity(a: &FunctionFeatures, b: &FunctionFeatures) -> f64 {
+    let a_vec = &a.feature_vector;
+    let b_vec = &b.feature_vector;
+
+    if a_vec.is_empty() || b_vec.is_empty() || a_vec.len() != b_vec.len() {
+        return 0.0;
+    }
+
+    let dot: f64 = a_vec.iter().zip(b_vec).map(|(x, y)| x * y).sum();
+    let norm_a: f64 = a_vec.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
+    let norm_b: f64 = b_vec.iter().map(|x| x.powi(2)).sum::<f64>().sqrt();
+
+    if norm_a > 0.0 && norm_b > 0.0 {
+        dot / (norm_a * norm_b)
+    } else {
+        0.0
+    }
+}
+
+pub fn token_overlap(a: &FunctionFeatures, b: &FunctionFeatures) -> f64 {
+    let a_set: std::collections::HashSet<_> = a.normalized_tokens.iter().collect();
+    let b_set: std::collections::HashSet<_> = b.normalized_tokens.iter().collect();
+
+    let intersection = a_set.intersection(&b_set).count();
+    let union = a_set.len() + b_set.len() - intersection;
+
+    if union == 0 {
+        1.0
+    } else {
+        intersection as f64 / union as f64
+    }
+}
 // Feature Extractor
 
 #[derive(Debug)]

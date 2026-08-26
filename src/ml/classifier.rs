@@ -4,8 +4,6 @@ use crate::ml::features::FeatureScaler;
 use crate::ml::CalibrationParams;
 use serde::{Deserialize, Serialize};
 
-// Linear Classifier
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinearClassifier {
     pub weights: Vec<f64>,
@@ -105,11 +103,46 @@ impl LinearClassifier {
                     TrainingLabel::Unknown => 0.5,
                 };
 
-                // Numerically stable forward pass
-                let dot: f64 = features.iter().zip(&self.weights).map(|(f, w)| f * w).sum();
+                let dot: f64 = features
+                    .iter() // Look at each feature one by one
+                    .zip(&self.weights) // Pair each feature with its weight
+                    .map(|(f, w)| f * w) // Multiply: feature × weight
+                    .sum(); // Add all products together
                 let z = (dot + self.bias).clamp(-20.0, 20.0);
+
                 let prediction = 1.0 / (1.0 + (-z).exp());
 
+                // EXAMPLE WITH A "DEAD" FUNCTION
+                // Input: features = [0.0, 0.0, 0.0]  (no callers, no callees, private)
+                // Weights: same as before: [0.425, -0.310, 0.280]
+                // Bias: 0.5
+                //
+                // dot = (0.0 × 0.425) + (0.0 × -0.310) + (0.0 × 0.280) = 0.0
+                // z = 0.0 + 0.5 = 0.5
+                //
+                // prediction = 1.0 / (1.0 + e^(-0.5))
+                //            = 1.0 / (1.0 + 0.606)
+                //            = 1.0 / 1.606
+                //            = 0.622
+                //
+                // 0.622 >= 0.5 → ALIVE! (62.2% chance alive)
+                //
+                // COMPLETE EXAMPLE WITH A "DEAD" FUNCTION
+                //
+                // Input: features = [0.0, 0.0, 0.0]  (no callers, no callees, private)
+                // Weights: [0.425, -0.310, 0.280]
+                // Bias: -0.5 (different bias!)
+                //
+                // dot = (0.0 × 0.425) + (0.0 × -0.310) + (0.0 × 0.280) = 0.0
+                // z = 0.0 + (-0.5) = -0.5
+                //
+                // prediction = 1.0 / (1.0 + e^(-(-0.5)))
+                //            = 1.0 / (1.0 + e^(0.5))
+                //            = 1.0 / (1.0 + 1.648)
+                //            = 1.0 / 2.648
+                //            = 0.377
+                //
+                // 0.377 < 0.5 → DEAD! (37.7% chance alive, 62.3% chance dead)
                 // Numerically bounded BCE loss
                 let p_safe = prediction.clamp(1e-7, 1.0 - 1e-7);
                 let loss = -target * p_safe.ln() - (1.0 - target) * (1.0 - p_safe).ln();

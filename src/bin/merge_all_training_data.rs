@@ -302,29 +302,34 @@ fn parse_legacy_json_file(data: &str, repo_name: &str) -> Result<Vec<TrainingExa
     Ok(examples)
 }
 
-// Convert legacy JSON to TrainingExample
+// src/bin/merge_all_training_data.rs
+
+/// Convert legacy JSON to TrainingExample
 fn convert_legacy_to_training_example(
     item: serde_json::Value,
     repo_name: &str,
 ) -> Result<TrainingExample> {
     use code_intelligence::analysis::training_data::{FunctionFeatures, TrainingLabel};
 
-    // Extract fields with defaults
+    // Extract basic fields
     let function_name = item
         .get("function_name")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown")
         .to_string();
+
     let full_path = item
         .get("full_path")
         .and_then(|v| v.as_str())
         .unwrap_or(&function_name)
         .to_string();
+
     let file = item
         .get("file")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown.rs")
         .to_string();
+
     let language = item
         .get("language")
         .and_then(|v| v.as_str())
@@ -336,6 +341,7 @@ fn convert_legacy_to_training_example(
         .get("label")
         .and_then(|v| v.as_str())
         .unwrap_or("Unknown");
+
     let label = match label_str {
         "Alive" => TrainingLabel::Alive,
         "Dead" => TrainingLabel::Dead,
@@ -346,93 +352,400 @@ fn convert_legacy_to_training_example(
         .get("confidence")
         .and_then(|v| v.as_f64())
         .unwrap_or(0.5);
+
     let source = item
         .get("source")
         .and_then(|v| v.as_str())
         .unwrap_or("legacy")
         .to_string();
+
     let label_reason = item
         .get("label_reason")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+
     let label_version = item
         .get("label_version")
         .and_then(|v| v.as_u64())
         .map(|v| v as u32);
 
-    // Create default features (simplified)
-    let features = FunctionFeatures {
-        param_count: item
-            .get("features")
-            .and_then(|f| f.get("param_count"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize,
-        return_count: item
-            .get("features")
-            .and_then(|f| f.get("return_count"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize,
-        is_public: item
-            .get("features")
-            .and_then(|f| f.get("is_public"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        is_async: item
-            .get("features")
-            .and_then(|f| f.get("is_async"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        name_length: function_name.len(),
-        starts_with_use: function_name.starts_with("use"),
-        starts_with_test: function_name.starts_with("test_") || function_name.starts_with("Test"),
-        starts_with_bench: function_name.starts_with("bench_")
-            || function_name.starts_with("Benchmark"),
-        ends_with_test: function_name.ends_with("_test"),
-        contains_trait_impl: false,
-        signature_hash: String::new(),
-        body_hash: String::new(),
-        fan_in: 0,
-        fan_out: 0,
-        complexity: 1.0,
-        call_depth: 0,
-        is_cycle: false,
-        file_extension: file.split('.').last().unwrap_or("").to_string(),
-        is_in_test_file: file.contains("/tests/")
-            || file.contains("/test/")
-            || file.ends_with("_test.rs"),
-        is_in_benches: file.contains("/benches/"),
-        is_in_meta: file.contains("/.meta/"),
-        is_in_examples: file.contains("/examples/"),
-        is_generated: file.contains(".gen.") || file.contains("_gen."),
-        name_contains_use: function_name.to_lowercase().contains("use"),
-        name_contains_test: function_name.to_lowercase().contains("test"),
-        name_contains_init: function_name.to_lowercase().contains("init"),
-        name_contains_get: function_name.to_lowercase().contains("get"),
-        name_contains_set: function_name.to_lowercase().contains("set"),
-        name_contains_new: function_name.to_lowercase().contains("new"),
-        name_contains_create: function_name.to_lowercase().contains("create"),
-        name_contains_build: function_name.to_lowercase().contains("build"),
-        name_contains_parse: function_name.to_lowercase().contains("parse"),
-        name_contains_validate: function_name.to_lowercase().contains("validate"),
-        name_contains_handle: function_name.to_lowercase().contains("handle"),
-        name_contains_process: function_name.to_lowercase().contains("process"),
-        name_contains_convert: function_name.to_lowercase().contains("convert"),
-        name_contains_commit: function_name.to_lowercase().contains("commit"),
-        name_contains_reveal: function_name.to_lowercase().contains("reveal"),
-        name_contains_submit: function_name.to_lowercase().contains("submit"),
-        name_contains_upload: function_name.to_lowercase().contains("upload"),
-        name_contains_download: function_name.to_lowercase().contains("download"),
-        name_contains_fetch: function_name.to_lowercase().contains("fetch"),
-        name_contains_verify: function_name.to_lowercase().contains("verify"),
-        name_contains_audit: function_name.to_lowercase().contains("audit"),
-        type_name: None,
-        type_path: None,
-        is_method: false,
-        is_trait_impl: false,
-        trait_name: None,
-        is_associated: false,
-    };
+    // ⭐ START WITH DEFAULT (all 160+ fields initialized)
+    let mut features = FunctionFeatures::default();
 
+    // EXISTING FIELDS - Set from legacy data
+    features.param_count = item
+        .get("features")
+        .and_then(|f| f.get("param_count"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+
+    features.return_count = item
+        .get("features")
+        .and_then(|f| f.get("return_count"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+
+    features.is_public = item
+        .get("features")
+        .and_then(|f| f.get("is_public"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    features.is_async = item
+        .get("features")
+        .and_then(|f| f.get("is_async"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    features.name_length = function_name.len();
+
+    features.starts_with_use = function_name.starts_with("use");
+    features.starts_with_test =
+        function_name.starts_with("test_") || function_name.starts_with("Test");
+    features.starts_with_bench =
+        function_name.starts_with("bench_") || function_name.starts_with("Benchmark");
+    features.ends_with_test = function_name.ends_with("_test");
+
+    features.contains_trait_impl = item
+        .get("features")
+        .and_then(|f| f.get("contains_trait_impl"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    // Hash fields
+    features.signature_hash = item
+        .get("features")
+        .and_then(|f| f.get("signature_hash"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    features.body_hash = item
+        .get("features")
+        .and_then(|f| f.get("body_hash"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Graph features
+    features.fan_in = item
+        .get("features")
+        .and_then(|f| f.get("fan_in"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+
+    features.fan_out = item
+        .get("features")
+        .and_then(|f| f.get("fan_out"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+
+    features.complexity = item
+        .get("features")
+        .and_then(|f| f.get("complexity"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(1.0);
+
+    features.call_depth = item
+        .get("features")
+        .and_then(|f| f.get("call_depth"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+
+    features.is_cycle = item
+        .get("features")
+        .and_then(|f| f.get("is_cycle"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    // File context
+    features.file_extension = file.split('.').last().unwrap_or("").to_string();
+
+    features.is_in_test_file = file.contains("/tests/")
+        || file.contains("/test/")
+        || file.ends_with("_test.rs")
+        || file.ends_with("_test.go")
+        || file.ends_with("_test.py")
+        || file.ends_with(".test.ts")
+        || file.ends_with(".test.js");
+
+    features.is_in_benches =
+        file.contains("/benches/") || file.ends_with("_bench.rs") || file.ends_with("_bench.go");
+
+    features.is_in_meta = file.contains("/.meta/");
+    features.is_in_examples = file.contains("/examples/") || file.contains("/example/");
+    features.is_generated = file.contains(".gen.")
+        || file.contains("_gen.")
+        || file.contains(".generated.")
+        || file.contains(".pb.go")
+        || file.contains("_pb2.py");
+
+    // Name contains patterns - original 21
+    let name_lower = function_name.to_lowercase();
+    features.name_contains_use = name_lower.contains("use");
+    features.name_contains_test = name_lower.contains("test");
+    features.name_contains_init = name_lower.contains("init");
+    features.name_contains_get = name_lower.contains("get");
+    features.name_contains_set = name_lower.contains("set");
+    features.name_contains_new = name_lower.contains("new");
+    features.name_contains_create = name_lower.contains("create");
+    features.name_contains_build = name_lower.contains("build");
+    features.name_contains_parse = name_lower.contains("parse");
+    features.name_contains_validate = name_lower.contains("validate");
+    features.name_contains_handle = name_lower.contains("handle");
+    features.name_contains_process = name_lower.contains("process");
+    features.name_contains_convert = name_lower.contains("convert");
+    features.name_contains_commit = name_lower.contains("commit");
+    features.name_contains_reveal = name_lower.contains("reveal");
+    features.name_contains_submit = name_lower.contains("submit");
+    features.name_contains_upload = name_lower.contains("upload");
+    features.name_contains_download = name_lower.contains("download");
+    features.name_contains_fetch = name_lower.contains("fetch");
+    features.name_contains_verify = name_lower.contains("verify");
+    features.name_contains_audit = name_lower.contains("audit");
+
+    // Name contains patterns - new 20+
+    features.name_contains_main = name_lower.contains("main");
+    features.name_contains_start = name_lower.contains("start");
+    features.name_contains_run = name_lower.contains("run");
+    features.name_contains_load = name_lower.contains("load");
+    features.name_contains_save = name_lower.contains("save");
+    features.name_contains_read = name_lower.contains("read");
+    features.name_contains_write = name_lower.contains("write");
+    features.name_contains_open = name_lower.contains("open");
+    features.name_contains_close = name_lower.contains("close");
+    features.name_contains_connect = name_lower.contains("connect");
+    features.name_contains_send = name_lower.contains("send");
+    features.name_contains_receive = name_lower.contains("receive");
+    features.name_contains_delete = name_lower.contains("delete");
+    features.name_contains_update = name_lower.contains("update");
+    features.name_contains_patch = name_lower.contains("patch");
+    features.name_contains_put = name_lower.contains("put");
+    features.name_contains_post = name_lower.contains("post");
+    features.name_contains_list = name_lower.contains("list");
+    features.name_contains_find = name_lower.contains("find");
+    features.name_contains_search = name_lower.contains("search");
+    features.name_contains_filter = name_lower.contains("filter");
+    features.name_contains_map = name_lower.contains("map");
+    features.name_contains_reduce = name_lower.contains("reduce");
+    features.name_contains_clone = name_lower.contains("clone");
+    features.name_contains_copy = name_lower.contains("copy");
+    features.name_contains_move = name_lower.contains("move");
+    features.name_contains_swap = name_lower.contains("swap");
+    features.name_contains_sort = name_lower.contains("sort");
+    features.name_contains_is = name_lower.contains("is");
+    features.name_contains_has = name_lower.contains("has");
+    features.name_contains_can = name_lower.contains("can");
+    features.name_contains_should = name_lower.contains("should");
+    features.name_contains_will = name_lower.contains("will");
+    features.name_contains_do = name_lower.contains("do");
+    features.name_contains_make = name_lower.contains("make");
+    features.name_contains_take = name_lower.contains("take");
+    features.name_contains_give = name_lower.contains("give");
+    features.name_contains_call = name_lower.contains("call");
+    features.name_contains_apply = name_lower.contains("apply");
+    features.name_contains_register = name_lower.contains("register");
+    features.name_contains_unregister = name_lower.contains("unregister");
+    features.name_contains_subscribe = name_lower.contains("subscribe");
+    features.name_contains_unsubscribe = name_lower.contains("unsubscribe");
+
+    // Starts with patterns
+    features.starts_with_get = function_name.starts_with("get");
+    features.starts_with_set = function_name.starts_with("set");
+    features.starts_with_is = function_name.starts_with("is");
+    features.starts_with_has = function_name.starts_with("has");
+    features.starts_with_can = function_name.starts_with("can");
+    features.starts_with_should = function_name.starts_with("should");
+    features.starts_with_will = function_name.starts_with("will");
+    features.starts_with_on = function_name.starts_with("on");
+    features.starts_with_handle = function_name.starts_with("handle");
+    features.starts_with_process = function_name.starts_with("process");
+    features.starts_with_parse = function_name.starts_with("parse");
+    features.starts_with_create = function_name.starts_with("create");
+    features.starts_with_build = function_name.starts_with("build");
+    features.starts_with_make = function_name.starts_with("make");
+    features.starts_with_do = function_name.starts_with("do");
+    features.starts_with_apply = function_name.starts_with("apply");
+
+    // Ends with patterns
+    features.ends_with_handler = function_name.ends_with("handler");
+    features.ends_with_processor = function_name.ends_with("processor");
+    features.ends_with_service = function_name.ends_with("service");
+    features.ends_with_repository = function_name.ends_with("repository");
+    features.ends_with_controller = function_name.ends_with("controller");
+    features.ends_with_manager = function_name.ends_with("manager");
+    features.ends_with_factory = function_name.ends_with("factory");
+    features.ends_with_builder = function_name.ends_with("builder");
+    features.ends_with_validator = function_name.ends_with("validator");
+    features.ends_with_converter = function_name.ends_with("converter");
+    features.ends_with_mapper = function_name.ends_with("mapper");
+    features.ends_with_filter = function_name.ends_with("filter");
+    features.ends_with_loader = function_name.ends_with("loader");
+    features.ends_with_saver = function_name.ends_with("saver");
+    features.ends_with_creator = function_name.ends_with("creator");
+    features.ends_with_updater = function_name.ends_with("updater");
+    features.ends_with_deleter = function_name.ends_with("deleter");
+    features.ends_with_finder = function_name.ends_with("finder");
+    features.ends_with_parser = function_name.ends_with("parser");
+    features.ends_with_renderer = function_name.ends_with("renderer");
+    features.ends_with_serializer = function_name.ends_with("serializer");
+
+    // Language
+    features.language = language.clone();
+
+    // Type info
+    features.type_name = item
+        .get("features")
+        .and_then(|f| f.get("type_name"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    features.type_path = item
+        .get("features")
+        .and_then(|f| f.get("type_path"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    features.is_method = item
+        .get("features")
+        .and_then(|f| f.get("is_method"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    features.is_trait_impl = item
+        .get("features")
+        .and_then(|f| f.get("is_trait_impl"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    features.trait_name = item
+        .get("features")
+        .and_then(|f| f.get("trait_name"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    features.is_associated = item
+        .get("features")
+        .and_then(|f| f.get("is_associated"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    // Set defaults (legacy data won't have these)
+    // Signature features
+    features.is_generator = false;
+    features.is_static = false;
+    features.is_abstract = false;
+    features.is_override = false;
+
+    // Complexity features
+    features.cognitive_complexity = 0;
+    features.line_count = 0;
+    features.token_count = 0;
+
+    // Framework features
+    features.is_flask_route = false;
+    features.is_fastapi_route = false;
+    features.is_express_route = false;
+    features.is_nextjs_route = false;
+    features.is_spring_controller = false;
+    features.is_aspnet_controller = false;
+    features.is_laravel_controller = false;
+    features.is_django_view = false;
+    features.is_rails_action = false;
+    features.is_react_component = false;
+    features.is_react_hook = false;
+    features.is_vue_component = false;
+    features.is_svelte_component = false;
+    features.is_flutter_widget = false;
+    features.is_flutter_state = false;
+    features.is_go_init = false;
+    features.is_go_interface = false;
+    features.is_go_goroutine = false;
+    features.is_rust_trait_impl = false;
+    features.is_rust_ffi = false;
+
+    // Type features
+    features.has_receiver = false;
+    features.has_self = false;
+    features.has_generics = false;
+    features.generic_count = 0;
+    features.has_type_annotation = false;
+    features.has_lifetime = false;
+
+    // File context features
+    features.is_in_lib = false;
+    features.is_in_bin = false;
+    features.is_in_proto = false;
+    features.is_in_migrations = false;
+    features.is_in_fixtures = false;
+
+    // Decorator features
+    features.has_decorator_route = false;
+    features.has_decorator_get = false;
+    features.has_decorator_post = false;
+    features.has_decorator_put = false;
+    features.has_decorator_delete = false;
+    features.has_decorator_patch = false;
+    features.has_decorator_override = false;
+    features.has_decorator_staticmethod = false;
+    features.has_decorator_classmethod = false;
+    features.has_decorator_property = false;
+    features.has_decorator_cached_property = false;
+    features.has_decorator_pytest = false;
+    features.has_decorator_fixture = false;
+    features.has_decorator_parametrize = false;
+    features.has_decorator_test = false;
+
+    // Dynamic behavior features
+    features.has_dynamic_call = false;
+    features.has_ffi = false;
+    features.has_macro = false;
+    features.has_closure = false;
+    features.has_yield = false;
+    features.has_await = false;
+    features.has_thread = false;
+
+    // Error handling features
+    features.has_try_catch = false;
+    features.has_result_type = false;
+    features.has_throw = false;
+    features.has_panic = false;
+    features.has_question_mark = false;
+    features.has_error_propagation = false;
+
+    // Documentation features
+    features.has_doc_comment = false;
+    features.doc_comment_length = 0;
+    features.has_attr_doc = false;
+
+    // Visibility features
+    features.vis_pub_crate = false;
+    features.vis_pub_super = false;
+    features.vis_pub_self = false;
+    features.vis_private = false;
+    features.vis_protected = false;
+
+    // Ownership features
+    features.has_borrow = false;
+    features.has_mut_ref = false;
+    features.has_move = false;
+    features.has_clone = false;
+
+    // Pattern features
+    features.pattern_singleton = false;
+    features.pattern_factory = false;
+    features.pattern_builder = false;
+    features.pattern_observer = false;
+    features.pattern_strategy = false;
+    features.pattern_decorator = false;
+
+    // Concurrency features
+    features.has_channel = false;
+    features.has_mutex = false;
+    features.has_atomic = false;
+    features.has_parallel = false;
+
+    // Create and return the TrainingExample
     Ok(TrainingExample {
         function_name,
         full_path,

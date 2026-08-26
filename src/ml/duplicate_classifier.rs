@@ -31,7 +31,6 @@ impl DuplicateClassifier {
     }
 
     /// Train the classifier on labeled examples
-    /// Returns the accuracy
     pub fn train(&mut self, examples: &[DuplicateExample]) -> f64 {
         if examples.is_empty() {
             return 0.0;
@@ -97,12 +96,6 @@ impl DuplicateClassifier {
         );
         let dot: f64 = features.iter().zip(&self.weights).map(|(f, w)| f * w).sum();
 
-        // type_same / trait_same are already part of the trained feature
-        // vector (see extract_features_pair). Don't re-apply hand-tuned
-        // adjustments on top of a trained model — that overrides whatever
-        // the weights actually learned with an untrained, hardcoded prior,
-        // and it's exactly what was suppressing genuine cross-type trait-impl
-        // duplicates (see: LLMProvider implementations across ollama/openai/mock).
         1.0 / (1.0 + (-(dot + self.bias)).exp())
     }
 
@@ -111,14 +104,7 @@ impl DuplicateClassifier {
         self.predict(a, b) > self.threshold
     }
 
-    /// Extract features from a pair of functions for prediction.
-    /// Duplicate-ness is a symmetric relation, so we canonicalize the
-    /// pair order (by full_path) before building the vector — otherwise
-    /// is_duplicate(a, b) and is_duplicate(b, a) can disagree.
     fn extract_features_pair(&self, a: &FunctionFeatures, b: &FunctionFeatures) -> Vec<f64> {
-        // FunctionFeatures (training_data) has no full_path/name field — use
-        // body_hash as the stable ordering key so extract_features_pair(a, b)
-        // and extract_features_pair(b, a) always canonicalize the same way.
         let (a, b) = if a.body_hash <= b.body_hash {
             (a, b)
         } else {
@@ -138,7 +124,7 @@ impl DuplicateClassifier {
 
         features.extend(diff);
 
-        // ⭐ NEW: Add type comparison features
+        // Add type comparison features
         let type_same =
             if a.type_name.is_some() && b.type_name.is_some() && a.type_name == b.type_name {
                 1.0
@@ -178,7 +164,7 @@ impl DuplicateClassifier {
 
         features.extend(diff);
 
-        // ⭐ NEW: Add type comparison features
+        // Add type comparison features
         let type_same = if example.func_a.type_name.is_some()
             && example.func_b.type_name.is_some()
             && example.func_a.type_name == example.func_b.type_name
@@ -202,14 +188,10 @@ impl DuplicateClassifier {
         features
     }
 
-    /// Evaluate accuracy on any labeled examples — pass a held-out split
-    /// (not the training data) to get a meaningful generalization estimate.
     pub fn evaluate(&self, examples: &[DuplicateExample]) -> f64 {
         self.calculate_accuracy(examples)
     }
 
-    /// Calculate accuracy on the given examples (used both for the
-    /// train-time self-report and for `evaluate`)
     fn calculate_accuracy(&self, examples: &[DuplicateExample]) -> f64 {
         let mut correct = 0;
         let mut total = 0;
@@ -283,8 +265,6 @@ pub enum DuplicateLabel {
 
 impl Default for DuplicateClassifier {
     fn default() -> Self {
-        // 3 vectors (a, b, |a-b| diff) using the live feature schema,
-        // plus 2 type-comparison features appended in extract_features_pair.
         Self::new(crate::ml::feature_schema::feature_count() * 3 + 2)
     }
 }

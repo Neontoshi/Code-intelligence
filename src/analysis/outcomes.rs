@@ -601,65 +601,12 @@ impl OutcomeTracker {
     fn create_features_from_verdict(&self, verdict: &TrackedVerdict) -> FunctionFeatures {
         use crate::analysis::training_data::FunctionFeatures;
 
-        let name_lower = verdict.function_name.to_lowercase();
-        let is_in_test_file = verdict.file.contains("/tests/")
+        let _name_lower = verdict.function_name.to_lowercase();
+        let _is_in_test_file = verdict.file.contains("/tests/")
             || verdict.file.contains("/test/")
             || verdict.file.ends_with("_test.rs");
 
-        FunctionFeatures {
-            param_count: 0,
-            return_count: 0,
-            is_public: false,
-            is_async: false,
-            name_length: verdict.function_name.len(),
-            starts_with_use: verdict.function_name.starts_with("use"),
-            starts_with_test: verdict.function_name.starts_with("test_")
-                || verdict.function_name.starts_with("Test"),
-            starts_with_bench: verdict.function_name.starts_with("bench_")
-                || verdict.function_name.starts_with("Benchmark"),
-            ends_with_test: verdict.function_name.ends_with("_test"),
-            contains_trait_impl: false,
-            signature_hash: String::new(),
-            body_hash: String::new(),
-            fan_in: 0,
-            fan_out: 0,
-            complexity: 1.0,
-            call_depth: 0,
-            is_cycle: false,
-            file_extension: verdict.file.split('.').last().unwrap_or("").to_string(),
-            is_in_test_file,
-            is_in_benches: verdict.file.contains("/benches/"),
-            is_in_meta: verdict.file.contains("/.meta/"),
-            is_in_examples: verdict.file.contains("/examples/"),
-            is_generated: verdict.file.contains(".gen.") || verdict.file.contains("_gen."),
-            name_contains_use: name_lower.contains("use"),
-            name_contains_test: name_lower.contains("test"),
-            name_contains_init: name_lower.contains("init"),
-            name_contains_get: name_lower.contains("get"),
-            name_contains_set: name_lower.contains("set"),
-            name_contains_new: name_lower.contains("new"),
-            name_contains_create: name_lower.contains("create"),
-            name_contains_build: name_lower.contains("build"),
-            name_contains_parse: name_lower.contains("parse"),
-            name_contains_validate: name_lower.contains("validate"),
-            name_contains_handle: name_lower.contains("handle"),
-            name_contains_process: name_lower.contains("process"),
-            name_contains_convert: name_lower.contains("convert"),
-            name_contains_commit: name_lower.contains("commit"),
-            name_contains_reveal: name_lower.contains("reveal"),
-            name_contains_submit: name_lower.contains("submit"),
-            name_contains_upload: name_lower.contains("upload"),
-            name_contains_download: name_lower.contains("download"),
-            name_contains_fetch: name_lower.contains("fetch"),
-            name_contains_verify: name_lower.contains("verify"),
-            name_contains_audit: name_lower.contains("audit"),
-            type_name: None,
-            type_path: None,
-            is_method: false,
-            is_trait_impl: false,
-            trait_name: None,
-            is_associated: false,
-        }
+        FunctionFeatures::default()
     }
 
     fn detect_language(&self, file: &str) -> String {
