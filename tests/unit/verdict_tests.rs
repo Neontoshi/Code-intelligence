@@ -151,6 +151,8 @@ fn create_test_function(name: &str) -> FunctionNode {
 fn create_test_verdict(
     state: VerdictState,
 ) -> code_intelligence::analysis::verdict_source::Verdict {
+    use code_intelligence::analysis::verdict_source::state::DeletionRecommendation;
+
     let (label, confidence) = match state {
         VerdictState::DefinitelyDead => (TrainingLabel::Dead, 0.95),
         VerdictState::ProbablyDead => (TrainingLabel::Dead, 0.80),
@@ -185,5 +187,103 @@ fn create_test_verdict(
             static_enabled: true,
             model_path: None,
         },
+        evidence_conflicts: vec![],
+        deletion_recommendation: DeletionRecommendation::NeedsReview,
     }
+}
+
+#[test]
+fn test_deletion_recommendation_safety() {
+    use code_intelligence::analysis::verdict_source::state::{
+        ConflictSeverity, DeletionRecommendation, EvidenceConflict,
+    };
+
+    // Test that a verdict with critical conflicts cannot recommend deletion
+    let mut verdict = create_test_verdict(VerdictState::DefinitelyDead);
+    verdict.deletion_recommendation = DeletionRecommendation::SafeToDelete;
+    verdict.evidence_conflicts.push(EvidenceConflict {
+        description: "Critical conflict".to_string(),
+        conflicting_sources: vec!["ml".to_string(), "static".to_string()],
+        severity: ConflictSeverity::Critical,
+    });
+
+    assert!(!verdict.can_recommend_deletion());
+    assert!(verdict.has_critical_conflicts());
+
+    // Test that unverified verdicts cannot recommend deletion
+    let mut verdict = create_test_verdict(VerdictState::DefinitelyDead);
+    verdict.deletion_recommendation = DeletionRecommendation::SafeToDelete;
+    verdict.verified = false;
+    assert!(!verdict.can_recommend_deletion());
+
+    // Test that verified verdicts without conflicts can recommend deletion
+    let mut verdict = create_test_verdict(VerdictState::DefinitelyDead);
+    verdict.deletion_recommendation = DeletionRecommendation::SafeToDelete;
+    verdict.verified = true;
+    verdict.verified_by = Some("test_user".to_string());
+    assert!(verdict.can_recommend_deletion());
+}
+
+#[test]
+fn test_evidence_conflict_detection() {
+    use code_intelligence::analysis::verdict_source::state::{
+        ConflictSeverity, DeletionRecommendation, EvidenceConflict,
+    };
+
+    let verdict = create_test_verdict(VerdictState::DefinitelyDead);
+    assert_eq!(
+        verdict.deletion_recommendation,
+        DeletionRecommendation::NeedsReview
+    );
+    assert!(verdict.evidence_conflicts.is_empty());
+
+    let mut verdict_with_conflict = create_test_verdict(VerdictState::ProbablyDead);
+    verdict_with_conflict
+        .evidence_conflicts
+        .push(EvidenceConflict {
+            description: "Test conflict".to_string(),
+            conflicting_sources: vec!["source1".to_string(), "source2".to_string()],
+            severity: ConflictSeverity::High,
+        });
+    assert!(!verdict_with_conflict.evidence_conflicts.is_empty());
+    assert!(!verdict_with_conflict.can_recommend_deletion());
+}
+
+#[test]
+fn test_has_runtime_evidence() {
+    use code_intelligence::analysis::verdict_source::EvidenceSource;
+
+    let mut verdict = create_test_verdict(VerdictState::DefinitelyDead);
+    assert!(!verdict.has_runtime_evidence());
+
+    verdict.evidence_sources.push(EvidenceSource::DynamicRefs);
+    assert!(verdict.has_runtime_evidence());
+
+    let mut verdict2 = create_test_verdict(VerdictState::DefinitelyDead);
+    verdict2
+        .evidence_sources
+        .push(EvidenceSource::ProductionTelemetry);
+    assert!(verdict2.has_runtime_evidence());
+}
+
+#[test]
+fn test_label_source_training_weights() {
+    // Verified sources should be trainable
+    assert!(LabelSource::ProductionVerified.is_trainable());
+    assert!(LabelSource::HumanVerified.is_trainable());
+    assert!(LabelSource::GitVerified.is_trainable());
+    assert!(LabelSource::DatasetVerified.is_trainable());
+
+    // Silver is weakly trainable
+    assert!(LabelSource::Silver.is_trainable());
+
+    // Heuristic sources should NOT be trainable
+    assert!(!LabelSource::StaticHeuristic.is_trainable());
+    assert!(!LabelSource::Weak.is_trainable());
+
+    // Check training weights
+    assert_eq!(LabelSource::ProductionVerified.training_weight(), 1.0);
+    assert_eq!(LabelSource::HumanVerified.training_weight(), 0.95);
+    assert_eq!(LabelSource::StaticHeuristic.training_weight(), 0.0);
+    assert_eq!(LabelSource::Weak.training_weight(), 0.0);
 }

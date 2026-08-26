@@ -51,6 +51,30 @@ pub struct Verdict {
     pub verified: bool,
     pub verified_by: Option<String>,
     pub provenance: VerdictProvenance,
+    pub evidence_conflicts: Vec<EvidenceConflict>,
+    pub deletion_recommendation: DeletionRecommendation,
+}
+
+#[derive(Debug, Clone)]
+pub struct EvidenceConflict {
+    pub description: String,
+    pub conflicting_sources: Vec<String>,
+    pub severity: ConflictSeverity,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConflictSeverity {
+    Critical,
+    High,
+    Medium,
+    Low,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DeletionRecommendation {
+    SafeToDelete,
+    NeedsReview,
+    DoNotDelete,
 }
 
 /// Provenance information for a verdict
@@ -121,6 +145,26 @@ impl Verdict {
         self.verified = true;
         self.verified_by = Some(verified_by.to_string());
         self.evidence_sources.push(EvidenceSource::HumanReview);
+    }
+    pub fn can_recommend_deletion(&self) -> bool {
+        self.deletion_recommendation == DeletionRecommendation::SafeToDelete
+            && self.verified
+            && !self.has_critical_conflicts()
+    }
+
+    pub fn has_critical_conflicts(&self) -> bool {
+        self.evidence_conflicts
+            .iter()
+            .any(|c| c.severity == ConflictSeverity::Critical)
+    }
+
+    pub fn has_runtime_evidence(&self) -> bool {
+        self.evidence_sources.iter().any(|s| {
+            matches!(
+                s,
+                EvidenceSource::DynamicRefs | EvidenceSource::ProductionTelemetry
+            )
+        })
     }
 
     pub fn format_state(&self) -> String {
@@ -393,17 +437,20 @@ impl VerdictEngine {
                 verified: false,
                 verified_by: None,
                 provenance: self.provenance.clone(),
+                evidence_conflicts: Vec::new(),
+                deletion_recommendation: DeletionRecommendation::DoNotDelete,
             };
         }
 
         let mut signals = Vec::new();
         let mut evidence_sources = Vec::new();
         let mut static_score = 0.0;
+        let mut evidence_conflicts = Vec::new();
 
-        // Look up dynamic-ref match once, reuse for both signals and evidence sources
+        // Look up dynamic-ref match once
         let matched_dynamic_ref = self.find_dynamic_ref(func);
 
-        // 1. Collect static signals (only when static analysis is enabled)
+        // 1. Collect static signals
         let normalized_static = if self.config.enable_static {
             let static_signals =
                 self.collect_static_signals(func, reachability, matched_dynamic_ref);
@@ -435,12 +482,7 @@ impl VerdictEngine {
                 use crate::analysis::training_data::FunctionFeatures;
                 let features = FunctionFeatures::from_function(func, call_graph);
                 let feature_vector = features.to_feature_vector();
-
-                // Get prediction (probability of being ALIVE)
-                // predict_calibrated handles both calibrated and raw predictions
                 let alive_prob = model.predict_calibrated(&feature_vector);
-
-                // Convert to dead probability
                 let dead_prob = 1.0 - alive_prob;
 
                 signals.push(Signal {
@@ -472,26 +514,65 @@ impl VerdictEngine {
             None
         };
 
-        // 3. Dynamic references — reuse the match found at the top of this function
-        if matched_dynamic_ref.is_some() {
+        // 3. Dynamic references — CRITICAL: this can OVERRIDE ML
+        let has_dynamic_ref = matched_dynamic_ref.is_some();
+        if has_dynamic_ref {
             evidence_sources.push(EvidenceSource::DynamicRefs);
         }
 
-        // 4. Combined score
-        let combined_score = if let Some(ml) = ml_probability {
+        // 4. Detect evidence conflicts
+        if let Some(ml_dead_prob) = ml_probability {
+            // Conflict: ML says dead but dynamic ref says alive
+            if has_dynamic_ref && ml_dead_prob > 0.7 {
+                evidence_conflicts.push(EvidenceConflict {
+                    description: format!(
+                        "ML predicts {:.1}% dead but dynamic reference exists",
+                        ml_dead_prob * 100.0
+                    ),
+                    conflicting_sources: vec![
+                        "ml_prediction".to_string(),
+                        "dynamic_reference".to_string(),
+                    ],
+                    severity: ConflictSeverity::Critical,
+                });
+            }
+
+            // Conflict: ML says alive but static says dead
+            if normalized_static > 0.7 && ml_dead_prob < 0.3 {
+                evidence_conflicts.push(EvidenceConflict {
+                    description: format!(
+                        "Static analysis suggests dead ({:.1}%) but ML says alive ({:.1}%)",
+                        normalized_static * 100.0,
+                        (1.0 - ml_dead_prob) * 100.0
+                    ),
+                    conflicting_sources: vec![
+                        "static_reachability".to_string(),
+                        "ml_prediction".to_string(),
+                    ],
+                    severity: ConflictSeverity::High,
+                });
+            }
+        }
+
+        // 5. Combined score with RUNTIME OVERRIDE
+        let combined_score = if has_dynamic_ref {
+            // Dynamic references are STRONG evidence of being alive
+            // Override ML and static scores
+            0.1 // Strongly alive
+        } else if let Some(ml) = ml_probability {
             normalized_static * (1.0 - Self::ML_WEIGHT) + ml * Self::ML_WEIGHT
         } else {
             normalized_static
         };
 
-        // 5. Determine state from combined_score
+        // 6. Determine state from combined_score
         let state = VerdictState::from_score(
             combined_score,
             self.config.dead_threshold,
             self.config.alive_threshold,
         );
 
-        // 6. Determine label from state
+        // 7. Determine label from state
         let (label, confidence) = match state {
             VerdictState::DefinitelyDead | VerdictState::ProbablyDead => {
                 (TrainingLabel::Dead, combined_score)
@@ -504,7 +585,15 @@ impl VerdictEngine {
 
         let dead_probability = ml_probability;
 
-        // 7. Generate explanation
+        // 8. Determine deletion recommendation (SAFETY CHECK)
+        let deletion_recommendation = self.determine_deletion_recommendation(
+            &state,
+            &evidence_sources,
+            &evidence_conflicts,
+            has_dynamic_ref,
+        );
+
+        // 9. Generate explanation
         let explanation = self.generate_explanation(
             func,
             &signals,
@@ -528,8 +617,68 @@ impl VerdictEngine {
             verified: false,
             verified_by: None,
             provenance: self.provenance.clone(),
+            evidence_conflicts,
+            deletion_recommendation,
         }
     }
+
+    /// Determine if we can safely recommend deletion
+    fn determine_deletion_recommendation(
+        &self,
+        state: &VerdictState,
+        evidence_sources: &[EvidenceSource],
+        conflicts: &[EvidenceConflict],
+        has_dynamic_ref: bool,
+    ) -> DeletionRecommendation {
+        // NEVER recommend deletion if:
+        // 1. There's dynamic/runtime evidence of usage
+        if has_dynamic_ref {
+            return DeletionRecommendation::DoNotDelete;
+        }
+
+        // 2. There are critical conflicts
+        if conflicts
+            .iter()
+            .any(|c| c.severity == ConflictSeverity::Critical)
+        {
+            return DeletionRecommendation::NeedsReview;
+        }
+
+        // 3. ML alone says dead (no static confirmation)
+        let has_static_evidence = evidence_sources.iter().any(|s| {
+            matches!(
+                s,
+                EvidenceSource::StaticReachability | EvidenceSource::CallGraph
+            )
+        });
+        let has_ml_evidence = evidence_sources
+            .iter()
+            .any(|s| matches!(s, EvidenceSource::MLModel(_)));
+
+        if has_ml_evidence && !has_static_evidence {
+            return DeletionRecommendation::NeedsReview;
+        }
+
+        // 4. Only recommend deletion if BOTH static AND ML agree it's dead
+        // AND there are no conflicts AND no dynamic refs
+        match state {
+            VerdictState::DefinitelyDead | VerdictState::ProbablyDead => {
+                if has_static_evidence && has_ml_evidence {
+                    DeletionRecommendation::SafeToDelete
+                } else if has_static_evidence {
+                    // Static only says dead - needs review
+                    DeletionRecommendation::NeedsReview
+                } else {
+                    DeletionRecommendation::DoNotDelete
+                }
+            }
+            VerdictState::DefinitelyAlive | VerdictState::ProbablyAlive => {
+                DeletionRecommendation::DoNotDelete
+            }
+            VerdictState::Unknown => DeletionRecommendation::NeedsReview,
+        }
+    }
+
     pub fn evaluate_all(
         &self,
         call_graph: &CallGraph,
@@ -546,6 +695,25 @@ impl VerdictEngine {
         // Sort by confidence (high to low)
         verdicts.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
         verdicts
+    }
+
+    /// Get deletion candidates - ONLY those that are safe to delete
+    pub fn get_deletion_candidates<'a>(&self, verdicts: &'a [Verdict]) -> Vec<&'a Verdict> {
+        verdicts
+            .iter()
+            .filter(|v| v.can_recommend_deletion())
+            .collect()
+    }
+
+    /// Get functions that need human review before any action
+    pub fn get_review_required<'a>(&self, verdicts: &'a [Verdict]) -> Vec<&'a Verdict> {
+        verdicts
+            .iter()
+            .filter(|v| {
+                v.deletion_recommendation == DeletionRecommendation::NeedsReview
+                    || v.has_critical_conflicts()
+            })
+            .collect()
     }
 
     fn collect_static_signals(

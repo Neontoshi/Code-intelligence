@@ -335,6 +335,7 @@ impl App {
 
                     use code_intelligence::analysis::training_data::TrainingLabel;
                     use code_intelligence::analysis::verdict_source::label_source::VerdictState;
+                    use code_intelligence::analysis::verdict_source::state::DeletionRecommendation;
                     use code_intelligence::analysis::verdict_source::{
                         Signal, SignalDirection, Verdict,
                     };
@@ -384,6 +385,8 @@ impl App {
                                 static_enabled: true,
                                 model_path: None,
                             },
+                        evidence_conflicts: Vec::new(),
+                        deletion_recommendation: DeletionRecommendation::NeedsReview,
                     };
 
                     let git_info_ref = git_info
