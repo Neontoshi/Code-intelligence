@@ -387,6 +387,7 @@ impl App {
                             },
                         evidence_conflicts: Vec::new(),
                         deletion_recommendation: DeletionRecommendation::NeedsReview,
+                        label_provenance: None,
                     };
 
                     let git_info_ref = git_info

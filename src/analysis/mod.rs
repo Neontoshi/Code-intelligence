@@ -10,6 +10,8 @@ pub mod layers;
 pub mod outcomes;
 pub mod roots;
 pub mod service;
+pub mod symbol_evolution;
+pub mod symbol_identity;
 pub mod training_data;
 pub mod training_data_filter;
 pub mod verdict_source;

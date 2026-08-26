@@ -16,7 +16,6 @@ pub enum VerdictOutcome {
     Pending,
 }
 
-/// A tracked verdict
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackedVerdict {
     pub id: String,
@@ -31,6 +30,10 @@ pub struct TrackedVerdict {
     pub outcome_date: Option<u64>,
     pub notes: Option<String>,
     pub removed_commit: Option<String>,
+    pub symbol_identity: Option<crate::SymbolIdentity>,
+    pub prediction: Option<TrainingLabel>,
+    pub human_decision: Option<TrainingLabel>,
+    pub post_removal_outcome: Option<VerdictOutcome>,
 }
 
 /// Statistics about tracked verdicts
@@ -246,6 +249,51 @@ impl OutcomeTracker {
             outcome_date: None,
             notes: None,
             removed_commit: None,
+            symbol_identity: None,
+            prediction: None,
+            human_decision: None,
+            post_removal_outcome: None,
+        };
+
+        self.verdicts.push(verdict);
+        self.save()?;
+        Ok(id)
+    }
+
+    pub fn track_full_feedback(
+        &mut self,
+        symbol_identity: &crate::SymbolIdentity,
+        prediction: TrainingLabel,
+        human_decision: TrainingLabel,
+        actual_outcome: VerdictOutcome,
+    ) -> Result<String, String> {
+        let id = symbol_identity.stable_id();
+
+        let verdict = TrackedVerdict {
+            id: id.clone(),
+            function_name: symbol_identity.qualified_symbol.clone(),
+            full_path: symbol_identity.file.clone(),
+            file: symbol_identity.file.clone(),
+            line: 0,
+            confidence: 0.0,
+            project: symbol_identity.repository.clone(),
+            verdict_date: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            outcome: actual_outcome.clone(),
+            outcome_date: Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            ),
+            notes: None,
+            removed_commit: None,
+            symbol_identity: Some(symbol_identity.clone()),
+            prediction: Some(prediction),
+            human_decision: Some(human_decision),
+            post_removal_outcome: Some(actual_outcome),
         };
 
         self.verdicts.push(verdict);

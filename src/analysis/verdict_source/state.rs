@@ -5,6 +5,7 @@ use crate::analysis::dynamic_refs::DynamicReference;
 use crate::analysis::roots::ReachabilityMap;
 use crate::analysis::training_data::TrainingLabel;
 use crate::analysis::verdict_source::label_source::VerdictState;
+use crate::analysis::verdict_source::LabelSource;
 use crate::graph::call_graph::{CallGraph, FunctionNode};
 use crate::graph::traits::GraphMetrics;
 use crate::ml::classifier::DeadCodeClassifier;
@@ -53,6 +54,7 @@ pub struct Verdict {
     pub provenance: VerdictProvenance,
     pub evidence_conflicts: Vec<EvidenceConflict>,
     pub deletion_recommendation: DeletionRecommendation,
+    pub label_provenance: Option<LabelProvenance>,
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +102,14 @@ pub struct VerdictProvenance {
     pub static_enabled: bool,
     /// Model file path (if any)
     pub model_path: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LabelProvenance {
+    pub source: LabelSource,
+    pub verified_by: Option<String>,
+    pub verification_date: Option<i64>,
+    pub evidence_chain: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -439,6 +449,7 @@ impl VerdictEngine {
                 provenance: self.provenance.clone(),
                 evidence_conflicts: Vec::new(),
                 deletion_recommendation: DeletionRecommendation::DoNotDelete,
+                label_provenance: None,
             };
         }
 
@@ -619,6 +630,7 @@ impl VerdictEngine {
             provenance: self.provenance.clone(),
             evidence_conflicts,
             deletion_recommendation,
+            label_provenance: None,
         }
     }
 

@@ -12,6 +12,15 @@ pub enum LabelSource {
     DatasetVerified,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LabelLevel {
+    Level0 = 0,
+    Level1 = 1,
+    Level2 = 2,
+    Level3 = 3,
+    Level4 = 4,
+}
+
 impl std::fmt::Display for LabelSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -37,6 +46,17 @@ impl LabelSource {
             LabelSource::Silver => 0.30,
             LabelSource::StaticHeuristic => 0.0,
             LabelSource::Weak => 0.0,
+        }
+    }
+
+    pub fn level(&self) -> LabelLevel {
+        match self {
+            LabelSource::ProductionVerified => LabelLevel::Level4,
+            LabelSource::HumanVerified => LabelLevel::Level3,
+            LabelSource::GitVerified => LabelLevel::Level2,
+            LabelSource::DatasetVerified => LabelLevel::Level1,
+            LabelSource::Silver => LabelLevel::Level0,
+            LabelSource::StaticHeuristic | LabelSource::Weak => LabelLevel::Level0,
         }
     }
 

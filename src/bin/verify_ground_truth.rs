@@ -158,95 +158,137 @@ fn get_candidates(
     // Return top N
     verdicts.into_iter().take(count).collect()
 }
-
 fn verify_with_git(
     analysis: &code_intelligence::analysis::context::ProjectAnalysis,
     candidates: &[code_intelligence::analysis::verdict_source::Verdict],
 ) -> Vec<VerifiedEntry> {
+    use code_intelligence::SymbolIdentity;
+
     let mut verified = Vec::new();
 
     for verdict in candidates {
-        // Get the file and function name
-        let file = verdict
-            .full_path
-            .split("::")
-            .next()
-            .unwrap_or(&verdict.full_path);
-        let function_name = &verdict.function_name;
+        let identity = SymbolIdentity::new(
+            &analysis.root.to_string_lossy(),
+            "",
+            &verdict.full_path,
+            "unknown",
+            &verdict.function_name,
+            &verdict.function_name,
+            "",
+        );
 
-        // Check if function was REMOVED (dead) or STILL EXISTS (alive)
-        let removal_check = check_function_removal(&analysis.root, file, function_name);
+        let lineage = track_symbol_evolution(&analysis.root, &identity);
 
-        let (label, confidence, reason) = match removal_check {
-            FunctionStatus::StillExists => (
-                TrainingLabel::Alive,
-                0.85,
-                "Function exists in current code and has git history".to_string(),
-            ),
-            FunctionStatus::WasRemoved => (
-                TrainingLabel::Dead,
-                0.90,
-                "Function was removed from codebase in git history".to_string(),
-            ),
-            FunctionStatus::NeverExisted => continue, // Skip - can't verify
-        };
-
-        verified.push(VerifiedEntry {
-            full_path: verdict.full_path.clone(),
-            function_name: verdict.function_name.clone(),
-            file: verdict.full_path.clone(),
-            line: 0,
-            label,
-            confidence,
-            label_source: LabelSource::GitVerified,
-            verified_by: "git_history".to_string(),
-            verification_date: chrono::Utc::now().timestamp(),
-            reason,
-            repository: analysis.root.to_string_lossy().to_string(),
-            language: "unknown".to_string(),
-        });
+        match &lineage.current_identity {
+            Some(_) => {
+                verified.push(VerifiedEntry {
+                    full_path: verdict.full_path.clone(),
+                    function_name: verdict.function_name.clone(),
+                    file: verdict.full_path.clone(),
+                    line: 0,
+                    label: TrainingLabel::Alive,
+                    confidence: 0.90,
+                    label_source: LabelSource::GitVerified,
+                    verified_by: "symbol_tracking".to_string(),
+                    verification_date: chrono::Utc::now().timestamp(),
+                    reason: format!(
+                        "Symbol exists in current code ({} events in lineage)",
+                        lineage.events.len()
+                    ),
+                    repository: analysis.root.to_string_lossy().to_string(),
+                    language: "unknown".to_string(),
+                });
+            }
+            None if lineage.is_removed() => {
+                verified.push(VerifiedEntry {
+                    full_path: verdict.full_path.clone(),
+                    function_name: verdict.function_name.clone(),
+                    file: verdict.full_path.clone(),
+                    line: 0,
+                    label: TrainingLabel::Dead,
+                    confidence: 0.95,
+                    label_source: LabelSource::GitVerified,
+                    verified_by: "symbol_tracking".to_string(),
+                    verification_date: chrono::Utc::now().timestamp(),
+                    reason: format!(
+                        "Symbol removed at commit {}",
+                        lineage.last_commit().unwrap_or("unknown")
+                    ),
+                    repository: analysis.root.to_string_lossy().to_string(),
+                    language: "unknown".to_string(),
+                });
+            }
+            None => continue,
+        }
     }
 
     verified
 }
 
-#[derive(Debug)]
-enum FunctionStatus {
-    StillExists,
-    WasRemoved,
-    NeverExisted,
-}
-
-fn check_function_removal(root: &Path, file: &str, function_name: &str) -> FunctionStatus {
+fn track_symbol_evolution(
+    root: &Path,
+    identity: &code_intelligence::SymbolIdentity,
+) -> code_intelligence::analysis::symbol_evolution::SymbolLineage {
+    use code_intelligence::analysis::symbol_evolution::{SymbolEvent, SymbolLineage};
     use std::process::Command;
 
-    // Check if function exists in current code
-    let grep_current = Command::new("grep")
-        .current_dir(root)
-        .args(["-l", function_name, file])
-        .output();
+    let mut lineage = SymbolLineage::new(identity.clone());
 
-    let exists_current = grep_current.map(|o| o.status.success()).unwrap_or(false);
-
-    if exists_current {
-        return FunctionStatus::StillExists;
-    }
-
-    // Check if function was in git history but removed
     let git_log = Command::new("git")
         .current_dir(root)
-        .args(["log", "--all", "--oneline", "-S", function_name, "--", file])
+        .args([
+            "log",
+            "--all",
+            "--follow",
+            "--format=%H|%ai|%s",
+            "-S",
+            &identity.qualified_symbol,
+            "--",
+            &identity.file,
+        ])
         .output();
 
     if let Ok(output) = git_log {
-        if output.status.success() && !output.stdout.is_empty() {
-            return FunctionStatus::WasRemoved;
+        if output.status.success() {
+            let commits: Vec<String> = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(|s| s.to_string())
+                .collect();
+
+            if commits.is_empty() {
+                lineage.current_identity = Some(identity.clone());
+            } else {
+                for (i, commit_line) in commits.iter().enumerate() {
+                    let parts: Vec<&str> = commit_line.split('|').collect();
+                    if parts.len() >= 3 {
+                        let commit = parts[0];
+                        let timestamp = chrono::DateTime::parse_from_rfc3339(parts[1])
+                            .map(|d| d.timestamp())
+                            .unwrap_or(0);
+
+                        if i == 0 {
+                            lineage.events.push(SymbolEvent::Created {
+                                commit: commit.to_string(),
+                                timestamp,
+                            });
+                        }
+                    }
+                }
+
+                lineage.events.push(SymbolEvent::Removed {
+                    commit: commits[0]
+                        .split('|')
+                        .next()
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    timestamp: chrono::Utc::now().timestamp(),
+                });
+            }
         }
     }
 
-    FunctionStatus::NeverExisted
+    lineage
 }
-
 fn verify_interactive(
     analysis: &code_intelligence::analysis::context::ProjectAnalysis,
     candidates: &[code_intelligence::analysis::verdict_source::Verdict],
