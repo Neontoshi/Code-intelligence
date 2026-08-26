@@ -884,6 +884,7 @@ fn evaluate_subset_classifier(
     let mut tn = 0;
     let mut fp = 0;
     let mut fn_ = 0;
+    let mut scores: Vec<(f64, bool)> = Vec::new();
 
     for example in examples {
         if example.label == TrainingLabel::Unknown {
@@ -893,6 +894,9 @@ fn evaluate_subset_classifier(
         let full = example.features.to_feature_vector();
         let subset: Vec<f64> = feature_indices.iter().map(|&i| full[i]).collect();
         let pred = classifier.predict(&subset);
+
+        scores.push((pred, example.label == TrainingLabel::Dead));
+
         let pred_label = if pred >= 0.5 {
             TrainingLabel::Dead
         } else {
@@ -908,9 +912,11 @@ fn evaluate_subset_classifier(
         }
     }
 
-    compute_metrics_from_confusion(tp, tn, fp, fn_)
+    let mut metrics = compute_metrics_from_confusion(tp, tn, fp, fn_);
+    metrics.pr_auc = compute_pr_auc(&scores);
+    metrics.roc_auc = compute_roc_auc(&scores);
+    metrics
 }
-
 // ============ STEP 2: REPOSITORY-ISOLATED EVALUATION ============
 
 fn run_repository_isolated(
@@ -1153,19 +1159,22 @@ fn evaluate_static_only(examples: &[TrainingExample]) -> ModelMetrics {
     let mut tn = 0;
     let mut fp = 0;
     let mut fn_ = 0;
+    let mut scores: Vec<(f64, bool)> = Vec::new();
 
     for example in examples {
         if example.label == TrainingLabel::Unknown {
             continue;
         }
 
-        // Static heuristic: dead if fan_in == 0 and not public
         let is_dead = example.features.fan_in == 0 && !example.features.is_public;
         let pred_label = if is_dead {
             TrainingLabel::Dead
         } else {
             TrainingLabel::Alive
         };
+
+        let score = if is_dead { 1.0 } else { 0.0 };
+        scores.push((score, example.label == TrainingLabel::Dead));
 
         match (pred_label, &example.label) {
             (TrainingLabel::Dead, TrainingLabel::Dead) => tp += 1,
@@ -1176,7 +1185,10 @@ fn evaluate_static_only(examples: &[TrainingExample]) -> ModelMetrics {
         }
     }
 
-    compute_metrics_from_confusion(tp, tn, fp, fn_)
+    let mut metrics = compute_metrics_from_confusion(tp, tn, fp, fn_);
+    metrics.pr_auc = compute_pr_auc(&scores);
+    metrics.roc_auc = compute_roc_auc(&scores);
+    metrics
 }
 
 fn evaluate_static_plus_ml(
@@ -1187,22 +1199,23 @@ fn evaluate_static_plus_ml(
     let mut tn = 0;
     let mut fp = 0;
     let mut fn_ = 0;
+    let mut scores: Vec<(f64, bool)> = Vec::new();
 
     for example in examples {
         if example.label == TrainingLabel::Unknown {
             continue;
         }
 
-        // Combined: ML probability + static heuristic
         let ml_dead_prob = classifier.predict_dead_probability(example);
         let static_dead = example.features.fan_in == 0 && !example.features.is_public;
 
-        // Weighted combination (60% ML, 40% static)
         let combined_score = if static_dead {
             ml_dead_prob * 0.6 + 0.4
         } else {
             ml_dead_prob * 0.6
         };
+
+        scores.push((combined_score, example.label == TrainingLabel::Dead));
 
         let pred_label = if combined_score >= 0.5 {
             TrainingLabel::Dead
@@ -1219,7 +1232,10 @@ fn evaluate_static_plus_ml(
         }
     }
 
-    compute_metrics_from_confusion(tp, tn, fp, fn_)
+    let mut metrics = compute_metrics_from_confusion(tp, tn, fp, fn_);
+    metrics.pr_auc = compute_pr_auc(&scores);
+    metrics.roc_auc = compute_roc_auc(&scores);
+    metrics
 }
 
 // ============ STEP 5: CALIBRATION METRICS ============
@@ -1332,28 +1348,7 @@ fn evaluate_classifier_full(
     classifier: &DeadCodeClassifier,
     examples: &[TrainingExample],
 ) -> ModelMetrics {
-    let mut tp = 0;
-    let mut tn = 0;
-    let mut fp = 0;
-    let mut fn_ = 0;
-
-    for example in examples {
-        if example.label == TrainingLabel::Unknown {
-            continue;
-        }
-
-        let pred = classifier.predict(example);
-
-        match (pred, &example.label) {
-            (TrainingLabel::Dead, TrainingLabel::Dead) => tp += 1,
-            (TrainingLabel::Alive, TrainingLabel::Alive) => tn += 1,
-            (TrainingLabel::Alive, TrainingLabel::Dead) => fn_ += 1,
-            (TrainingLabel::Dead, TrainingLabel::Alive) => fp += 1,
-            _ => {}
-        }
-    }
-
-    compute_metrics_from_confusion(tp, tn, fp, fn_)
+    evaluate_classifier_with_auc(classifier, examples)
 }
 
 fn compute_metrics_from_confusion(tp: usize, tn: usize, fp: usize, fn_: usize) -> ModelMetrics {
@@ -1405,6 +1400,128 @@ fn compute_metrics_from_confusion(tp: usize, tn: usize, fp: usize, fn_: usize) -
         pr_auc: 0.0,
         roc_auc: 0.0,
     }
+}
+
+fn compute_pr_auc(scores: &[(f64, bool)]) -> f64 {
+    if scores.is_empty() {
+        return 0.0;
+    }
+
+    let mut sorted: Vec<(f64, bool)> = scores.to_vec();
+    sorted.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let total_positives = sorted.iter().filter(|(_, is_dead)| *is_dead).count();
+    if total_positives == 0 {
+        return 0.0;
+    }
+
+    let mut tp = 0;
+    let mut fp = 0;
+    let mut prev_precision = 1.0;
+    let mut prev_recall = 0.0;
+    let mut auc = 0.0;
+
+    for (i, (_, is_dead)) in sorted.iter().enumerate() {
+        if *is_dead {
+            tp += 1;
+        } else {
+            fp += 1;
+        }
+
+        let precision = if tp + fp > 0 {
+            tp as f64 / (tp + fp) as f64
+        } else {
+            0.0
+        };
+        let recall = tp as f64 / total_positives as f64;
+
+        if i > 0 {
+            auc += (recall - prev_recall) * (precision + prev_precision) / 2.0;
+        }
+
+        prev_precision = precision;
+        prev_recall = recall;
+    }
+
+    auc
+}
+
+fn compute_roc_auc(scores: &[(f64, bool)]) -> f64 {
+    if scores.is_empty() {
+        return 0.0;
+    }
+
+    let mut sorted: Vec<(f64, bool)> = scores.to_vec();
+    sorted.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let total_positives = sorted.iter().filter(|(_, is_dead)| *is_dead).count();
+    let total_negatives = sorted.len() - total_positives;
+
+    if total_positives == 0 || total_negatives == 0 {
+        return 0.0;
+    }
+
+    let mut tp = 0;
+    let mut fp = 0;
+    let mut prev_fpr = 0.0;
+    let mut prev_tpr = 0.0;
+    let mut auc = 0.0;
+
+    for (i, (_, is_dead)) in sorted.iter().enumerate() {
+        if *is_dead {
+            tp += 1;
+        } else {
+            fp += 1;
+        }
+
+        let tpr = tp as f64 / total_positives as f64;
+        let fpr = fp as f64 / total_negatives as f64;
+
+        if i > 0 {
+            auc += (fpr - prev_fpr) * (tpr + prev_tpr) / 2.0;
+        }
+
+        prev_fpr = fpr;
+        prev_tpr = tpr;
+    }
+
+    auc
+}
+
+fn evaluate_classifier_with_auc(
+    classifier: &DeadCodeClassifier,
+    examples: &[TrainingExample],
+) -> ModelMetrics {
+    let mut tp = 0;
+    let mut tn = 0;
+    let mut fp = 0;
+    let mut fn_ = 0;
+    let mut scores: Vec<(f64, bool)> = Vec::new();
+
+    for example in examples {
+        if example.label == TrainingLabel::Unknown {
+            continue;
+        }
+
+        let dead_prob = classifier.predict_dead_probability(example);
+        let is_dead = example.label == TrainingLabel::Dead;
+        scores.push((dead_prob, is_dead));
+
+        let pred = classifier.predict(example);
+
+        match (pred, &example.label) {
+            (TrainingLabel::Dead, TrainingLabel::Dead) => tp += 1,
+            (TrainingLabel::Alive, TrainingLabel::Alive) => tn += 1,
+            (TrainingLabel::Alive, TrainingLabel::Dead) => fn_ += 1,
+            (TrainingLabel::Dead, TrainingLabel::Alive) => fp += 1,
+            _ => {}
+        }
+    }
+
+    let mut metrics = compute_metrics_from_confusion(tp, tn, fp, fn_);
+    metrics.pr_auc = compute_pr_auc(&scores);
+    metrics.roc_auc = compute_roc_auc(&scores);
+    metrics
 }
 
 fn calculate_std(values: &[f64]) -> f64 {
@@ -1553,37 +1670,43 @@ fn generate_report(results: &Phase2Results, output_dir: &PathBuf) -> Result<()> 
 
     // Model comparison
     markdown.push_str("\n## Model Comparison\n\n");
-    markdown.push_str("| Model | Accuracy | Precision | Recall | F1 | FPR | FNR | Specificity |\n");
-    markdown.push_str("|-------|----------|-----------|--------|----|-----|-----|-------------|\n");
+    markdown.push_str("| Model | Accuracy | Precision | Recall | F1 | FPR | FNR | Specificity | PR-AUC | ROC-AUC |\n");
+    markdown.push_str("|-------|----------|-----------|--------|----|-----|-----|-------------|--------|---------|\n");
     markdown.push_str(&format!(
-        "| Static Only | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% |\n",
+        "| Static Only | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.3} | {:.3} |\n",
         results.model_comparison.static_only.accuracy * 100.0,
         results.model_comparison.static_only.precision * 100.0,
         results.model_comparison.static_only.recall * 100.0,
         results.model_comparison.static_only.f1 * 100.0,
         results.model_comparison.static_only.fpr * 100.0,
         results.model_comparison.static_only.fnr * 100.0,
-        results.model_comparison.static_only.specificity * 100.0
+        results.model_comparison.static_only.specificity * 100.0,
+        results.model_comparison.static_only.pr_auc,
+        results.model_comparison.static_only.roc_auc
     ));
     markdown.push_str(&format!(
-        "| ML Only | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% |\n",
+        "| ML Only | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.3} | {:.3} |\n",
         results.model_comparison.ml_only.accuracy * 100.0,
         results.model_comparison.ml_only.precision * 100.0,
         results.model_comparison.ml_only.recall * 100.0,
         results.model_comparison.ml_only.f1 * 100.0,
         results.model_comparison.ml_only.fpr * 100.0,
         results.model_comparison.ml_only.fnr * 100.0,
-        results.model_comparison.ml_only.specificity * 100.0
+        results.model_comparison.ml_only.specificity * 100.0,
+        results.model_comparison.ml_only.pr_auc,
+        results.model_comparison.ml_only.roc_auc
     ));
     markdown.push_str(&format!(
-        "| Static + ML | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% |\n",
+        "| Static + ML | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.1}% | {:.3} | {:.3} |\n",
         results.model_comparison.static_plus_ml.accuracy * 100.0,
         results.model_comparison.static_plus_ml.precision * 100.0,
         results.model_comparison.static_plus_ml.recall * 100.0,
         results.model_comparison.static_plus_ml.f1 * 100.0,
         results.model_comparison.static_plus_ml.fpr * 100.0,
         results.model_comparison.static_plus_ml.fnr * 100.0,
-        results.model_comparison.static_plus_ml.specificity * 100.0
+        results.model_comparison.static_plus_ml.specificity * 100.0,
+        results.model_comparison.static_plus_ml.pr_auc,
+        results.model_comparison.static_plus_ml.roc_auc
     ));
 
     // Per-language benchmarks
