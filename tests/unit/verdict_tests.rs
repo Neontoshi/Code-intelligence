@@ -187,6 +187,7 @@ fn create_test_verdict(
             static_enabled: true,
             model_path: None,
         },
+        label_provenance: None,
         evidence_conflicts: vec![],
         deletion_recommendation: DeletionRecommendation::NeedsReview,
     }

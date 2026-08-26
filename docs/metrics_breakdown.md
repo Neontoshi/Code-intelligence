@@ -11,7 +11,7 @@ This report separates the performance of each component in the dead code detecti
 | Component | Precision | Recall | F1 | FPR | Description |
 |-----------|-----------|--------|-----|-----|-------------|
 | **Static Heuristic** | 91.2% | 82.1% | 86.4% | 4.3% | Rule-based detection without ML |
-| **ML Model Only** | 94.7% | 90.3% | 92.4% | 2.8% | Logistic regression on 46 features |
+| **ML Model Only** | 94.7% | 90.3% | 92.4% | 2.8% | Logistic regression on 224 features |
 | **Final Verdict Engine** | 96.8% | 92.1% | 94.4% | 2.1% | Ensemble: 60% static + 40% ML |
 
 ---

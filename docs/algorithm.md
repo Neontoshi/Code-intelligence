@@ -35,8 +35,7 @@ The dead code detection algorithm combines **static analysis**, **graph theory**
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                    5. FEATURE EXTRACTION                         │
-│  46 features: Graph │ Signature │ Name │ File │ Type │ Complexity│
-└─────────────────────────────────────────────────────────────────┘
+│  224 features: Graph │ Signature │ Name │ File │ Type │ Complexity│└─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
@@ -439,7 +438,7 @@ unused_function features:
   complexity: 1.0
   param_count: 0
   return_count: 1
-  // ... 46 total features
+  // ... 224 total features
 ```
 
 ### Step 6: ML Prediction
@@ -465,7 +464,7 @@ The dead code detection algorithm combines:
 
 1. **Static Analysis** — parse, build graphs, detect roots
 2. **Graph Theory** — reachability analysis
-3. **Machine Learning** — 46 features → logistic regression
+3. **Machine Learning** — 224 features → logistic regression
 4. **Signal Fusion** — combine static and ML signals
 5. **Filtering** — prevent false positives
 6. **Explainability** — every verdict has supporting evidence

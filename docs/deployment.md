@@ -123,7 +123,7 @@ llm_model = "phi:2.7b"
 
 All release builds bundle default weights directly into memory via `include_bytes!`:
 
-- **Dead Code Classifier:** `models/model.bin` (calibrated logistic regression on 46 features)
+- **Dead Code Classifier:** `models/model.bin` (calibrated logistic regression on 224 features)
 - **Duplicate Classifier:** `models/duplicate_model_v4.bin` (101 structural & token features)
 
 ### Custom Model Overrides (Optional)

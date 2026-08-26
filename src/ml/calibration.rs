@@ -37,6 +37,7 @@ pub struct CalibrationBin {
 pub enum CalibrationMethod {
     TemperatureScaling,
     HistogramBinning,
+    IsotonicRegression,
     #[default]
     None,
 }
@@ -54,6 +55,9 @@ impl CalibratedModel {
             }
             CalibrationMethod::HistogramBinning => {
                 Self::calibrate_histogram(classifier, val_examples)
+            }
+            CalibrationMethod::IsotonicRegression => {
+                Self::calibrate_isotonic(classifier, val_examples)
             }
             CalibrationMethod::None => Self {
                 classifier: classifier.clone(),
@@ -203,6 +207,80 @@ impl CalibratedModel {
         }
     }
 
+    fn calibrate_isotonic(classifier: &LinearClassifier, val_examples: &[TrainingExample]) -> Self {
+        let labeled: Vec<_> = val_examples
+            .iter()
+            .filter(|e| e.label != TrainingLabel::Unknown)
+            .collect();
+
+        if labeled.is_empty() {
+            return Self {
+                classifier: classifier.clone(),
+                calibration: CalibrationParams {
+                    temperature: 1.0,
+                    bins: Vec::new(),
+                    method: CalibrationMethod::IsotonicRegression,
+                    num_samples: 0,
+                },
+            };
+        }
+
+        let mut preds: Vec<(f64, f64)> = labeled
+            .iter()
+            .map(|e| {
+                let features = e.features.to_feature_vector();
+                let prob = classifier.predict(&features);
+                let target = match e.label {
+                    TrainingLabel::Alive => 1.0,
+                    TrainingLabel::Dead => 0.0,
+                    _ => 0.5,
+                };
+                (prob, target)
+            })
+            .collect();
+
+        preds.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+        let n = preds.len();
+        let mut iso_bins = Vec::new();
+
+        if n > 0 {
+            let num_bins = 20.min(n);
+            let bin_size = (n as f64 / num_bins as f64).ceil() as usize;
+
+            for i in 0..num_bins {
+                let start = i * bin_size;
+                let end = ((i + 1) * bin_size).min(n);
+                if start >= n {
+                    break;
+                }
+
+                let slice = &preds[start..end];
+                let lower = slice.first().map(|p| p.0).unwrap_or(0.0);
+                let upper = slice.last().map(|p| p.0).unwrap_or(1.0);
+                let empirical_accuracy =
+                    slice.iter().map(|p| p.1).sum::<f64>() / slice.len() as f64;
+
+                iso_bins.push(CalibrationBin {
+                    lower,
+                    upper,
+                    empirical_accuracy,
+                    count: slice.len(),
+                });
+            }
+        }
+
+        Self {
+            classifier: classifier.clone(),
+            calibration: CalibrationParams {
+                temperature: 1.0,
+                bins: iso_bins,
+                method: CalibrationMethod::IsotonicRegression,
+                num_samples: labeled.len(),
+            },
+        }
+    }
+
     /// Predict with calibration
     pub fn predict_calibrated(&self, features: &[f64]) -> f64 {
         let raw = self.classifier.predict(features);
@@ -221,6 +299,14 @@ impl CalibratedModel {
                     }
                 }
                 // If outside all bins, use raw
+                raw
+            }
+            CalibrationMethod::IsotonicRegression => {
+                for bin in &self.calibration.bins {
+                    if raw >= bin.lower && raw < bin.upper {
+                        return bin.empirical_accuracy;
+                    }
+                }
                 raw
             }
             CalibrationMethod::None => raw,
@@ -327,6 +413,15 @@ impl DeadCodeClassifier {
                     }
                     raw
                 }
+                CalibrationMethod::IsotonicRegression => {
+                    for bin in &calibration.bins {
+                        if raw >= bin.lower && raw < bin.upper {
+                            return bin.empirical_accuracy;
+                        }
+                    }
+                    raw
+                }
+
                 CalibrationMethod::None => raw,
             }
         } else {

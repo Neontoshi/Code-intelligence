@@ -8,7 +8,7 @@ Train models with feature subsets removed. Measure F1 on validation set.
 
 | Feature Set | F1 | Δ from Full |
 |-------------|-----|-------------|
-| Full (46 features) | 94.4% | - |
+| Full (224 features) | 94.4% | - |
 | Graph only | 86.2% | -8.2% |
 | Graph + Signature | 89.7% | -4.7% |
 | Graph + Signature + Complexity | 91.3% | -3.1% |

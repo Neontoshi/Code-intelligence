@@ -255,7 +255,7 @@ Multiple graphs represent different relationships:
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                   4. Feature Extraction                           │
-│  Extracts 46 features:                                           │
+│  Extracts 224 features:                                           │
 │  - Graph: fan_in, fan_out, depth, cycle                          │
 │  - Signature: params, returns, public, async                     │
 │  - Name: patterns, length                                        │

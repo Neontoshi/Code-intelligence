@@ -99,10 +99,11 @@ fn main() -> Result<()> {
     let method = match args.method.as_str() {
         "temperature" => CalibrationMethod::TemperatureScaling,
         "histogram" => CalibrationMethod::HistogramBinning,
+        "isotonic" => CalibrationMethod::IsotonicRegression,
         "none" => CalibrationMethod::None,
         _ => {
             eprintln!("Unknown method: {}", args.method);
-            eprintln!("Available: temperature, histogram, none");
+            eprintln!("Available: temperature, histogram, isotonic, none");
             std::process::exit(1);
         }
     };
