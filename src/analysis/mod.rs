@@ -11,6 +11,7 @@ pub mod outcomes;
 pub mod roots;
 pub mod service;
 pub mod training_data;
+pub mod training_data_filter;
 pub mod verdict_source;
 
 pub use context::AnalysisIndexes;

@@ -1047,6 +1047,10 @@ impl TrainingExample {
         }
     }
 
+    pub fn is_trainable(&self) -> bool {
+        self.label_source.is_trainable() && self.label != TrainingLabel::Unknown
+    }
+
     pub fn is_verified(&self) -> bool {
         self.label_source.is_verified()
     }
@@ -1054,6 +1058,7 @@ impl TrainingExample {
     pub fn is_heuristic(&self) -> bool {
         self.label_source.is_heuristic()
     }
+
     pub fn detect_language(file: &str) -> String {
         if file.ends_with(".rs") {
             "rust".to_string()

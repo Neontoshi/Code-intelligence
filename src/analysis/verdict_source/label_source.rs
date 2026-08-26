@@ -1,23 +1,14 @@
-// src/analysis/verdict/label_source.rs
-
 use serde::{Deserialize, Serialize};
 
 /// Source of a training label - critical for avoiding circularity
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum LabelSource {
-    /// Generated entirely by static analysis (heuristic)
     StaticHeuristic,
-    /// Silver label - combination of heuristics with some confidence
     Silver,
-    /// Weak label - low confidence heuristic
     Weak,
-    /// Verified by a human developer
     HumanVerified,
-    /// Verified by Git history (e.g., code was removed, tests passed)
     GitVerified,
-    /// Verified in production (telemetry shows it's used)
     ProductionVerified,
-    /// From a verified dataset (e.g., public benchmark)
     DatasetVerified,
 }
 
@@ -36,6 +27,25 @@ impl std::fmt::Display for LabelSource {
 }
 
 impl LabelSource {
+    /// Training weight - whether this label should be used for ML training
+    pub fn training_weight(&self) -> f64 {
+        match self {
+            LabelSource::ProductionVerified => 1.0,
+            LabelSource::HumanVerified => 0.95,
+            LabelSource::GitVerified => 0.85,
+            LabelSource::DatasetVerified => 0.80,
+            LabelSource::Silver => 0.30,
+            LabelSource::StaticHeuristic => 0.0,
+            LabelSource::Weak => 0.0,
+        }
+    }
+
+    /// Whether this label can be used for training at all
+    pub fn is_trainable(&self) -> bool {
+        self.training_weight() > 0.0
+    }
+
+    /// Confidence multiplier for display purposes
     pub fn confidence_multiplier(&self) -> f64 {
         match self {
             LabelSource::ProductionVerified => 1.0,
@@ -48,6 +58,7 @@ impl LabelSource {
         }
     }
 
+    /// Whether this label is verified (not heuristic)
     pub fn is_verified(&self) -> bool {
         matches!(
             self,
@@ -58,11 +69,25 @@ impl LabelSource {
         )
     }
 
+    /// Whether this is a heuristic (not verified)
     pub fn is_heuristic(&self) -> bool {
         matches!(
             self,
             LabelSource::StaticHeuristic | LabelSource::Silver | LabelSource::Weak
         )
+    }
+
+    /// Priority for conflict resolution (higher wins)
+    pub fn priority(&self) -> u8 {
+        match self {
+            LabelSource::ProductionVerified => 7,
+            LabelSource::HumanVerified => 6,
+            LabelSource::GitVerified => 5,
+            LabelSource::DatasetVerified => 4,
+            LabelSource::Silver => 3,
+            LabelSource::StaticHeuristic => 2,
+            LabelSource::Weak => 1,
+        }
     }
 }
 

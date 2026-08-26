@@ -13,7 +13,7 @@ use code_intelligence::ml::classifier::DeadCodeClassifier;
 use code_intelligence::Pipeline;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Build verified ground-truth dataset")]
@@ -163,48 +163,88 @@ fn verify_with_git(
     analysis: &code_intelligence::analysis::context::ProjectAnalysis,
     candidates: &[code_intelligence::analysis::verdict_source::Verdict],
 ) -> Vec<VerifiedEntry> {
-    use std::process::Command;
     let mut verified = Vec::new();
 
     for verdict in candidates {
-        // Get the file path from the verdict
-        let file = &verdict
+        // Get the file and function name
+        let file = verdict
             .full_path
             .split("::")
             .next()
             .unwrap_or(&verdict.full_path);
+        let function_name = &verdict.function_name;
 
-        // Check if function appears in git log
-        let git_check = Command::new("git")
-            .current_dir(&analysis.root)
-            .args(["log", "--oneline", "-1", "--", file])
-            .output();
+        // Check if function was REMOVED (dead) or STILL EXISTS (alive)
+        let removal_check = check_function_removal(&analysis.root, file, function_name);
 
-        let is_verified = if let Ok(output) = git_check {
-            output.status.success() && !output.stdout.is_empty()
-        } else {
-            false
+        let (label, confidence, reason) = match removal_check {
+            FunctionStatus::StillExists => (
+                TrainingLabel::Alive,
+                0.85,
+                "Function exists in current code and has git history".to_string(),
+            ),
+            FunctionStatus::WasRemoved => (
+                TrainingLabel::Dead,
+                0.90,
+                "Function was removed from codebase in git history".to_string(),
+            ),
+            FunctionStatus::NeverExisted => continue, // Skip - can't verify
         };
 
-        if is_verified {
-            verified.push(VerifiedEntry {
-                full_path: verdict.full_path.clone(),
-                function_name: verdict.function_name.clone(),
-                file: verdict.full_path.clone(),
-                line: 0,
-                label: TrainingLabel::Alive,
-                confidence: 0.90,
-                label_source: LabelSource::GitVerified,
-                verified_by: "git".to_string(),
-                verification_date: chrono::Utc::now().timestamp(),
-                reason: "Function appears in Git history".to_string(),
-                repository: analysis.root.to_string_lossy().to_string(),
-                language: "unknown".to_string(),
-            });
-        }
+        verified.push(VerifiedEntry {
+            full_path: verdict.full_path.clone(),
+            function_name: verdict.function_name.clone(),
+            file: verdict.full_path.clone(),
+            line: 0,
+            label,
+            confidence,
+            label_source: LabelSource::GitVerified,
+            verified_by: "git_history".to_string(),
+            verification_date: chrono::Utc::now().timestamp(),
+            reason,
+            repository: analysis.root.to_string_lossy().to_string(),
+            language: "unknown".to_string(),
+        });
     }
 
     verified
+}
+
+#[derive(Debug)]
+enum FunctionStatus {
+    StillExists,
+    WasRemoved,
+    NeverExisted,
+}
+
+fn check_function_removal(root: &Path, file: &str, function_name: &str) -> FunctionStatus {
+    use std::process::Command;
+
+    // Check if function exists in current code
+    let grep_current = Command::new("grep")
+        .current_dir(root)
+        .args(["-l", function_name, file])
+        .output();
+
+    let exists_current = grep_current.map(|o| o.status.success()).unwrap_or(false);
+
+    if exists_current {
+        return FunctionStatus::StillExists;
+    }
+
+    // Check if function was in git history but removed
+    let git_log = Command::new("git")
+        .current_dir(root)
+        .args(["log", "--all", "--oneline", "-S", function_name, "--", file])
+        .output();
+
+    if let Ok(output) = git_log {
+        if output.status.success() && !output.stdout.is_empty() {
+            return FunctionStatus::WasRemoved;
+        }
+    }
+
+    FunctionStatus::NeverExisted
 }
 
 fn verify_interactive(

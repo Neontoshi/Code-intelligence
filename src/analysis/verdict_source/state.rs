@@ -3,7 +3,7 @@
 use crate::analysis::dead_code::filters::is_never_dead;
 use crate::analysis::dynamic_refs::DynamicReference;
 use crate::analysis::roots::ReachabilityMap;
-use crate::analysis::training_data::{TrainingExample, TrainingLabel};
+use crate::analysis::training_data::TrainingLabel;
 use crate::analysis::verdict_source::label_source::VerdictState;
 use crate::graph::call_graph::{CallGraph, FunctionNode};
 use crate::graph::traits::GraphMetrics;
@@ -434,31 +434,14 @@ impl VerdictEngine {
             if let Some(model) = &self.ml_model {
                 use crate::analysis::training_data::FunctionFeatures;
                 let features = FunctionFeatures::from_function(func, call_graph);
-                let example = TrainingExample {
-                    function_name: func.name.clone(),
-                    full_path: func.full_path.clone(),
-                    file: func.file.clone(),
-                    language: TrainingExample::detect_language(&func.file),
-                    features,
-                    label: TrainingLabel::Unknown,
-                    confidence: 0.0,
-                    source: "ml".to_string(),
-                    repository_id: None,
-                    commit_hash: None,
-                    dataset_split: None,
-                    label_reason: Some("ml".to_string()),
-                    label_version: Some(1),
-                    label_source: crate::analysis::verdict_source::LabelSource::StaticHeuristic,
-                    generated_by_model: self.config.model_version.clone(),
-                    verified_by: None,
-                    created_at: Some(chrono::Utc::now().timestamp()),
-                };
-                // Use calibrated probability if available
-                let dead_prob = if model.calibration.is_some() {
-                    1.0 - model.predict_alive_calibrated(&example)
-                } else {
-                    1.0 - model.predict_probability(&example)
-                };
+                let feature_vector = features.to_feature_vector();
+
+                // Get prediction (probability of being ALIVE)
+                // predict_calibrated handles both calibrated and raw predictions
+                let alive_prob = model.predict_calibrated(&feature_vector);
+
+                // Convert to dead probability
+                let dead_prob = 1.0 - alive_prob;
 
                 signals.push(Signal {
                     name: "ml_prediction".to_string(),
