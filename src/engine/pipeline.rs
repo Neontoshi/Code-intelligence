@@ -418,7 +418,7 @@ impl Pipeline {
         let raw = self.stage_collect(root);
         self.report(&format!("found {} files", raw.files.len()));
 
-        let parsed = self.stage_parse_parallel(raw);
+        let parsed = self.parse_with_cache(raw);
         self.report(&format!("parsed {} files", parsed.files.len()));
 
         // 2. Check for incremental changes
@@ -527,8 +527,72 @@ impl Pipeline {
         Ok(analysis)
     }
 
-    fn load_from_cache(&self, _project_hash: &str) -> Option<ProjectAnalysis> {
+    fn load_from_cache(&self, project_hash: &str) -> Option<ProjectAnalysis> {
+        if let Some(cache_mgr) = &self.analysis_cache {
+            if let Some(cached) = cache_mgr.load_analysis_metadata(project_hash) {
+                // We have cached metadata - need to rebuild the ProjectAnalysis
+                // from the cached file data
+                let root = PathBuf::from(&cached.root);
+
+                // Re-parse files from cache (they haven't changed)
+                let raw = self.stage_collect(&root);
+                let parsed = self.stage_parse_parallel(raw);
+
+                // Build analysis from parsed files
+                let analyzed = self.stage_analyze_parallel(parsed);
+                let optimized = self.stage_optimize_parallel(analyzed);
+
+                let mut call_graph = optimized.call_graph.clone();
+                self.scorer.score_all(&mut call_graph);
+
+                let final_optimized = OptimizedProject {
+                    call_graph,
+                    ..optimized
+                };
+
+                return Some(self.stage_finalize(final_optimized, None));
+            }
+        }
         None
+    }
+
+    fn parse_with_cache(&self, raw: RawProject) -> ParsedProject {
+        if let Some(cache_dir) = &self.config.cache_dir {
+            let binary_cache =
+                crate::engine::cache::BinaryCache::new(cache_dir.join("parsed_ast"), 1);
+
+            let parsed_files: Vec<ParsedFile> = raw
+                .files
+                .par_iter()
+                .filter_map(|file| {
+                    let file_hash = self.cache.hash_file(file);
+                    if let Some(hash) = file_hash {
+                        let cache_key = format!("parsed_{}", hash);
+                        if let Some(cached) = binary_cache.get::<ParsedFile>(&cache_key) {
+                            return Some(cached);
+                        }
+                    }
+
+                    let thread_parser = TreeSitterParser::new();
+                    if let Ok(parsed) = thread_parser.parse_file(file) {
+                        if let Some(hash) = self.cache.hash_file(file) {
+                            let cache_key = format!("parsed_{}", hash);
+                            let _ = binary_cache.put(&cache_key, &parsed);
+                        }
+                        Some(parsed)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            ParsedProject {
+                root: raw.root,
+                files: parsed_files,
+            }
+        } else {
+            self.stage_parse_parallel(raw)
+        }
     }
 
     pub async fn process_project_with_git(&mut self, root: &Path) -> Result<ProjectAnalysis> {

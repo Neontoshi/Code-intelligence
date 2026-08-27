@@ -119,6 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         max_file_size: args.max_file_size,
         max_memory_mb: None,
         timeout_seconds: None,
+        cache_dir: None,
     };
 
     let mut pipeline = Pipeline::new().with_config(config.clone());

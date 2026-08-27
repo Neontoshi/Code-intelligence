@@ -1,15 +1,14 @@
 // src/parser/tree_sitter.rs
 
-//! Tree-sitter parser with language-specific modules
-
 use crate::parser::languages::*;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use tree_sitter::Parser;
 
 // TYPE DEFINITIONS - These need to be public and accessible
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedFile {
     pub path: String,
     pub language: String,
@@ -19,7 +18,7 @@ pub struct ParsedFile {
     pub source: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionInfo {
     pub name: String,
     pub line: usize,
@@ -43,7 +42,7 @@ pub struct FunctionInfo {
     pub is_trait_default: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CallSite {
     SelfMethod(String),
     Qualified(String, String),
@@ -52,7 +51,7 @@ pub enum CallSite {
     Bare(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum FunctionRole {
     EntryPoint,
     Handler,
@@ -66,27 +65,27 @@ pub enum FunctionRole {
     Unknown,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParamInfo {
     pub name: String,
     pub type_hint: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportInfo {
     pub module: String,
     pub items: Vec<String>,
     pub line: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypeInfo {
     pub name: String,
     pub kind: TypeKind,
     pub line: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TypeKind {
     Struct,
     Enum,

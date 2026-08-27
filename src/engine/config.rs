@@ -1,4 +1,4 @@
-// src/engine/config.rs
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
@@ -10,6 +10,7 @@ pub struct PipelineConfig {
     pub max_file_size: u64,
     pub max_memory_mb: Option<usize>,
     pub timeout_seconds: Option<u64>,
+    pub cache_dir: Option<PathBuf>,
 }
 
 impl Default for PipelineConfig {
@@ -23,6 +24,7 @@ impl Default for PipelineConfig {
             max_file_size: 1_000_000,
             max_memory_mb: Some(4096),
             timeout_seconds: Some(300),
+            cache_dir: None,
         }
     }
 }

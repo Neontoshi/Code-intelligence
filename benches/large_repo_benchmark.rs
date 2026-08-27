@@ -273,9 +273,8 @@ fn bench_memory_usage(c: &mut Criterion) {
     });
 }
 
-/// Benchmark: Scalability test with different sizes
 fn bench_scalability(_c: &mut Criterion) {
-    let sizes = [100, 250, 500, 1000];
+    let sizes = [100, 250, 500, 1000, 2000, 5000, 10000];
     let mut results = Vec::new();
 
     for &size in &sizes {
@@ -290,23 +289,26 @@ fn bench_scalability(_c: &mut Criterion) {
 
         results.push((size, analysis.call_graph.node_count(), elapsed));
 
-        println!("\n📊 Scalability Benchmark ({} functions):", size);
+        println!("\n📊 Scalability Benchmark ({} requested functions):", size);
         println!("   Actual functions: {}", analysis.call_graph.node_count());
         println!("   Time: {:.2}s", elapsed.as_secs_f64());
         println!("   Edge count: {}", analysis.call_graph.edge_count());
+        println!("   Files: {}", analysis.files.len());
     }
 
     // Print summary
     println!("\n📊 Scalability Summary:");
-    println!("   Functions | Time (s) | Functions/s");
-    println!("   ----------|----------|------------");
+    println!("   Functions | Time (s) | Functions/s | Files");
+    println!("   ----------|----------|-------------|-------");
     for (_size, actual, elapsed) in results {
         let rate = actual as f64 / elapsed.as_secs_f64();
+        let file_count = actual / 30; // Estimate: ~30 functions per file (20 + 10 helpers)
         println!(
-            "   {:>9} | {:>8.2} | {:>10.0}",
+            "   {:>9} | {:>8.2} | {:>11.0} | {:>5}",
             actual,
             elapsed.as_secs_f64(),
-            rate
+            rate,
+            file_count
         );
     }
 }
