@@ -46,14 +46,44 @@ pub struct RootSet {
 }
 
 impl RootSet {
-    /// Add a set of roots
-    pub fn add_roots(&mut self, roots: HashSet<FunctionId>) {
-        // Add to all categories that match
-        for root in roots {
-            // We don't know which category it belongs to, so add to all?
-            // This is a fallback - specific categories should be used directly
-            self.application.insert(root);
-        }
+    pub fn add_application(&mut self, id: FunctionId) {
+        self.application.insert(id);
+    }
+
+    pub fn add_test(&mut self, id: FunctionId) {
+        self.tests.insert(id);
+    }
+
+    pub fn add_export(&mut self, id: FunctionId) {
+        self.exports.insert(id);
+    }
+
+    pub fn add_framework(&mut self, id: FunctionId) {
+        self.framework.insert(id);
+    }
+
+    pub fn add_ffi(&mut self, id: FunctionId) {
+        self.ffi.insert(id);
+    }
+
+    pub fn add_many_application(&mut self, ids: HashSet<FunctionId>) {
+        self.application.extend(ids);
+    }
+
+    pub fn add_many_tests(&mut self, ids: HashSet<FunctionId>) {
+        self.tests.extend(ids);
+    }
+
+    pub fn add_many_exports(&mut self, ids: HashSet<FunctionId>) {
+        self.exports.extend(ids);
+    }
+
+    pub fn add_many_framework(&mut self, ids: HashSet<FunctionId>) {
+        self.framework.extend(ids);
+    }
+
+    pub fn add_many_ffi(&mut self, ids: HashSet<FunctionId>) {
+        self.ffi.extend(ids);
     }
 
     /// Get all roots as a single set

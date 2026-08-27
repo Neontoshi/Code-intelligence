@@ -2,7 +2,7 @@
 
 //! Comprehensive multi-language tests for dynamic reference detection
 
-use code_intelligence::analysis::dynamic_refs::{DynamicRefOrchestrator, DynamicRefType};
+use code_intelligence::analysis::dynamic_refs::{DynamicRefDetector, DynamicRefType};
 use code_intelligence::graph::call_graph::CallGraph;
 use code_intelligence::parser::tree_sitter::TreeSitterParser;
 use std::path::PathBuf;
@@ -27,7 +27,7 @@ fn test_detect_python_reflection() {
 
     let (_, files) = create_files_from_source(source, "python");
     let call_graph = CallGraph::new();
-    let detector = DynamicRefOrchestrator::new();
+    let detector = DynamicRefDetector::new();
     let refs = detector.detect_all(&call_graph, &files);
 
     let dynamic_refs: Vec<_> = refs
@@ -75,7 +75,7 @@ fn test_detect_javascript_dynamic_imports() {
 
     let (_, files) = create_files_from_source(source, "typescript");
     let call_graph = CallGraph::new();
-    let detector = DynamicRefOrchestrator::new();
+    let detector = DynamicRefDetector::new();
     let refs = detector.detect_all(&call_graph, &files);
 
     let framework_refs: Vec<_> = refs
@@ -125,7 +125,7 @@ fn test_detect_rust_dynamic_dispatch() {
 
     let (_, files) = create_files_from_source(source, "rust");
     let call_graph = CallGraph::new();
-    let detector = DynamicRefOrchestrator::new();
+    let detector = DynamicRefDetector::new();
     let refs = detector.detect_all(&call_graph, &files);
 
     let dyn_refs: Vec<_> = refs
@@ -164,7 +164,7 @@ fn test_detect_go_reflection() {
 
     let (_, files) = create_files_from_source(source, "go");
     let call_graph = CallGraph::new();
-    let detector = DynamicRefOrchestrator::new();
+    let detector = DynamicRefDetector::new();
     let refs = detector.detect_all(&call_graph, &files);
 
     let reflection_refs: Vec<_> = refs
@@ -192,16 +192,13 @@ fn test_detect_php_reflection() {
 
     let (_, files) = create_files_from_source(source, "php");
     let call_graph = CallGraph::new();
-    let detector = DynamicRefOrchestrator::new();
+    let detector = DynamicRefDetector::new();
     let refs = detector.detect_all(&call_graph, &files);
 
     assert!(!refs.is_empty(), "Should detect dynamic calls in PHP");
 }
 
-// ============================================================
 // Helper Functions
-// ============================================================
-
 fn create_files_from_source(
     source: &str,
     language: &str,

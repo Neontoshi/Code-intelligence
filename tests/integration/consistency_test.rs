@@ -222,7 +222,7 @@ edition = "2021"
 
 /// Run CLI analysis and return summary
 fn run_cli_analysis(path: &Path) -> AnalysisSummary {
-    use code_intelligence::analysis::dynamic_refs::DynamicRefOrchestrator;
+    use code_intelligence::analysis::dynamic_refs::DynamicRefDetector;
     use code_intelligence::analysis::roots::{
         ReachabilityAnalyzer, RootDetectionConfig, RootDetector,
     };
@@ -236,7 +236,7 @@ fn run_cli_analysis(path: &Path) -> AnalysisSummary {
     let root_set = RootDetector::detect_roots(&analysis.call_graph, &analysis.files, &root_config);
     let reachability = ReachabilityAnalyzer::compute_reachability(&analysis.call_graph, &root_set);
 
-    let dynamic_detector = DynamicRefOrchestrator::new();
+    let dynamic_detector = DynamicRefDetector::new();
     let dynamic_refs = dynamic_detector.detect_all(&analysis.call_graph, &analysis.files);
 
     let verdict_engine =

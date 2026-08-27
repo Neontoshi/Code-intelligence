@@ -1,7 +1,7 @@
 // src/analysis/service.rs
 
 use crate::analysis::dead_code::{DeadCodeAnalysis, DeadCodeAnalyzer};
-use crate::analysis::dynamic_refs::DynamicRefOrchestrator;
+use crate::analysis::dynamic_refs::DynamicRefDetector;
 use crate::analysis::dynamic_refs::DynamicReference;
 use crate::analysis::roots::{
     ReachabilityAnalyzer, ReachabilityMap, RootDetectionConfig, RootDetector, RootSet,
@@ -259,7 +259,7 @@ impl AnalysisService {
         let reachability = ReachabilityAnalyzer::compute_reachability(&call_graph, &root_set);
 
         // 5. Detect dynamic references
-        let dynamic_detector = DynamicRefOrchestrator::new();
+        let dynamic_detector = DynamicRefDetector::new();
         let dynamic_refs = dynamic_detector.detect_all(&call_graph, &files);
 
         // 6. Build verdict engine

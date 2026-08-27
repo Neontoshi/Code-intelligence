@@ -1,6 +1,6 @@
 // src/output/overview.rs
 
-use crate::analysis::layers::LayerOrchestrator;
+use crate::analysis::layers::LayerDetector;
 use crate::graph::call_graph::CallGraph;
 use std::collections::HashMap;
 
@@ -74,7 +74,7 @@ impl OverviewGraph {
     }
 
     fn collect_layer_data(call_graph: &CallGraph) -> (Vec<LayerSummary>, Vec<LayerEdge>) {
-        let orchestrator = LayerOrchestrator::new();
+        let detector = LayerDetector::new();
         let mut layer_counts: HashMap<String, usize> = HashMap::new();
         let mut layer_top: HashMap<String, Vec<(String, f64)>> = HashMap::new();
         let mut layer_edges: HashMap<(String, String), usize> = HashMap::new();
@@ -118,8 +118,8 @@ impl OverviewGraph {
                 let top_functions = top.into_iter().take(3).map(|(n, _)| n).collect();
 
                 LayerSummary {
-                    color: orchestrator.get_layer_color(&name),
-                    description: orchestrator.get_layer_description(&name),
+                    color: detector.get_layer_color(&name),
+                    description: detector.get_layer_description(&name),
                     name,
                     count,
                     top_functions,
@@ -137,7 +137,7 @@ impl OverviewGraph {
     }
 
     fn collect_function_nodes(call_graph: &CallGraph) -> Vec<serde_json::Value> {
-        let orchestrator = LayerOrchestrator::new();
+        let detector = LayerDetector::new();
 
         call_graph
             .node_indices()
@@ -154,7 +154,7 @@ impl OverviewGraph {
                     "file": func.file,
                     "line": func.line,
                     "layer": layer,
-                    "layer_color": orchestrator.get_layer_color(&layer),
+                    "layer_color": detector.get_layer_color(&layer),
                     "importance": func.importance_score,
                 })
             })

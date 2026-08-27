@@ -4,6 +4,8 @@ pub mod dead_code;
 pub mod dynamic_refs;
 pub mod explainability;
 pub mod features;
+pub mod framework_database;
+pub mod framework_registry;
 pub mod git_analysis;
 pub mod importance;
 pub mod layers;

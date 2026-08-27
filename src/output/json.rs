@@ -1,7 +1,7 @@
 // src/output/json.rs
 
 use crate::analysis::dead_code::DeadCodeDetector;
-use crate::analysis::layers::LayerOrchestrator;
+use crate::analysis::layers::LayerDetector;
 use crate::graph::call_graph::CallGraph;
 use crate::graph::traits::GraphMetrics;
 use crate::parser::tree_sitter::ParsedFile;
@@ -246,7 +246,7 @@ impl JsonOutput {
     pub fn detect_layers(files: &[ParsedFile]) -> Vec<Value> {
         use std::collections::HashMap;
 
-        let orchestrator = LayerOrchestrator::new();
+        let orchestrator = LayerDetector::new();
         let mut layers: HashMap<String, Vec<String>> = HashMap::new();
 
         for file in files {

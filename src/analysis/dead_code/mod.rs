@@ -6,7 +6,7 @@ mod modules;
 mod report;
 mod types;
 mod whitelist;
-use crate::analysis::dynamic_refs::DynamicRefOrchestrator;
+use crate::analysis::dynamic_refs::DynamicRefDetector;
 
 pub use analyzer::{
     AnalysisSummary, ConfidenceLevel, DeadCodeAnalysis, DeadCodeAnalyzer, DeadFunction, DeadScore,
@@ -73,7 +73,7 @@ impl DeadCodeDetector {
         let root_set = RootDetector::detect_roots(call_graph, files, &root_config);
         let reachability = ReachabilityAnalyzer::compute_reachability(call_graph, &root_set);
 
-        let dynamic_detector = DynamicRefOrchestrator::new();
+        let dynamic_detector = DynamicRefDetector::new();
         let dynamic_refs = dynamic_detector.detect_all(call_graph, files);
 
         let verdict_engine =

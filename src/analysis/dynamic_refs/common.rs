@@ -14,6 +14,13 @@ pub enum DynamicRefType {
     DependencyInjection,
     StringDispatch,
     DynamicDispatch,
+    FFI,
+    FunctionPointer,
+    TraitDispatch,
+    Macro,
+    GeneratedCode,
+    RuntimeRegistration,
+    IPC,
     Unknown,
 }
 
@@ -29,6 +36,9 @@ pub struct DynamicReference {
     pub confidence: f64,
     pub context: String,
     pub resolved: bool,
+    pub kind: String,
+    pub location: Option<(usize, usize)>,
+    pub source: String,
 }
 
 impl DynamicReference {
@@ -52,6 +62,9 @@ impl DynamicReference {
             confidence,
             context,
             resolved,
+            kind: "framework".to_string(),
+            location: None,
+            source: "static_analysis".to_string(),
         }
     }
 
@@ -74,6 +87,9 @@ impl DynamicReference {
             confidence,
             context,
             resolved,
+            kind: "framework".to_string(),
+            location: None,
+            source: "static_analysis".to_string(),
         }
     }
 
@@ -97,11 +113,29 @@ impl DynamicReference {
             confidence,
             context,
             resolved,
+            kind: "framework".to_string(),
+            location: None,
+            source: "static_analysis".to_string(),
         }
     }
 
     pub fn is_resolved(&self) -> bool {
         self.resolved
+    }
+
+    pub fn with_kind(mut self, kind: &str) -> Self {
+        self.kind = kind.to_string();
+        self
+    }
+
+    pub fn with_location(mut self, line: usize, column: usize) -> Self {
+        self.location = Some((line, column));
+        self
+    }
+
+    pub fn with_source(mut self, source: &str) -> Self {
+        self.source = source.to_string();
+        self
     }
 }
 

@@ -2,7 +2,8 @@
 
 use crate::analysis::dead_code::filters::is_never_dead;
 use crate::analysis::dynamic_refs::DynamicReference;
-use crate::analysis::roots::ReachabilityMap;
+use crate::analysis::framework_registry::FrameworkRegistry;
+use crate::analysis::roots::{detect_language_from_file, ReachabilityMap};
 use crate::analysis::training_data::TrainingLabel;
 use crate::analysis::verdict_source::label_source::VerdictState;
 use crate::analysis::verdict_source::LabelSource;
@@ -321,6 +322,7 @@ pub struct VerdictEngine {
     ml_model: Option<DeadCodeClassifier>,
     dynamic_refs: Option<Vec<DynamicReference>>,
     provenance: VerdictProvenance,
+    framework_registry: FrameworkRegistry,
 }
 
 impl VerdictEngine {
@@ -347,6 +349,7 @@ impl VerdictEngine {
                 static_enabled: true,
                 model_path: None,
             },
+            framework_registry: FrameworkRegistry::new(),
         }
     }
 
@@ -443,6 +446,39 @@ impl VerdictEngine {
                 ml_probability: None,
                 static_score: Some(1.0),
                 explanation: "Filtered: never-dead category".to_string(),
+                evidence_sources: vec![EvidenceSource::StaticReachability],
+                verified: false,
+                verified_by: None,
+                provenance: self.provenance.clone(),
+                evidence_conflicts: Vec::new(),
+                deletion_recommendation: DeletionRecommendation::DoNotDelete,
+                label_provenance: None,
+            };
+        }
+
+        // Check framework registry for protected roots
+        let language = detect_language_from_file(&func.file);
+        if self
+            .framework_registry
+            .is_framework_root(&language, &func.file, &func.name)
+        {
+            return Verdict {
+                function_name: func.name.clone(),
+                full_path: func.full_path.clone(),
+                label: TrainingLabel::Alive,
+                state: VerdictState::DefinitelyAlive,
+                confidence: 0.95,
+                dead_probability: None,
+                signals: vec![Signal {
+                    name: "framework_entrypoint".to_string(),
+                    value: 1.0,
+                    direction: SignalDirection::SupportsAlive,
+                    weight: 0.95,
+                    explanation: "Registered framework entry point".to_string(),
+                }],
+                ml_probability: None,
+                static_score: Some(0.95),
+                explanation: "Framework entry point - protected".to_string(),
                 evidence_sources: vec![EvidenceSource::StaticReachability],
                 verified: false,
                 verified_by: None,

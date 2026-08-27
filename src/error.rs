@@ -1,11 +1,5 @@
 // src/error.rs
-
-//! Error handling for code-intelligence
-//!
-//! This module provides a unified error handling strategy using `anyhow`.
-//! All library functions should return `Result<T, anyhow::Error>`.
-//! CLI binaries convert to exit codes at the top level.
-
+//
 use std::path::PathBuf;
 
 /// Main Result type for the code-intelligence library

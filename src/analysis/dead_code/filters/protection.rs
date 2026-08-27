@@ -2,7 +2,7 @@
 
 //! Main protection logic that combines all filters
 
-use super::{FilterOrchestrator, ProtectionLevel};
+use super::{ProtectionLevel, UnifiedFilter};
 use crate::graph::call_graph::FunctionNode;
 
 /// Check if a function should never be considered dead
@@ -25,10 +25,9 @@ pub fn is_actionable(func: &FunctionNode) -> bool {
 
 /// Get the protection level for a function
 pub fn get_protection_level(func: &FunctionNode) -> ProtectionLevel {
-    let orchestrator = FilterOrchestrator::new();
-    orchestrator.get_protection_level(func)
+    let filter = UnifiedFilter::new();
+    filter.get_protection_level(func)
 }
-
 /// Get a human-readable reason why a function is filtered
 pub fn filter_reason(func: &FunctionNode) -> Option<&'static str> {
     match get_protection_level(func) {

@@ -77,6 +77,7 @@ pub use parser::comments::CommentAnalyzer;
 pub use parser::semantic::SemanticAnalyzer;
 pub use parser::tree_sitter::TreeSitterParser;
 
+pub use analysis::framework_registry::{FrameworkEntry, FrameworkRegistry};
 pub use analysis::symbol_evolution::{SymbolEvent, SymbolLineage};
 pub use analysis::symbol_identity::SymbolIdentity;
 pub use utils::hashing::HashUtils;

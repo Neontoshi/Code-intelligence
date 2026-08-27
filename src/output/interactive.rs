@@ -1,6 +1,6 @@
 // src/output/interactive.rs
 
-use crate::analysis::layers::LayerOrchestrator;
+use crate::analysis::layers::LayerDetector;
 use crate::graph::call_graph::{CallGraph, FunctionNode};
 use crate::graph::traits::GraphMetrics;
 use crate::parser::tree_sitter::ParsedFile;
@@ -35,7 +35,7 @@ impl InteractiveGraph {
             verdict_source::{VerdictConfig, VerdictEngine},
         };
 
-        let layer_orchestrator = LayerOrchestrator::new();
+        let layer_detector = LayerDetector::new();
 
         let root_config = RootDetectionConfig::default();
         let root_set = RootDetector::detect_roots(call_graph, files, &root_config);
@@ -59,7 +59,7 @@ impl InteractiveGraph {
             } else {
                 &func.layer
             };
-            let layer_color = layer_orchestrator.get_layer_color(layer);
+            let layer_color = layer_detector.get_layer_color(layer);
 
             nodes.push(json!({
                 "id": idx.index(),
