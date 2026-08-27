@@ -63,6 +63,7 @@ pub struct CallGraph {
     pub duplicate_functions: Vec<String>,
     pub resolution_cache: HashMap<String, ResolutionConfidence>,
     pub unresolved_calls: HashMap<String, Vec<String>>,
+    pub external_calls: HashMap<String, Vec<String>>,
 }
 
 impl CallGraph {
@@ -79,6 +80,7 @@ impl CallGraph {
             duplicate_functions: Vec::new(),
             resolution_cache: HashMap::new(),
             unresolved_calls: HashMap::new(),
+            external_calls: HashMap::new(),
         }
     }
 
@@ -129,6 +131,45 @@ impl CallGraph {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    pub fn mark_unresolved(&mut self, caller: &str, callee: &str) {
+        self.unresolved_calls
+            .entry(caller.to_string())
+            .or_default()
+            .push(callee.to_string());
+
+        self.set_resolution_confidence(caller, callee, ResolutionConfidence::Unresolved);
+    }
+
+    /// Mark a call as external (dependency outside the project)
+    pub fn mark_external(&mut self, caller: &str, callee: &str) {
+        self.external_calls
+            .entry(caller.to_string())
+            .or_default()
+            .push(callee.to_string());
+    }
+
+    /// Get all external calls for a function
+    pub fn get_external_calls(&self, full_path: &str) -> Vec<&str> {
+        self.external_calls
+            .get(full_path)
+            .map(|v| v.iter().map(|s| s.as_str()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Get total number of external calls
+    pub fn total_external_calls(&self) -> usize {
+        self.external_calls.values().map(|v| v.len()).sum()
+    }
+
+    /// Get unique external dependencies
+    pub fn unique_external_dependencies(&self) -> HashSet<String> {
+        self.external_calls
+            .values()
+            .flat_map(|calls| calls.iter())
+            .cloned()
+            .collect()
     }
 
     pub fn get_functions_by_file(&self, file: &str) -> Vec<&FunctionNode> {
@@ -262,16 +303,6 @@ impl CallGraph {
                 1.0
             },
         }
-    }
-
-    /// Mark a call as unresolved
-    pub fn mark_unresolved(&mut self, caller: &str, callee: &str) {
-        self.unresolved_calls
-            .entry(caller.to_string())
-            .or_default()
-            .push(callee.to_string());
-
-        self.set_resolution_confidence(caller, callee, ResolutionConfidence::Unresolved);
     }
 
     pub fn node_indices(&self) -> impl Iterator<Item = NodeIndex> {

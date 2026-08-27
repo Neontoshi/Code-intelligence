@@ -158,6 +158,61 @@ impl RustResolver {
     fn resolve_qualified(&self, parts: &[String], context: &ResolutionContext) -> ResolutionResult {
         let joined = parts.join("::");
 
+        // Handle crate:: paths
+        if parts.first().map(|s| s == "crate").unwrap_or(false) {
+            let module_path = context.module.0.clone();
+            let rest = parts[1..].join("::");
+            let full_path = if rest.is_empty() {
+                module_path
+            } else {
+                format!("{}::{}", module_path, rest)
+            };
+
+            // Look for matching file paths
+            for (module_id, module) in &context.index.modules {
+                if module_id.0 == full_path || module_id.0.starts_with(&full_path) {
+                    let file_path = &module.file.0;
+                    let last = parts.last().unwrap();
+                    let file_based = format!("{}::{}", file_path, last);
+                    if let Some(target) = context.index.symbols.get(&SymbolId(file_based)) {
+                        return ResolutionResult::resolved(
+                            target.id.clone(),
+                            0.95,
+                            ResolutionMethod::QualifiedSymbol,
+                            vec![ResolutionEvidence::MatchingModule],
+                        );
+                    }
+                }
+            }
+        }
+
+        // Handle Self:: calls
+        if parts.first().map(|s| s == "Self").unwrap_or(false) {
+            // Self::method() - resolve against the current container
+            if let Some(caller) = context.index.symbols.get(&context.function) {
+                if let Some(container) = &caller.container {
+                    let method_name = parts.last().unwrap();
+                    if let Some(members) = context.index.by_container.get(container) {
+                        let matching: Vec<_> = members
+                            .iter()
+                            .filter_map(|id| context.index.symbols.get(id))
+                            .filter(|s| s.name == *method_name)
+                            .collect();
+
+                        if matching.len() == 1 {
+                            return ResolutionResult::resolved(
+                                matching[0].id.clone(),
+                                0.95,
+                                ResolutionMethod::ContainerMember,
+                                vec![ResolutionEvidence::MatchingContainer],
+                            );
+                        }
+                    }
+                }
+            }
+            return ResolutionResult::unresolved();
+        }
+
         // Tier 1: Direct qualified match
         let qualified_candidates = context.index.find_by_qualified(&joined);
         if qualified_candidates.len() == 1 {
@@ -168,7 +223,6 @@ impl RustResolver {
                 vec![ResolutionEvidence::MatchingSymbol],
             );
         }
-
         // Tier 2: Try file-based path conversion
         // e.g., "rust::RustParser" -> "./src/parser/languages/rust.rs::RustParser"
         let root = &parts[0];
@@ -289,6 +343,37 @@ impl RustResolver {
                         return ResolutionResult::resolved(
                             target.id.clone(),
                             0.80,
+                            ResolutionMethod::TypeMember,
+                            vec![ResolutionEvidence::MatchingType],
+                        );
+                    }
+                }
+            }
+
+            // Also try the first part as type name (e.g., FunctionFeatures::from_function)
+            let first_type = &parts[0];
+            let last_method = &parts[parts.len() - 1];
+
+            // Search all symbols for this type
+            for symbol in context.index.symbols.values() {
+                if symbol.name == *first_type && symbol.container.is_none() {
+                    // Found a struct/enum definition, now look for impl methods
+                    let target_path = format!("{}::{}", symbol.file.0, last_method);
+                    if let Some(target) = context.index.symbols.get(&SymbolId(target_path)) {
+                        return ResolutionResult::resolved(
+                            target.id.clone(),
+                            0.85,
+                            ResolutionMethod::TypeMember,
+                            vec![ResolutionEvidence::MatchingType],
+                        );
+                    }
+
+                    // Also try with container
+                    let full_target = format!("{}::{}::{}", symbol.file.0, first_type, last_method);
+                    if let Some(target) = context.index.symbols.get(&SymbolId(full_target)) {
+                        return ResolutionResult::resolved(
+                            target.id.clone(),
+                            0.85,
                             ResolutionMethod::TypeMember,
                             vec![ResolutionEvidence::MatchingType],
                         );

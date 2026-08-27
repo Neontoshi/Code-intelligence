@@ -11,12 +11,14 @@ use crate::resolution::index_builder::IndexBuilder;
 use crate::resolution::result::ResolutionStatus;
 use crate::resolution::symbol::{FileId, ModuleId, ScopeId, SymbolId};
 use crate::resolution::ResolutionEngine;
+use std::collections::HashMap;
 
 pub struct CallGraphBuilder;
 
 impl CallGraphBuilder {
     pub fn build(files: &[ParsedFile]) -> CallGraph {
         let mut call_graph = CallGraph::new();
+        let mut external_calls: HashMap<String, Vec<String>> = HashMap::new();
 
         // IndexBuilder is the SOLE owner of symbols and scopes
         let (index, scopes) = IndexBuilder::build(files);
@@ -85,6 +87,17 @@ impl CallGraphBuilder {
 
                     for parser_call in &func.calls {
                         let semantic_call = convert_call_site(parser_call, &file_path, func);
+
+                        // Skip external dependency calls (now handles all cases)
+                        if engine.is_external_call(&semantic_call.callee, &language) {
+                            let display = format!("{:?}", semantic_call.callee);
+                            external_calls
+                                .entry(caller_path.clone())
+                                .or_default()
+                                .push(display);
+                            continue;
+                        }
+
                         let result = engine.resolve_call(
                             &semantic_call,
                             &file_id,
@@ -119,6 +132,14 @@ impl CallGraphBuilder {
                                     }
                                 }
                             }
+                            ResolutionStatus::External => {
+                                // Track external dependencies for analytics
+                                let display = format!("{:?}", semantic_call.callee);
+                                external_calls
+                                    .entry(caller_path.clone())
+                                    .or_default()
+                                    .push(display);
+                            }
                             ResolutionStatus::Ambiguous
                             | ResolutionStatus::Dynamic
                             | ResolutionStatus::Unresolved => {
@@ -140,12 +161,16 @@ impl CallGraphBuilder {
 
                                 call_graph.mark_unresolved(&caller_path, &display);
                             }
-                            ResolutionStatus::External => {
-                                // External call - skip
-                            }
                         }
                     }
                 }
+            }
+        }
+
+        // Add external calls to the call graph for analytics
+        for (caller, callees) in external_calls {
+            for callee in callees {
+                call_graph.mark_external(&caller, &callee);
             }
         }
 
@@ -159,11 +184,28 @@ fn convert_call_site(
     func: &FunctionInfo,
 ) -> SemanticCallSite {
     let (kind, callee) = match parser_call {
-        ParserCallSite::Bare(name) => (CallKind::Function, CalleeExpr::Name(name.clone())),
-        ParserCallSite::Qualified(module, name) => (
-            CallKind::Function,
-            CalleeExpr::Qualified(vec![module.clone(), name.clone()]),
-        ),
+        ParserCallSite::Bare(name) => {
+            // Check if it's a constructor call (capitalized name)
+            if name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                (CallKind::Constructor, CalleeExpr::Name(name.clone()))
+            } else {
+                (CallKind::Function, CalleeExpr::Name(name.clone()))
+            }
+        }
+        ParserCallSite::Qualified(module, name) => {
+            // Check if it's a type constructor (e.g., Vec::new(), PathBuf::from())
+            if module.chars().next().map_or(false, |c| c.is_uppercase()) {
+                (
+                    CallKind::Constructor,
+                    CalleeExpr::Qualified(vec![module.clone(), name.clone()]),
+                )
+            } else {
+                (
+                    CallKind::Function,
+                    CalleeExpr::Qualified(vec![module.clone(), name.clone()]),
+                )
+            }
+        }
         ParserCallSite::SelfMethod(method) => (
             CallKind::Method,
             CalleeExpr::Member {

@@ -39,20 +39,27 @@ impl IndexBuilder {
             // Register imports
             let mut import_bindings = Vec::new();
             for import in &file.imports {
+                // Parse import items properly
+                let local_name = import
+                    .items
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| import.module.clone());
+
+                // Try to extract the imported name from the module path
+                let imported_name = Self::extract_imported_name(&import.module);
+
                 let binding = ImportBinding {
-                    local_name: import
-                        .items
-                        .first()
-                        .cloned()
-                        .unwrap_or_else(|| import.module.clone()),
-                    imported_name: None,
+                    local_name: local_name.clone(),
+                    imported_name,
                     module: ModuleId(import.module.clone()),
                     symbol: None,
                     scope: file_scope_id.clone(),
-                    kind: ImportKind::Module,
+                    kind: Self::classify_import(&import.module),
                 };
                 import_bindings.push(binding);
             }
+
             for ty in &file.types {
                 index.add_type(ty.name.clone(), file_id.clone());
             }
@@ -108,7 +115,7 @@ impl IndexBuilder {
                         .as_ref()
                         .map(|c| SymbolId(format!("{}::{}", file_path, c))),
                     module: Some(module_id.clone()),
-                    signature: None,
+                    signature: func.return_type.clone(),
                     visibility: if func.is_public {
                         Visibility::Public
                     } else {
@@ -140,7 +147,74 @@ impl IndexBuilder {
             }
         }
 
+        // Fourth pass: Resolve imports to symbols
+        // This creates links between imports and actual symbols when possible
+        let mut import_resolutions: Vec<(FileId, usize, SymbolId)> = Vec::new();
+
+        for (file_id, imports) in &index.imports {
+            for (idx, import) in imports.iter().enumerate() {
+                // Try to resolve import module to a symbol
+                let module_candidates = index.find_by_qualified(&import.module.0);
+
+                // Also try to find by the imported name
+                let name_to_find = import.imported_name.as_ref().unwrap_or(&import.local_name);
+                let name_candidates = index.find_by_name(name_to_find);
+
+                // Prefer module-qualified matches
+                if !module_candidates.is_empty() {
+                    import_resolutions.push((
+                        file_id.clone(),
+                        idx,
+                        module_candidates[0].id.clone(),
+                    ));
+                } else if name_candidates.len() == 1 {
+                    import_resolutions.push((file_id.clone(), idx, name_candidates[0].id.clone()));
+                }
+            }
+        }
+
+        // Apply import resolutions
+        for (file_id, idx, symbol_id) in import_resolutions {
+            if let Some(imports) = index.imports.get_mut(&file_id) {
+                if let Some(import) = imports.get_mut(idx) {
+                    import.symbol = Some(symbol_id);
+                }
+            }
+        }
+
         (index, scopes)
+    }
+
+    fn extract_imported_name(module: &str) -> Option<String> {
+        // Handle different import syntaxes:
+        // Rust: "std::fs::write" -> "write"
+        // Python: "from module import name" -> "name" (handled elsewhere)
+        // JavaScript: "import { name } from 'module'" -> "name" (handled elsewhere)
+        // Go: "import (\"fmt\")" -> "fmt"
+        // Java: "import java.util.List;" -> "List"
+
+        // Try to split on common separators
+        let separators = ["::", ".", "/"];
+        for sep in separators {
+            if let Some(last) = module.rsplit(sep).next() {
+                if !last.is_empty() {
+                    return Some(last.to_string());
+                }
+            }
+        }
+
+        None
+    }
+
+    fn classify_import(module: &str) -> ImportKind {
+        // Classify import type based on syntax
+        if module.ends_with(".*") || module.ends_with("::*") {
+            ImportKind::Wildcard
+        } else if module.contains("::") || module.contains('.') {
+            ImportKind::Symbol
+        } else {
+            ImportKind::Module
+        }
     }
 
     pub fn file_to_module_path(file_path: &str) -> String {
