@@ -21,10 +21,11 @@ impl CallGraphBuilder {
         let mut external_calls: HashMap<String, Vec<String>> = HashMap::new();
 
         // IndexBuilder is the SOLE owner of symbols and scopes
-        let (index, scopes) = IndexBuilder::build(files);
+        let (index, scopes, type_context) = IndexBuilder::build(files);
         let mut engine = ResolutionEngine::new();
         engine.index = index;
         engine.scopes = scopes;
+        engine.type_context = type_context;
 
         // Pass 1: Add function nodes to the call graph
         for file in files {
@@ -89,7 +90,7 @@ impl CallGraphBuilder {
                         let semantic_call = convert_call_site(parser_call, &file_path, func);
 
                         // Skip external dependency calls (now handles all cases)
-                        if engine.is_external_call(&semantic_call.callee, &language) {
+                        if engine.is_external_call(&semantic_call.callee, &language, &file_id) {
                             let display = format!("{:?}", semantic_call.callee);
                             external_calls
                                 .entry(caller_path.clone())
@@ -98,7 +99,7 @@ impl CallGraphBuilder {
                             continue;
                         }
 
-                        let result = engine.resolve_call(
+                        let result = engine.infer_and_resolve_call(
                             &semantic_call,
                             &file_id,
                             &function_id,
@@ -151,11 +152,12 @@ impl CallGraphBuilder {
                                     DEBUG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                 if debug_count < 50 {
                                     eprintln!(
-                                        "UNRESOLVED: file={} caller={} callee={:?} kind={:?}",
+                                        "UNRESOLVED: file={} caller={} callee={:?} kind={:?} status={:?}",
                                         file_path,
                                         caller_path,
                                         semantic_call.callee,
-                                        semantic_call.kind
+                                        semantic_call.kind,
+                                        result.status,
                                     );
                                 }
 
@@ -193,17 +195,14 @@ fn convert_call_site(
             }
         }
         ParserCallSite::Qualified(module, name) => {
+            let mut parts: Vec<String> = module.split("::").map(|s| s.to_string()).collect();
+            parts.push(name.clone());
+
             // Check if it's a type constructor (e.g., Vec::new(), PathBuf::from())
             if module.chars().next().map_or(false, |c| c.is_uppercase()) {
-                (
-                    CallKind::Constructor,
-                    CalleeExpr::Qualified(vec![module.clone(), name.clone()]),
-                )
+                (CallKind::Constructor, CalleeExpr::Qualified(parts))
             } else {
-                (
-                    CallKind::Function,
-                    CalleeExpr::Qualified(vec![module.clone(), name.clone()]),
-                )
+                (CallKind::Function, CalleeExpr::Qualified(parts))
             }
         }
         ParserCallSite::SelfMethod(method) => (

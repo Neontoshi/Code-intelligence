@@ -152,6 +152,7 @@ fn create_test_file() -> ParsedFile {
                 is_test: false,
                 is_trait_method: false,
                 is_trait_default: false,
+                variables: vec![],
             },
             FunctionInfo {
                 name: "func2".to_string(),
@@ -174,6 +175,7 @@ fn create_test_file() -> ParsedFile {
                 is_test: false,
                 is_trait_method: false,
                 is_trait_default: false,
+                variables: vec![],
             },
         ],
         imports: vec![],

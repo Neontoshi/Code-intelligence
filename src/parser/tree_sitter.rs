@@ -38,6 +38,14 @@ pub struct FunctionInfo {
     pub is_test: bool,
     pub is_trait_method: bool,
     pub is_trait_default: bool,
+    pub variables: Vec<VariableInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VariableInfo {
+    pub name: String,
+    pub type_hint: Option<String>,
+    pub initializer: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

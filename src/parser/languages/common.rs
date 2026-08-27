@@ -488,11 +488,10 @@ fn subject_from_name(name: &str) -> Option<&str> {
     }
 }
 
-/// Parse import statement
 pub fn parse_import(text: &str) -> (String, Vec<String>) {
-    let trimmed = text.trim();
+    let trimmed = text.trim().trim_end_matches(';').trim();
     if trimmed.starts_with("use ") {
-        let rest = &trimmed[4..].trim();
+        let rest = trimmed[4..].trim();
         if let Some(alias_pos) = rest.find(" as ") {
             let actual = &rest[..alias_pos];
             return (actual.to_string(), vec![actual.to_string()]);
@@ -500,14 +499,11 @@ pub fn parse_import(text: &str) -> (String, Vec<String>) {
         return (rest.to_string(), vec![rest.to_string()]);
     }
     if trimmed.starts_with("import ") {
-        let rest = &trimmed[7..].trim();
+        let rest = trimmed[7..].trim();
         return (rest.to_string(), vec![rest.to_string()]);
     }
     if trimmed.starts_with("using ") {
-        let rest = trimmed
-            .trim_start_matches("using ")
-            .trim_end_matches(';')
-            .trim();
+        let rest = trimmed.trim_start_matches("using ").trim();
         return (rest.to_string(), vec![rest.to_string()]);
     }
     (trimmed.to_string(), vec![])

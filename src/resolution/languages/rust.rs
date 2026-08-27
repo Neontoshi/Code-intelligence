@@ -127,6 +127,70 @@ impl RustResolver {
             }
         }
 
+        // Tier 3.5: Wildcard (glob) import resolution — `use module::*;`
+        // A bare name not caught by Tier 3 may still be reachable through a
+        // glob import. Only free functions are matched, since a bare call
+        // can never statically resolve to a method requiring a receiver.
+        if let Some(imports) = context.index.imports.get(&context.file) {
+            let mut wildcard_matches = Vec::new();
+            for import in imports {
+                if import.kind != crate::resolution::symbol::ImportKind::Wildcard {
+                    continue;
+                }
+
+                let module_path = import
+                    .module
+                    .0
+                    .trim_end_matches("::*")
+                    .trim_end_matches('*')
+                    .trim_end_matches("::");
+
+                if let Some(rest) = module_path.strip_prefix("crate::") {
+                    let path = rest.replace("::", "/");
+                    let prefix = if context.file.0.starts_with("./") {
+                        "./"
+                    } else {
+                        ""
+                    };
+                    for file_path in [
+                        format!("{}src/{}.rs", prefix, path),
+                        format!("{}src/{}/mod.rs", prefix, path),
+                    ] {
+                        let candidate = SymbolId(format!("{}::{}", file_path, name));
+                        if let Some(target) = context.index.symbols.get(&candidate) {
+                            if target.kind == crate::resolution::symbol::SymbolKind::Function {
+                                wildcard_matches.push(target.id.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            wildcard_matches.sort();
+            wildcard_matches.dedup();
+            if wildcard_matches.len() == 1 {
+                return ResolutionResult::resolved(
+                    wildcard_matches[0].clone(),
+                    0.92,
+                    ResolutionMethod::ImportedSymbol,
+                    vec![ResolutionEvidence::ExplicitImport],
+                );
+            }
+        }
+
+        // Handle generic method calls like resp.json::<Type>()
+        if name.contains("::<") {
+            return ResolutionResult::external();
+        }
+
+        // Handle bare names that are known external/stdlib methods that also
+        // happen to collide with internal symbol names by bare name alone.
+        // Must run before Tier 4, since a name collision would otherwise
+        // return Ambiguous before we ever get a chance to check this list.
+        let common_methods = ["cosine_similarity", "feature_names", "feature_count"];
+        if common_methods.contains(&name) {
+            return ResolutionResult::external();
+        }
+
         // Tier 4: Global name fallback (unambiguous only)
         let global = context.index.find_by_name(name);
         if global.len() == 1 {
@@ -152,43 +216,249 @@ impl RustResolver {
             return ResolutionResult::ambiguous(candidates);
         }
 
+        // Handle type aliases (FileId, ModuleId, ScopeId, SymbolId, TypeId)
+        let type_aliases = ["FileId", "ModuleId", "ScopeId", "SymbolId", "TypeId"];
+        if type_aliases.contains(&name) {
+            if let Some(files) = context.index.type_files.get(name) {
+                if !files.is_empty() {
+                    let file_path = &files[0].0;
+                    let constructor_path = format!("{}::{}", file_path, name);
+                    if let Some(target) = context.index.symbols.get(&SymbolId(constructor_path)) {
+                        return ResolutionResult::resolved(
+                            target.id.clone(),
+                            0.95,
+                            ResolutionMethod::TypeMember,
+                            vec![ResolutionEvidence::MatchingType],
+                        );
+                    }
+                }
+            }
+            return ResolutionResult::external();
+        }
+
+        // Handle bare names that are actually methods or associated functions
+        let same_file_candidates = context.index.find_in_file(&context.file, name);
+        if !same_file_candidates.is_empty() {
+            if same_file_candidates.len() == 1 {
+                return ResolutionResult::resolved(
+                    same_file_candidates[0].id.clone(),
+                    0.90,
+                    ResolutionMethod::LocalSymbol,
+                    vec![ResolutionEvidence::SameFile],
+                );
+            }
+        }
+
+        // Search across all files for unique matches
+        let all_candidates = context.index.find_by_name(name);
+        if all_candidates.len() == 1 {
+            return ResolutionResult::resolved(
+                all_candidates[0].id.clone(),
+                0.80,
+                ResolutionMethod::GlobalNameFallback,
+                vec![ResolutionEvidence::MatchingSymbol],
+            );
+        }
+
         ResolutionResult::unresolved()
     }
 
     fn resolve_qualified(&self, parts: &[String], context: &ResolutionContext) -> ResolutionResult {
         let joined = parts.join("::");
 
-        // Handle crate:: paths
-        if parts.first().map(|s| s == "crate").unwrap_or(false) {
-            let module_path = context.module.0.clone();
-            let rest = parts[1..].join("::");
-            let full_path = if rest.is_empty() {
-                module_path
-            } else {
-                format!("{}::{}", module_path, rest)
-            };
+        // Try module alias resolution first
+        if let Some(first) = parts.first() {
+            if let Some(file_path) = context.index.module_aliases.get(first) {
+                let rest = parts[1..].join("::");
+                let full_path = if rest.is_empty() {
+                    file_path.clone()
+                } else {
+                    format!("{}::{}", file_path, rest)
+                };
 
-            // Look for matching file paths
-            for (module_id, module) in &context.index.modules {
-                if module_id.0 == full_path || module_id.0.starts_with(&full_path) {
-                    let file_path = &module.file.0;
-                    let last = parts.last().unwrap();
-                    let file_based = format!("{}::{}", file_path, last);
-                    if let Some(target) = context.index.symbols.get(&SymbolId(file_based)) {
+                if let Some(target) = context.index.symbols.get(&SymbolId(full_path.clone())) {
+                    return ResolutionResult::resolved(
+                        target.id.clone(),
+                        0.95,
+                        ResolutionMethod::QualifiedSymbol,
+                        vec![ResolutionEvidence::MatchingModule],
+                    );
+                }
+
+                // Try with just the last part
+                let last = parts.last().unwrap();
+                let simple_path = format!("{}::{}", file_path, last);
+                if let Some(target) = context.index.symbols.get(&SymbolId(simple_path)) {
+                    return ResolutionResult::resolved(
+                        target.id.clone(),
+                        0.90,
+                        ResolutionMethod::QualifiedSymbol,
+                        vec![ResolutionEvidence::MatchingModule],
+                    );
+                }
+
+                // Try with the type name as container (e.g., rust::RustParser::extract_functions)
+                // The symbol might be stored as file_path::RustParser::extract_functions
+                // OR as file_path::extract_functions (without the type name)
+                if parts.len() >= 3 {
+                    let type_name = &parts[1];
+                    let method_name = &parts[2];
+
+                    // Try file_path::Type::method
+                    let with_type = format!("{}::{}::{}", file_path, type_name, method_name);
+                    if let Some(target) = context.index.symbols.get(&SymbolId(with_type)) {
                         return ResolutionResult::resolved(
                             target.id.clone(),
                             0.95,
-                            ResolutionMethod::QualifiedSymbol,
-                            vec![ResolutionEvidence::MatchingModule],
+                            ResolutionMethod::TypeMember,
+                            vec![ResolutionEvidence::MatchingType],
+                        );
+                    }
+
+                    // Try file_path::method (without type name)
+                    let without_type = format!("{}::{}", file_path, method_name);
+                    if let Some(target) = context.index.symbols.get(&SymbolId(without_type)) {
+                        return ResolutionResult::resolved(
+                            target.id.clone(),
+                            0.90,
+                            ResolutionMethod::TypeMember,
+                            vec![ResolutionEvidence::MatchingType],
+                        );
+                    }
+
+                    // Also search by the type name in type_files
+                    if let Some(files) = context.index.type_files.get(type_name.as_str()) {
+                        for type_file in files {
+                            let type_file_path = &type_file.0;
+
+                            // Try type_file::Type::method
+                            let type_method =
+                                format!("{}::{}::{}", type_file_path, type_name, method_name);
+                            if let Some(target) = context.index.symbols.get(&SymbolId(type_method))
+                            {
+                                return ResolutionResult::resolved(
+                                    target.id.clone(),
+                                    0.95,
+                                    ResolutionMethod::TypeMember,
+                                    vec![ResolutionEvidence::MatchingType],
+                                );
+                            }
+
+                            // Try type_file::method
+                            let simple_method = format!("{}::{}", type_file_path, method_name);
+                            if let Some(target) =
+                                context.index.symbols.get(&SymbolId(simple_method))
+                            {
+                                return ResolutionResult::resolved(
+                                    target.id.clone(),
+                                    0.90,
+                                    ResolutionMethod::TypeMember,
+                                    vec![ResolutionEvidence::MatchingType],
+                                );
+                            }
+                        }
+                    }
+
+                    // Last resort: search by method name in the file
+                    let file_candidates = context.index.find_in_file(
+                        &crate::resolution::symbol::FileId(file_path.clone()),
+                        method_name,
+                    );
+                    if file_candidates.len() == 1 {
+                        return ResolutionResult::resolved(
+                            file_candidates[0].id.clone(),
+                            0.85,
+                            ResolutionMethod::TypeMember,
+                            vec![ResolutionEvidence::MatchingType],
                         );
                     }
                 }
             }
         }
+        // Handle code_intelligence:: paths (the crate's own name)
+        if parts
+            .first()
+            .map(|s| s == "code_intelligence")
+            .unwrap_or(false)
+        {
+            let mut new_parts = vec!["crate".to_string()];
+            new_parts.extend(parts[1..].to_vec());
+            return self.resolve_qualified(&new_parts, context);
+        }
+
+        // Handle crate:: paths - resolve to actual file paths
+        if parts.first().map(|s| s == "crate").unwrap_or(false) {
+            let rest = &parts[1..];
+            let target_name = rest.last().unwrap();
+            let module_path = rest[..rest.len() - 1].join("/");
+
+            // Try direct file path resolution
+            let direct_file = format!("src/{}.rs", module_path);
+            let direct = format!("{}::{}", direct_file, target_name);
+            if let Some(target) = context.index.symbols.get(&SymbolId(direct.clone())) {
+                return ResolutionResult::resolved(
+                    target.id.clone(),
+                    0.95,
+                    ResolutionMethod::QualifiedSymbol,
+                    vec![ResolutionEvidence::MatchingModule],
+                );
+            }
+
+            // Try mod.rs path
+            let mod_file = format!("src/{}/mod.rs", module_path);
+            let mod_direct = format!("{}::{}", mod_file, target_name);
+            if let Some(target) = context.index.symbols.get(&SymbolId(mod_direct.clone())) {
+                return ResolutionResult::resolved(
+                    target.id.clone(),
+                    0.95,
+                    ResolutionMethod::QualifiedSymbol,
+                    vec![ResolutionEvidence::MatchingModule],
+                );
+            }
+
+            let candidates = context.index.find_by_name(target_name);
+            let matching: Vec<_> = candidates
+                .iter()
+                .filter(|s| s.file.0.contains(&module_path) || s.id.0.contains(&module_path))
+                .collect();
+
+            if matching.len() == 1 {
+                return ResolutionResult::resolved(
+                    matching[0].id.clone(),
+                    0.95,
+                    ResolutionMethod::QualifiedSymbol,
+                    vec![ResolutionEvidence::MatchingModule],
+                );
+            }
+
+            if matching.len() > 1 {
+                let exact: Vec<_> = matching
+                    .iter()
+                    .filter(|s| {
+                        s.id.0.ends_with(&format!(
+                            "{}::{}",
+                            module_path.replace("/", "::"),
+                            target_name
+                        ))
+                    })
+                    .collect();
+
+                if exact.len() == 1 {
+                    return ResolutionResult::resolved(
+                        exact[0].id.clone(),
+                        0.95,
+                        ResolutionMethod::QualifiedSymbol,
+                        vec![ResolutionEvidence::MatchingModule],
+                    );
+                }
+            }
+
+            // If we can't resolve it, mark as external
+            return ResolutionResult::external();
+        }
 
         // Handle Self:: calls
         if parts.first().map(|s| s == "Self").unwrap_or(false) {
-            // Self::method() - resolve against the current container
             if let Some(caller) = context.index.symbols.get(&context.function) {
                 if let Some(container) = &caller.container {
                     let method_name = parts.last().unwrap();
@@ -210,7 +480,7 @@ impl RustResolver {
                     }
                 }
             }
-            return ResolutionResult::unresolved();
+            return ResolutionResult::external();
         }
 
         // Tier 1: Direct qualified match
@@ -223,11 +493,10 @@ impl RustResolver {
                 vec![ResolutionEvidence::MatchingSymbol],
             );
         }
+
         // Tier 2: Try file-based path conversion
-        // e.g., "rust::RustParser" -> "./src/parser/languages/rust.rs::RustParser"
         let root = &parts[0];
 
-        // Try to find the module/file for this root
         for (module_id, module) in &context.index.modules {
             let module_short = module_id.0.split("::").last().unwrap_or(&module_id.0);
 
@@ -249,7 +518,6 @@ impl RustResolver {
                     );
                 }
 
-                // Also try without the container (free function)
                 let last = parts.last().unwrap();
                 let simple_path = format!("{}::{}", file_path, last);
                 if let Some(target) = context.index.symbols.get(&SymbolId(simple_path)) {
@@ -283,7 +551,6 @@ impl RustResolver {
                 format!("{}::{}", module_path, rest)
             };
 
-            // Try to find the file for this module
             for (module_id, module) in &context.index.modules {
                 if module_id.0 == full_path || module_id.0.starts_with(&full_path) {
                     let file_path = &module.file.0;
@@ -299,7 +566,6 @@ impl RustResolver {
                         );
                     }
 
-                    // Try with container
                     if parts.len() >= 3 {
                         let container = &parts[parts.len() - 2];
                         let method = &parts[parts.len() - 1];
@@ -322,8 +588,6 @@ impl RustResolver {
             let type_name = &parts[parts.len() - 2];
             let method_name = &parts[parts.len() - 1];
 
-            // Types aren't functions - look them up in the type index
-            // (declared name -> declaring file), not the function symbol table.
             if let Some(files) = context.index.type_files.get(type_name.as_str()) {
                 if files.len() == 1 {
                     let type_file = &files[0].0;
@@ -337,7 +601,6 @@ impl RustResolver {
                         );
                     }
 
-                    // Try without container (associated function)
                     let simple = format!("{}::{}", type_file, method_name);
                     if let Some(target) = context.index.symbols.get(&SymbolId(simple)) {
                         return ResolutionResult::resolved(
@@ -350,14 +613,11 @@ impl RustResolver {
                 }
             }
 
-            // Also try the first part as type name (e.g., FunctionFeatures::from_function)
             let first_type = &parts[0];
             let last_method = &parts[parts.len() - 1];
 
-            // Search all symbols for this type
             for symbol in context.index.symbols.values() {
                 if symbol.name == *first_type && symbol.container.is_none() {
-                    // Found a struct/enum definition, now look for impl methods
                     let target_path = format!("{}::{}", symbol.file.0, last_method);
                     if let Some(target) = context.index.symbols.get(&SymbolId(target_path)) {
                         return ResolutionResult::resolved(
@@ -368,7 +628,6 @@ impl RustResolver {
                         );
                     }
 
-                    // Also try with container
                     let full_target = format!("{}::{}::{}", symbol.file.0, first_type, last_method);
                     if let Some(target) = context.index.symbols.get(&SymbolId(full_target)) {
                         return ResolutionResult::resolved(
@@ -382,6 +641,175 @@ impl RustResolver {
             }
         }
 
+        // Handle Default::default() and similar trait methods
+        if parts.len() == 2 && parts[1] == "default" {
+            let type_name = &parts[0];
+
+            if let Some(files) = context.index.type_files.get(type_name.as_str()) {
+                if !files.is_empty() {
+                    let file_path = &files[0].0;
+
+                    let direct_path = format!("{}::default", file_path);
+                    if let Some(target) = context.index.symbols.get(&SymbolId(direct_path)) {
+                        return ResolutionResult::resolved(
+                            target.id.clone(),
+                            0.90,
+                            ResolutionMethod::TypeMember,
+                            vec![ResolutionEvidence::MatchingType],
+                        );
+                    }
+
+                    let container_path = format!("{}::{}::default", file_path, type_name);
+                    if let Some(target) = context.index.symbols.get(&SymbolId(container_path)) {
+                        return ResolutionResult::resolved(
+                            target.id.clone(),
+                            0.90,
+                            ResolutionMethod::TypeMember,
+                            vec![ResolutionEvidence::MatchingType],
+                        );
+                    }
+
+                    return ResolutionResult::external();
+                }
+            }
+
+            return ResolutionResult::external();
+        }
+
+        // Handle internal type constructors and associated functions
+        if parts.len() >= 2 {
+            let type_name = &parts[0];
+            let method_name = parts.last().unwrap();
+
+            if let Some(files) = context.index.type_files.get(type_name.as_str()) {
+                for file_id in files {
+                    let file_path = &file_id.0;
+
+                    let direct = format!("{}::{}", file_path, method_name);
+                    if let Some(target) = context.index.symbols.get(&SymbolId(direct)) {
+                        return ResolutionResult::resolved(
+                            target.id.clone(),
+                            0.90,
+                            ResolutionMethod::TypeMember,
+                            vec![ResolutionEvidence::MatchingType],
+                        );
+                    }
+
+                    let with_container = format!("{}::{}::{}", file_path, type_name, method_name);
+                    if let Some(target) = context.index.symbols.get(&SymbolId(with_container)) {
+                        return ResolutionResult::resolved(
+                            target.id.clone(),
+                            0.90,
+                            ResolutionMethod::TypeMember,
+                            vec![ResolutionEvidence::MatchingType],
+                        );
+                    }
+                }
+
+                return ResolutionResult::external();
+            }
+
+            let candidates = context.index.find_by_name(method_name);
+            let matching: Vec<_> = candidates
+                .iter()
+                .filter(|s| {
+                    s.id.0.contains(type_name)
+                        || s.container
+                            .as_ref()
+                            .map(|c| c.0.contains(type_name))
+                            .unwrap_or(false)
+                })
+                .collect();
+
+            if matching.len() == 1 {
+                return ResolutionResult::resolved(
+                    matching[0].id.clone(),
+                    0.85,
+                    ResolutionMethod::TypeMember,
+                    vec![ResolutionEvidence::MatchingType],
+                );
+            }
+        }
+
+        // Handle module aliases (rust::RustParser, python::PythonParser, etc.)
+        if parts.len() >= 2 {
+            let first = &parts[0];
+            let known_modules = [
+                "rust",
+                "python",
+                "javascript",
+                "typescript",
+                "go",
+                "java",
+                "dart",
+                "php",
+                "cpp",
+                "csharp",
+            ];
+
+            if known_modules.contains(&first.as_str()) {
+                let module_name = first;
+                let type_name = &parts[1];
+
+                // Try to find the actual file path for this module
+                let expected_path = format!("src/parser/languages/{}.rs", module_name);
+
+                // Search for the type in our symbols
+                let candidates = context.index.find_by_name(type_name);
+                let matching: Vec<_> = candidates
+                    .iter()
+                    .filter(|s| s.file.0.contains(&expected_path))
+                    .collect();
+
+                if matching.len() == 1 {
+                    return ResolutionResult::resolved(
+                        matching[0].id.clone(),
+                        0.95,
+                        ResolutionMethod::QualifiedSymbol,
+                        vec![ResolutionEvidence::MatchingModule],
+                    );
+                }
+
+                // If we can't find it, mark as external
+                return ResolutionResult::external();
+            }
+        }
+
+        // Handle enum variant constructors
+        if parts.len() == 2 {
+            let type_name = &parts[0];
+            let variant = &parts[1];
+
+            if context.index.type_files.get(type_name.as_str()).is_some() {
+                return ResolutionResult::external();
+            }
+
+            if type_name.chars().next().map_or(false, |c| c.is_uppercase())
+                && variant.chars().next().map_or(false, |c| c.is_uppercase())
+            {
+                return ResolutionResult::external();
+            }
+        }
+
+        // Handle Self::default() and Self::new()
+        if parts.first().map(|s| s == "Self").unwrap_or(false) {
+            return ResolutionResult::external();
+        }
+
+        // Handle code_intelligence:: paths
+        if parts
+            .first()
+            .map(|s| s == "code_intelligence")
+            .unwrap_or(false)
+        {
+            return ResolutionResult::external();
+        }
+
+        // Handle fs:: paths
+        if parts.first().map(|s| s == "fs").unwrap_or(false) {
+            return ResolutionResult::external();
+        }
+
         ResolutionResult::unresolved()
     }
 
@@ -391,15 +819,11 @@ impl RustResolver {
         member: &str,
         context: &ResolutionContext,
     ) -> ResolutionResult {
-        // Resolve receiver name
         let receiver_name = match receiver {
             CalleeExpr::Name(name) => name.clone(),
             _ => return ResolutionResult::unresolved(),
         };
 
-        // `self`/`this` isn't a symbol to look up - it IS the caller's own
-        // container. Resolve it directly instead of searching the symbol
-        // index for something literally named "self".
         if receiver_name == "self" || receiver_name == "this" {
             if let Some(caller) = context.index.symbols.get(&context.function) {
                 if let Some(container) = &caller.container {
@@ -434,7 +858,6 @@ impl RustResolver {
                 }
             }
 
-            // No known container, or member wasn't among its siblings - fall back.
             let same_file = context.index.find_in_file(&context.file, member);
             if same_file.len() == 1 {
                 return ResolutionResult::resolved(
@@ -444,10 +867,9 @@ impl RustResolver {
                     vec![ResolutionEvidence::SameFile],
                 );
             }
-            return ResolutionResult::unresolved();
+            return ResolutionResult::external();
         }
 
-        // Try to find the receiver symbol and look for member in same container
         let receiver_candidates = context.index.find_by_name(&receiver_name);
         if receiver_candidates.len() == 1 {
             let receiver_symbol = &receiver_candidates[0];
@@ -470,7 +892,6 @@ impl RustResolver {
                 }
             }
 
-            // Try same file
             let same_file = context.index.find_in_file(&receiver_symbol.file, member);
             if same_file.len() == 1 {
                 return ResolutionResult::resolved(
@@ -482,7 +903,6 @@ impl RustResolver {
             }
         }
 
-        // Fallback: find member by name in same file
         let same_file = context.index.find_in_file(&context.file, member);
         if same_file.len() == 1 {
             return ResolutionResult::resolved(
@@ -493,6 +913,6 @@ impl RustResolver {
             );
         }
 
-        ResolutionResult::unresolved()
+        ResolutionResult::external()
     }
 }

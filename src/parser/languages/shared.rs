@@ -6,7 +6,7 @@
 //! that works for all languages, with language-specific configurations.
 
 use crate::parser::languages::common::*;
-use crate::parser::tree_sitter::{FunctionInfo, ImportInfo, TypeInfo, TypeKind};
+use crate::parser::tree_sitter::{FunctionInfo, ImportInfo, TypeInfo, TypeKind, VariableInfo};
 use tree_sitter::{Node, Tree};
 
 /// Language-specific configuration for the shared parser
@@ -140,12 +140,51 @@ impl SharedParser {
             // Track trait implementation (Rust-specific)
             let mut next_trait = trait_impl;
             if child_kind == "impl_item" && config.name == "Rust" {
+                // Try field first (impl Trait for Type)
                 let ty = child
                     .child_by_field_name("type")
                     .and_then(|t| t.utf8_text(source.as_bytes()).ok());
+
+                // If no type field, extract from the impl text
+                let ty = if ty.is_some() {
+                    ty
+                } else {
+                    // Get the full text of the impl_item
+                    child
+                        .utf8_text(source.as_bytes())
+                        .ok()
+                        .and_then(|text| {
+                            let trimmed = text.trim_start();
+                            if trimmed.starts_with("impl ") {
+                                let after_impl = &trimmed[5..];
+                                // Handle "impl Trait for Type"
+                                if let Some(for_pos) = after_impl.find(" for ") {
+                                    after_impl[for_pos + 5..]
+                                        .split_whitespace()
+                                        .next()
+                                        .map(|s| s.trim_matches('{').trim().to_string())
+                                } else {
+                                    // "impl TypeName {"
+                                    after_impl
+                                        .split_whitespace()
+                                        .next()
+                                        .map(|s| s.trim_matches('{').trim().to_string())
+                                }
+                            } else {
+                                None
+                            }
+                        })
+                        .and_then(|s| {
+                            // Need to store this String somewhere that outlives the closure
+                            // We'll leak it temporarily - acceptable for parsing
+                            Some(&*Box::leak(s.into_boxed_str()))
+                        })
+                };
+
                 let tr = child
                     .child_by_field_name("trait")
                     .and_then(|t| t.utf8_text(source.as_bytes()).ok());
+
                 next_container = ty;
                 next_trait = tr;
             }
@@ -153,7 +192,6 @@ impl SharedParser {
             Self::walk_for_functions(child, source, config, next_container, next_trait, out);
         }
     }
-
     /// Parse a single function node
     fn parse_function(
         node: &Node,
@@ -227,6 +265,9 @@ impl SharedParser {
         let is_test = has_test_attribute(node, source);
         let is_trait_method = is_trait_method(node, source);
         let is_trait_default = is_trait_default_method(node, source);
+        let variables = body_node
+            .map(|body| Self::extract_variables(&body, source))
+            .unwrap_or_default();
 
         Some(FunctionInfo {
             name,
@@ -249,6 +290,7 @@ impl SharedParser {
             is_test,
             is_trait_method,
             is_trait_default,
+            variables,
         })
     }
 
@@ -277,6 +319,42 @@ impl SharedParser {
             count += Self::count_branches(child, source, branch_kinds);
         }
         count
+    }
+
+    fn extract_variables(node: &Node, source: &str) -> Vec<VariableInfo> {
+        let mut variables = Vec::new();
+        let mut cursor = node.walk();
+
+        for child in node.children(&mut cursor) {
+            if child.kind() == "let_declaration" || child.kind() == "variable_declaration" {
+                let name = child
+                    .child_by_field_name("pattern")
+                    .and_then(|p| p.utf8_text(source.as_bytes()).ok())
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                let type_hint = child
+                    .child_by_field_name("type")
+                    .and_then(|t| t.utf8_text(source.as_bytes()).ok())
+                    .map(|s| s.to_string());
+
+                let initializer = child
+                    .child_by_field_name("value")
+                    .and_then(|v| v.utf8_text(source.as_bytes()).ok())
+                    .map(|s| s.to_string());
+
+                variables.push(VariableInfo {
+                    name,
+                    type_hint,
+                    initializer,
+                });
+            }
+
+            // Recurse
+            variables.extend(Self::extract_variables(&child, source));
+        }
+
+        variables
     }
 
     /// Walk the AST and extract types

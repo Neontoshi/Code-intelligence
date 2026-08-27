@@ -8,6 +8,7 @@ pub mod result;
 pub mod scope;
 pub mod symbol;
 pub mod traits;
+pub mod type_inference;
 
 pub use call_site::{CallKind, CallSite, CalleeExpr, SourceLocation};
 pub use context::{Language, ResolutionContext};
@@ -21,6 +22,7 @@ pub use symbol::{
     SymbolKind, TypeId, Visibility,
 };
 pub use traits::LanguageResolver;
+pub use type_inference::{InferredType, TypeContext};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -29,6 +31,7 @@ pub struct ResolutionEngine {
     pub index: SymbolIndex,
     pub scopes: ScopeChain,
     pub resolvers: HashMap<Language, Arc<dyn LanguageResolver>>,
+    pub type_context: TypeContext,
 }
 
 impl ResolutionEngine {
@@ -37,6 +40,7 @@ impl ResolutionEngine {
             index: SymbolIndex::new(),
             scopes: ScopeChain::new(),
             resolvers: languages::get_all_resolvers(),
+            type_context: TypeContext::new(),
         }
     }
 
@@ -46,6 +50,96 @@ impl ResolutionEngine {
 
     pub fn add_scope(&mut self, scope: Scope) {
         self.scopes.add_scope(scope);
+    }
+
+    pub fn infer_and_resolve_call(
+        &self,
+        call: &CallSite,
+        file: &FileId,
+        function: &SymbolId,
+        scope: &ScopeId,
+        language: &Language,
+        module: &ModuleId,
+    ) -> ResolutionResult {
+        // Try to resolve using type inference
+        if let CalleeExpr::Member { receiver, member } = &call.callee {
+            if let CalleeExpr::Name(name) = receiver.as_ref() {
+                // Infer the type of the receiver
+                let receiver_type = self.type_context.infer_type(name);
+
+                if let Some(type_name) = receiver_type.name() {
+                    // Try to find the method on this type
+                    let candidates = self.find_method_on_type(type_name, member);
+
+                    if candidates.len() == 1 {
+                        return ResolutionResult::resolved(
+                            candidates[0].clone(),
+                            0.95,
+                            ResolutionMethod::TypeMember,
+                            vec![ResolutionEvidence::MatchingType],
+                        );
+                    }
+
+                    // Try to find the field on this type
+                    if let Some(field_type) = self.type_context.lookup_field(type_name, member) {
+                        if let Some(field_type_name) = field_type.name() {
+                            // If the field is a function type, we can resolve it
+                            let field_candidates = self.index.find_by_name(field_type_name);
+                            if field_candidates.len() == 1 {
+                                return ResolutionResult::resolved(
+                                    field_candidates[0].id.clone(),
+                                    0.85,
+                                    ResolutionMethod::TypeMember,
+                                    vec![ResolutionEvidence::MatchingType],
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fall back to regular resolution
+        self.resolve_call(call, file, function, scope, language, module)
+    }
+
+    fn find_method_on_type(&self, type_name: &str, method_name: &str) -> Vec<SymbolId> {
+        let mut results = Vec::new();
+
+        // Search in type_files
+        if let Some(files) = self.index.type_files.get(type_name) {
+            for file_id in files {
+                // Try direct path
+                let direct = format!("{}::{}::{}", file_id.0, type_name, method_name);
+                if let Some(target) = self.index.symbols.get(&SymbolId(direct)) {
+                    results.push(target.id.clone());
+                }
+
+                // Try without container
+                let simple = format!("{}::{}", file_id.0, method_name);
+                if let Some(target) = self.index.symbols.get(&SymbolId(simple)) {
+                    results.push(target.id.clone());
+                }
+            }
+        }
+
+        // Search by container
+        for (container, members) in &self.index.by_container {
+            if container.0.contains(type_name) {
+                for member_id in members {
+                    if let Some(symbol) = self.index.symbols.get(member_id) {
+                        if symbol.name == method_name {
+                            results.push(symbol.id.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Deduplicate
+        results.sort();
+        results.dedup();
+        results
     }
 
     pub fn resolve_call(
@@ -74,10 +168,40 @@ impl ResolutionEngine {
         ResolutionResult::unresolved()
     }
 
-    pub fn is_external_call(&self, callee: &CalleeExpr, language: &Language) -> bool {
+    pub fn is_external_call(
+        &self,
+        callee: &CalleeExpr,
+        language: &Language,
+        file: &FileId,
+    ) -> bool {
         match callee {
             CalleeExpr::Name(name) => {
-                self.is_external_builtin(name, language) || self.is_external_root(name, language)
+                if self.is_external_builtin(name, language) || self.is_external_root(name, language)
+                {
+                    return true;
+                }
+
+                // A bare call whose name was brought in via `use external::path::name;`
+                // is external even if the name itself isn't in a hardcoded list.
+                if let Some(imports) = self.index.imports.get(file) {
+                    for import in imports {
+                        let matches = import.local_name == *name
+                            || import.imported_name.as_deref() == Some(name.as_str());
+                        if matches {
+                            let root = import
+                                .module
+                                .0
+                                .split("::")
+                                .next()
+                                .unwrap_or(&import.module.0);
+                            if self.is_external_root(root, language) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                false
             }
             CalleeExpr::Qualified(parts) => {
                 if parts.is_empty() {
@@ -179,6 +303,14 @@ impl ResolutionEngine {
                         | "sha2"
                         | "ndarray"
                         | "reqwest"
+                        | "stream"
+                        | "Regex"
+                        | "DefaultHasher"
+                        | "DiGraph"
+                        | "VecDeque"
+                        | "SystemTime"
+                        | "Array1"
+                        | "Array2"
                         | "Vec"
                         | "String"
                         | "PathBuf"
@@ -201,6 +333,17 @@ impl ResolutionEngine {
                         | "Box"
                         | "Arc"
                         | "Rc"
+                        | "Bump"
+                        | "Blake3Hasher"
+                        | "WalkDir"
+                        | "walkdir"
+                        | "DashMap"
+                        | "AtomicUsize"
+                        | "Command"
+                        | "Utc"
+                        | "rayon"
+                        | "tracing_subscriber"
+                        | "toml"
                 )
             }
 

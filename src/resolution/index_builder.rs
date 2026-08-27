@@ -1,18 +1,22 @@
 // src/resolution/index_builder.rs
 
 use crate::parser::tree_sitter::ParsedFile;
+use crate::parser::TypeKind;
 use crate::resolution::scope::{Scope, ScopeChain};
 use crate::resolution::symbol::{
     FileId, ImportBinding, ImportKind, Module, ModuleId, ScopeId, Symbol, SymbolId, SymbolIndex,
     SymbolKind, Visibility,
 };
+use crate::resolution::type_inference::{InferredType, TypeContext};
+use std::collections::HashMap;
 
 pub struct IndexBuilder;
 
 impl IndexBuilder {
-    pub fn build(files: &[ParsedFile]) -> (SymbolIndex, ScopeChain) {
+    pub fn build(files: &[ParsedFile]) -> (SymbolIndex, ScopeChain, TypeContext) {
         let mut index = SymbolIndex::new();
         let mut scopes = ScopeChain::new();
+        let mut type_context = TypeContext::new();
 
         // First pass: Register all modules and file-level scopes
         for file in files {
@@ -173,6 +177,55 @@ impl IndexBuilder {
             }
         }
 
+        // Fifth pass: Build type context
+        for file in files {
+            // Register type aliases (FileId, ModuleId, etc.)
+            // These are tuple structs defined in resolution/symbol.rs
+            for ty in &file.types {
+                match ty.kind {
+                    TypeKind::Struct => {
+                        // Register as a concrete type
+                        type_context.register_struct(&ty.name, HashMap::new());
+                    }
+                    TypeKind::Enum => {
+                        type_context.register_struct(&ty.name, HashMap::new());
+                    }
+                    TypeKind::TypeAlias => {
+                        type_context
+                            .register_type_alias(&ty.name, InferredType::Concrete(ty.name.clone()));
+                    }
+                    _ => {}
+                }
+            }
+
+            // Register function signatures
+            for func in &file.functions {
+                let full_path = match &func.container {
+                    Some(c) => format!("{}::{}::{}", file.path, c, func.name),
+                    None => format!("{}::{}", file.path, func.name),
+                };
+
+                let params: Vec<InferredType> = func
+                    .params
+                    .iter()
+                    .map(|p| {
+                        p.type_hint
+                            .as_ref()
+                            .map(|t| InferredType::from_string(t))
+                            .unwrap_or(InferredType::Unknown)
+                    })
+                    .collect();
+
+                let return_type = func
+                    .return_type
+                    .as_ref()
+                    .map(|t| InferredType::from_string(t))
+                    .unwrap_or(InferredType::Unknown);
+
+                type_context.register_function(&full_path, params, return_type);
+            }
+        }
+
         // Apply import resolutions
         for (file_id, idx, symbol_id) in import_resolutions {
             if let Some(imports) = index.imports.get_mut(&file_id) {
@@ -182,7 +235,41 @@ impl IndexBuilder {
             }
         }
 
-        (index, scopes)
+        // Build module aliases
+        for (module_id, module) in &index.modules {
+            let file_path = &module.file.0;
+
+            // Register the full module path
+            index
+                .module_aliases
+                .insert(module_id.0.clone(), file_path.clone());
+
+            // Register the short name (last segment)
+            let short_name = module_id.0.split("::").last().unwrap_or(&module_id.0);
+            index
+                .module_aliases
+                .insert(short_name.to_string(), file_path.clone());
+
+            // Register common aliases
+            let file_stem = file_path
+                .split('/')
+                .last()
+                .unwrap_or(file_path)
+                .trim_end_matches(".rs");
+            index
+                .module_aliases
+                .insert(file_stem.to_string(), file_path.clone());
+
+            // Register path-based aliases (src/parser/languages/rust -> rust)
+            if let Some(lang_pos) = file_path.find("/languages/") {
+                let lang_name = file_path[lang_pos + 11..].trim_end_matches(".rs");
+                index
+                    .module_aliases
+                    .insert(lang_name.to_string(), file_path.clone());
+            }
+        }
+
+        (index, scopes, type_context)
     }
 
     fn extract_imported_name(module: &str) -> Option<String> {
