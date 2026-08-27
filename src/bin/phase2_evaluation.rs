@@ -1140,7 +1140,7 @@ fn run_model_comparison(
     let mut ml_classifier = DeadCodeClassifier::new();
     ml_classifier
         .train(train_examples)
-        .map_err(|e| code_intelligence::error::err::model(e))?;
+        .map_err(|e| anyhow::anyhow!("Model error: {}", e))?;
     let ml_metrics = evaluate_classifier_full(&ml_classifier, test_examples);
 
     // 3. Static + ML combined
@@ -1250,7 +1250,7 @@ fn run_calibration_metrics(
     let mut classifier = DeadCodeClassifier::new();
     classifier
         .train(train_examples)
-        .map_err(|e| code_intelligence::error::err::model(e))?;
+        .map_err(|e| anyhow::anyhow!("Model error: {}", e))?;
 
     // Collect predictions and actual labels
     let mut predictions = Vec::new();

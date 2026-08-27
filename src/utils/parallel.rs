@@ -85,10 +85,10 @@ impl ParallelUtils {
     }
 
     /// Process files in parallel
-    pub fn process_files<T, F>(paths: Vec<std::path::PathBuf>, process: F) -> Vec<Result<T, String>>
+    pub fn process_files<T, F>(paths: Vec<std::path::PathBuf>, process: F) -> Vec<crate::error::Result<T>>
     where
         T: Send + Sync,
-        F: Fn(std::path::PathBuf) -> Result<T, String> + Send + Sync,
+        F: Fn(std::path::PathBuf) -> crate::error::Result<T> + Send + Sync,
     {
         paths.into_par_iter().map(process).collect()
     }
@@ -143,17 +143,17 @@ impl ParallelUtils {
         items: Vec<T>,
         f: F,
         progress: P,
-    ) -> Vec<Result<R, String>>
+    ) -> Vec<crate::error::Result<R>>
     where
         T: Send + Sync + Clone,
         R: Send + Sync,
-        F: Fn(T) -> Result<R, String> + Send + Sync,
+        F: Fn(T) -> crate::error::Result<R> + Send + Sync,
         P: Fn(usize, usize) + Send + Sync,
     {
         let total = items.len();
         let chunk_size = Self::adaptive_chunk_size(total, rayon::current_num_threads());
 
-        let results: Vec<Result<R, String>> = items
+        let results: Vec<crate::error::Result<R>> = items
             .par_chunks(chunk_size)
             .enumerate()
             .flat_map(|(chunk_idx, chunk)| {

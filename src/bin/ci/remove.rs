@@ -1,7 +1,7 @@
 // src/bin/ci/remove.rs
 
 use code_intelligence::analysis::outcomes::{OutcomeTracker, VerdictOutcome};
-use code_intelligence::error::{err, Result};
+use code_intelligence::error::Result;
 use std::path::Path;
 
 pub fn run_remove(path: &Path, name: &str, commit: Option<String>) -> Result<()> {
@@ -16,7 +16,7 @@ pub fn run_remove(path: &Path, name: &str, commit: Option<String>) -> Result<()>
     if let Some((id, func_name)) = target_id {
         tracker
             .mark_removed(&id, commit.as_deref())
-            .map_err(|e| err::internal(e))?;
+            .map_err(|e| anyhow::anyhow!("Internal error: {}", e))?;
         println!("✅ Marked '{}' as removed", func_name);
     } else {
         println!("⚠️ No pending function found matching '{}'", name);

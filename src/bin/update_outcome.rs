@@ -2,7 +2,7 @@
 
 use clap::{Parser, Subcommand};
 use code_intelligence::analysis::OutcomeTracker;
-use code_intelligence::error::{err, Result};
+use code_intelligence::error::Result;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -47,13 +47,13 @@ fn main() -> Result<()> {
         Command::Removed { id, commit } => {
             tracker
                 .mark_removed(&id, commit.as_deref())
-                .map_err(|e| err::internal(e))?;
+                .map_err(|e| anyhow::anyhow!("Internal error: {}", e))?;
             println!("✅ Marked {} as removed", id);
         }
         Command::FalsePositive { id, reason } => {
             tracker
                 .mark_false_positive(&id, &reason)
-                .map_err(|e| err::internal(e))?;
+                .map_err(|e| anyhow::anyhow!("Internal error: {}", e))?;
             println!("✅ Marked {} as false positive: {}", id, reason);
         }
         Command::List => {

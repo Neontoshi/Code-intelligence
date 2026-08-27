@@ -73,7 +73,7 @@ PHASE 8 Final 9.5/10 validation gate
 - [ ] Create explicit, separate confidence scores: "dead confidence" vs "deletion safety"
 - [ ] Build adversarial tests for dangerous combinations: dead+FFI, dead+reflection, dead+macro, dead+plugin, dead+framework, dead+public API, dead+dynamic import, alive+no static callers, alive+test-only caller, alive+generated caller
 
-## 🟠 Phase 5 — Analyzer quality
+## 🟠 Phase 5 — Analyzer quality(DONE)
 *Goal: improve the evidence feeding the verdict engine.*
 
 - [ ] Audit every root-detection category: main, tests, benchmarks, public API, exported symbols, framework entrypoints, CLI commands, handlers, routes, plugins, FFI, generated code, build scripts, config references

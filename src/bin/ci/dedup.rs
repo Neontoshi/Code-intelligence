@@ -35,7 +35,7 @@ pub async fn run_dedup_report(
                 if verbose {
                     println!("✅ Loaded custom duplicate model from: {:?}", custom_path);
                 }
-                DuplicateClassifier::load(&custom_path).map_err(|e| err::model(e))?
+                DuplicateClassifier::load(&custom_path).map_err(|e| anyhow::anyhow!("Model error: {}", e))?
             }
             (None, Some(config_path)) if config_path.exists() => {
                 if verbose {
@@ -44,13 +44,13 @@ pub async fn run_dedup_report(
                         config_path
                     );
                 }
-                DuplicateClassifier::load(&config_path).map_err(|e| err::model(e))?
+                DuplicateClassifier::load(&config_path).map_err(|e| anyhow::anyhow!("Model error: {}", e))?
             }
             _ => {
                 if verbose {
                     println!("🧠 Using built-in embedded duplicate model");
                 }
-                DuplicateClassifier::load_embedded().map_err(|e| err::model(e))?
+                DuplicateClassifier::load_embedded().map_err(|e| anyhow::anyhow!("Model error: {}", e))?
             }
         };
         Some(loaded_model)

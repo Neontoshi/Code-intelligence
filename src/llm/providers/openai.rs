@@ -115,11 +115,11 @@ pub struct OpenAIProvider {
 }
 
 impl OpenAIProvider {
-    pub async fn new(config: &ProviderConfig) -> std::result::Result<Self, String> {
+    pub async fn new(config: &ProviderConfig) -> crate::error::Result<Self> {
         let api_key = config
             .api_key
             .clone()
-            .ok_or_else(|| "OpenAI API key is required".to_string())?;
+            .ok_or_else(|| anyhow::anyhow!("OpenAI API key is required"))?;
 
         let base_url = config
             .base_url
@@ -130,7 +130,7 @@ impl OpenAIProvider {
         let client = Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds))
             .build()
-            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
 
         let provider = Self {
             client,
@@ -158,10 +158,10 @@ impl LLMProvider for OpenAIProvider {
         &self,
         messages: &[LLMMessage],
         options: &GenerationOptions,
-    ) -> std::result::Result<LLMResponse, String> {
+    ) -> crate::error::Result<LLMResponse> {
         // Check availability
         if !self.available {
-            return Err("OpenAI is not available".to_string());
+            return Err(anyhow::anyhow!("OpenAI is not available"));
         }
 
         // Convert messages
@@ -213,7 +213,7 @@ impl LLMProvider for OpenAIProvider {
                                 let choice = openai_response
                                     .choices
                                     .first()
-                                    .ok_or_else(|| "No choices in response".to_string())?;
+                                    .ok_or_else(|| anyhow::anyhow!("No choices in response"))?;
 
                                 return Ok(LLMResponse {
                                     content: choice.message.content.clone(),
@@ -227,7 +227,7 @@ impl LLMProvider for OpenAIProvider {
                                 });
                             }
                             Err(e) => {
-                                return Err(format!("Failed to parse: {}", e));
+                                return Err(anyhow::anyhow!("Failed to parse: {}", e));
                             }
                         }
                     } else {
@@ -251,20 +251,19 @@ impl LLMProvider for OpenAIProvider {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| "Max retries exceeded".to_string()))
+        Err(anyhow::anyhow!(
+            last_error.unwrap_or_else(|| "Max retries exceeded".to_string())
+        ))
     }
 
     async fn generate_stream(
         &self,
         messages: &[LLMMessage],
         options: &GenerationOptions,
-    ) -> std::result::Result<
-        Box<dyn Stream<Item = std::result::Result<String, String>> + Send>,
-        String,
-    > {
+    ) -> crate::error::Result<Box<dyn Stream<Item = crate::error::Result<String>> + Send>> {
         // Check availability
         if !self.available {
-            return Err("OpenAI is not available".to_string());
+            return Err(anyhow::anyhow!("OpenAI is not available"));
         }
 
         // Convert messages
@@ -305,12 +304,12 @@ impl LLMProvider for OpenAIProvider {
             .json(&request)
             .send()
             .await
-            .map_err(|e| format!("Stream request failed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Stream request failed: {}", e))?;
 
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(format!("OpenAI API error {}: {}", status, text));
+            return Err(anyhow::anyhow!("OpenAI API error {}: {}", status, text));
         }
 
         // Create stream from response
@@ -338,7 +337,7 @@ impl LLMProvider for OpenAIProvider {
                     }
                     Ok(String::new())
                 }
-                Err(e) => Err(format!("Stream error: {}", e)),
+                Err(e) => Err(anyhow::anyhow!("Stream error: {}", e)),
             }
         });
 

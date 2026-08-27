@@ -122,7 +122,7 @@ fn run_train_model(
     let mut classifier = DeadCodeClassifier::new();
     classifier
         .train(&train_examples)
-        .map_err(|e| err::training(e))?;
+        .map_err(|e| anyhow::anyhow!("Training failed: {}", e))?;
 
     if let Some(vd) = val_data {
         println!("   Validation data: {:?}", vd);
@@ -142,7 +142,7 @@ fn run_train_model(
         // CALIBRATE first using calibration split
         classifier
             .calibrate(calibration_examples)
-            .map_err(|e| err::training(e))?;
+            .map_err(|e| anyhow::anyhow!("Training failed: {}", e))?;
         println!("   Model calibrated on calibration split");
 
         // TUNE threshold using calibrated predictions on tuning split

@@ -51,11 +51,11 @@ pub struct AnthropicProvider {
 }
 
 impl AnthropicProvider {
-    pub fn new(config: &ProviderConfig) -> Result<Self, String> {
+    pub fn new(config: &ProviderConfig) -> crate::error::Result<Self> {
         let api_key = config
             .api_key
             .clone()
-            .ok_or_else(|| "Anthropic API key is required".to_string())?;
+            .ok_or_else(|| anyhow::anyhow!("Anthropic API key is required"))?;
 
         let base_url = config
             .base_url
@@ -65,7 +65,7 @@ impl AnthropicProvider {
         let client = Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds))
             .build()
-            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
 
         Ok(Self {
             client,
@@ -83,7 +83,7 @@ impl LLMProvider for AnthropicProvider {
         &self,
         messages: &[LLMMessage],
         options: &GenerationOptions,
-    ) -> Result<LLMResponse, String> {
+    ) -> crate::error::Result<LLMResponse> {
         // Extract system message (Anthropic has a separate system field)
         let mut system = None;
         let mut anthropic_messages = Vec::new();
@@ -122,18 +122,18 @@ impl LLMProvider for AnthropicProvider {
             .json(&request)
             .send()
             .await
-            .map_err(|e| format!("Request failed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Request failed: {}", e))?;
 
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(format!("Anthropic API error {}: {}", status, text));
+            return Err(anyhow::anyhow!("Anthropic API error {}: {}", status, text));
         }
 
         let anthropic_response: AnthropicResponse = response
             .json()
             .await
-            .map_err(|e| format!("Failed to parse response: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to parse response: {}", e))?;
 
         let content = anthropic_response
             .content
@@ -157,8 +157,10 @@ impl LLMProvider for AnthropicProvider {
         &self,
         _messages: &[LLMMessage],
         _options: &GenerationOptions,
-    ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send>, String> {
-        Err("Streaming not yet implemented for Anthropic provider".to_string())
+    ) -> crate::error::Result<Box<dyn Stream<Item = crate::error::Result<String>> + Send>> {
+        Err(anyhow::anyhow!(
+            "Streaming not yet implemented for Anthropic provider"
+        ))
     }
 
     fn model_name(&self) -> &str {

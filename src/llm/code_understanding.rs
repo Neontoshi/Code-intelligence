@@ -45,7 +45,7 @@ impl CodeUnderstandingEngine {
         &mut self,
         func: &FunctionNode,
         source: &str,
-    ) -> Result<String, String> {
+    ) -> crate::error::Result<String> {
         // Check cache
         let cache_key = format!("summary_{}", func.full_path);
         if let Some(cached) = self.cache.get(&cache_key) {
@@ -103,7 +103,7 @@ Summary (1-2 sentences):"#,
         func: &FunctionNode,
         source: &str,
         question: Option<&str>,
-    ) -> Result<String, String> {
+    ) -> crate::error::Result<String> {
         // Check cache
         let cache_key = format!(
             "explain_{}_{}",
@@ -172,7 +172,7 @@ Explanation:"#,
         &mut self,
         func: &FunctionNode,
         source: &str,
-    ) -> Result<Vec<CodeIssue>, String> {
+    ) -> crate::error::Result<Vec<CodeIssue>> {
         let source_preview = Self::truncate_source(source, 600);
 
         let prompt = format!(
@@ -244,7 +244,7 @@ Provide analysis in JSON format:
         &mut self,
         func: &FunctionNode,
         source: &str,
-    ) -> Result<Vec<CodeSuggestion>, String> {
+    ) -> crate::error::Result<Vec<CodeSuggestion>> {
         let source_preview = Self::truncate_source(source, 600);
 
         let prompt = format!(
@@ -314,7 +314,7 @@ Provide suggestions in JSON format:
         &mut self,
         call_graph: &CallGraph,
         files: &[ParsedFile],
-    ) -> Result<String, String> {
+    ) -> crate::error::Result<String> {
         // Build languages inline
         let languages: Vec<String> = files.iter().map(|f| f.language.clone()).collect();
         let mut langs = languages;
@@ -391,7 +391,7 @@ Provide suggestions in JSON format:
         &mut self,
         call_graph: &CallGraph,
         files: &[ParsedFile],
-    ) -> Result<ArchitectureAnalysis, String> {
+    ) -> crate::error::Result<ArchitectureAnalysis> {
         let context = self.build_project_context(call_graph, files);
 
         let prompt = format!(
@@ -524,7 +524,7 @@ Provide analysis in JSON format:
         call_graph: &CallGraph,
         files: &[ParsedFile],
         project_name: &str,
-    ) -> Result<String, String> {
+    ) -> crate::error::Result<String> {
         let context = self.build_project_context(call_graph, files);
 
         let prompt = format!(
@@ -567,7 +567,7 @@ Use markdown formatting with proper headings and code blocks."#,
         func_b: &FunctionNode,
         source_a: &str,
         source_b: &str,
-    ) -> Result<DuplicateAnalysisResult, String> {
+    ) -> crate::error::Result<DuplicateAnalysisResult> {
         let source_a_preview = Self::truncate_source(source_a, 400);
         let source_b_preview = Self::truncate_source(source_b, 400);
 
@@ -667,7 +667,7 @@ Provide analysis in JSON format:
         messages: &[LLMMessage],
         temperature: f32,
         max_tokens: usize,
-    ) -> Result<String, String> {
+    ) -> crate::error::Result<String> {
         let options = GenerationOptions {
             temperature,
             max_tokens,
@@ -676,7 +676,7 @@ Provide analysis in JSON format:
 
         match self.provider.generate(messages, &options).await {
             Ok(response) => Ok(response.content.trim().to_string()),
-            Err(e) => Err(e.to_string()),
+            Err(e) => Err(anyhow::anyhow!("{}", e)),
         }
     }
 
@@ -686,7 +686,7 @@ Provide analysis in JSON format:
         messages: &[LLMMessage],
         temperature: f32,
         max_tokens: usize,
-    ) -> Result<serde_json::Value, String> {
+    ) -> crate::error::Result<serde_json::Value> {
         let options = GenerationOptions {
             temperature,
             max_tokens,
@@ -695,11 +695,11 @@ Provide analysis in JSON format:
 
         let response = match self.provider.generate(messages, &options).await {
             Ok(r) => r,
-            Err(e) => return Err(e.to_string()),
+            Err(e) => return Err(anyhow::anyhow!("{}", e)),
         };
 
         extract_json_from_response(&response.content)
-            .map_err(|e| format!("Failed to parse JSON: {}", e))
+            .map_err(|e| anyhow::anyhow!("Failed to parse JSON: {}", e))
     }
 
     /// Truncate source code to a reasonable length

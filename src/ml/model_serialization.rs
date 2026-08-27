@@ -27,6 +27,9 @@ pub struct TrainingMetadata {
     pub languages: Vec<String>,
     pub training_date: String,
     pub training_duration_secs: f64,
+    pub dataset_version: String,
+    pub git_commit: Option<String>,
+    pub feature_names_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,31 +132,31 @@ impl VersionedModel {
         }
     }
 
-    pub fn save(&self, path: &str) -> Result<(), String> {
+    pub fn save(&self, path: &str) -> crate::error::Result<()> {
         let json = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("Failed to serialize: {}", e))?;
-        std::fs::write(path, json).map_err(|e| format!("Failed to write file: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to serialize: {}", e))?;
+        std::fs::write(path, json).map_err(|e| anyhow::anyhow!("Failed to write file: {}", e))?;
         Ok(())
     }
 
-    pub fn load(path: &str) -> Result<Self, String> {
-        let data =
-            std::fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
-        let model: VersionedModel =
-            serde_json::from_str(&data).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+    pub fn load(path: &str) -> crate::error::Result<Self> {
+        let data = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read file: {}", e))?;
+        let model: VersionedModel = serde_json::from_str(&data)
+            .map_err(|e| anyhow::anyhow!("Failed to parse JSON: {}", e))?;
         model.validate_schema()?;
         Ok(model)
     }
 
     /// Comprehensive model validation
-    pub fn validate(&self) -> Result<ModelValidationResult, String> {
+    pub fn validate(&self) -> crate::error::Result<ModelValidationResult> {
         let mut issues = Vec::new();
         let mut warnings = Vec::new();
         let mut passed = true;
 
         // 1. Check schema compatibility
         if let Err(e) = self.validate_schema() {
-            issues.push(e);
+            issues.push(e.to_string());
             passed = false;
         }
 
@@ -248,6 +251,14 @@ impl VersionedModel {
             }
         }
 
+        // 11. Check training metadata
+        if self.training_metadata.examples_count == 0 {
+            warnings.push("Training metadata shows 0 examples".to_string());
+        }
+        if self.training_metadata.dataset_version == "unknown" {
+            warnings.push("Unknown training dataset version".to_string());
+        }
+
         Ok(ModelValidationResult {
             passed,
             issues,
@@ -259,18 +270,19 @@ impl VersionedModel {
     }
 
     /// Validate schema compatibility
-    pub fn validate_schema(&self) -> Result<(), String> {
+    pub fn validate_schema(&self) -> crate::error::Result<()> {
         let current = FEATURE_SCHEMA.clone();
 
         if self.feature_schema.version != current.version {
-            return Err(format!(
+            return Err(anyhow::anyhow!(
                 "Schema version mismatch: model has v{}, current is v{}",
-                self.feature_schema.version, current.version
+                self.feature_schema.version,
+                current.version
             ));
         }
 
         if self.feature_schema.feature_count() != current.feature_count() {
-            return Err(format!(
+            return Err(anyhow::anyhow!(
                 "Feature count mismatch: model has {}, current has {}",
                 self.feature_schema.feature_count(),
                 current.feature_count()
@@ -282,9 +294,11 @@ impl VersionedModel {
 
         for (i, (m, c)) in model_names.iter().zip(current_names.iter()).enumerate() {
             if m != c {
-                return Err(format!(
+                return Err(anyhow::anyhow!(
                     "Feature name mismatch at index {}: model '{}', current '{}'",
-                    i, m, c
+                    i,
+                    m,
+                    c
                 ));
             }
         }
@@ -362,16 +376,29 @@ impl VersionedModel {
             languages: Vec::new(),
             training_date: chrono::Utc::now().to_rfc3339(),
             training_duration_secs: 0.0,
+            dataset_version: "unknown".to_string(),
+            git_commit: None,
+            feature_names_hash: "unknown".to_string(),
         };
 
         Self::new(classifier, metadata, None)
     }
 
+    pub fn compute_feature_names_hash() -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        for name in FEATURE_SCHEMA.feature_names() {
+            hasher.update(name.as_bytes());
+            hasher.update(b"\n");
+        }
+        hex::encode(hasher.finalize())[..16].to_string()
+    }
+
     /// Load legacy model (just LinearClassifier) and convert
-    pub fn load_legacy(path: &str) -> Result<Self, String> {
+    pub fn load_legacy(path: &str) -> crate::error::Result<Self> {
         let classifier: LinearClassifier =
             crate::ml::serialization::ModelSerializer::load_auto(path)
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
         Ok(Self::from_legacy(classifier, None))
     }
 }

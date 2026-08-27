@@ -119,27 +119,27 @@ impl OutcomeTracker {
     }
 
     /// Load verdicts from storage
-    fn load_from_file(path: &PathBuf) -> Result<Vec<TrackedVerdict>, String> {
+    fn load_from_file(path: &PathBuf) -> crate::error::Result<Vec<TrackedVerdict>> {
         if !path.exists() {
             return Ok(Vec::new());
         }
 
         let data = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read outcomes file: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to read outcomes file: {}", e))?;
 
-        let verdicts: Vec<TrackedVerdict> =
-            serde_json::from_str(&data).map_err(|e| format!("Failed to parse outcomes: {}", e))?;
+        let verdicts: Vec<TrackedVerdict> = serde_json::from_str(&data)
+            .map_err(|e| anyhow::anyhow!("Failed to parse outcomes: {}", e))?;
 
         Ok(verdicts)
     }
 
     /// Save verdicts to storage
-    fn save(&self) -> Result<(), String> {
+    fn save(&self) -> crate::error::Result<()> {
         let data = serde_json::to_string_pretty(&self.verdicts)
-            .map_err(|e| format!("Failed to serialize outcomes: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to serialize outcomes: {}", e))?;
 
         std::fs::write(&self.storage_path, data)
-            .map_err(|e| format!("Failed to write outcomes: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to write outcomes: {}", e))?;
 
         Ok(())
     }
@@ -211,7 +211,7 @@ impl OutcomeTracker {
         line: usize,
         confidence: f64,
         project: &str,
-    ) -> Result<String, String> {
+    ) -> crate::error::Result<String> {
         // Generate stable ID based on function identity
         let id = Self::generate_stable_id(project, full_path, function_name, line);
 
@@ -266,7 +266,7 @@ impl OutcomeTracker {
         prediction: TrainingLabel,
         human_decision: TrainingLabel,
         actual_outcome: VerdictOutcome,
-    ) -> Result<String, String> {
+    ) -> crate::error::Result<String> {
         let id = symbol_identity.stable_id();
 
         let verdict = TrackedVerdict {
@@ -308,7 +308,7 @@ impl OutcomeTracker {
         outcome: VerdictOutcome,
         notes: Option<String>,
         removed_commit: Option<String>,
-    ) -> Result<(), String> {
+    ) -> crate::error::Result<()> {
         for verdict in &mut self.verdicts {
             if verdict.id == id {
                 verdict.outcome = outcome;
@@ -325,11 +325,15 @@ impl OutcomeTracker {
             }
         }
 
-        Err(format!("Verdict with id {} not found", id))
+        Err(anyhow::anyhow!("Verdict with id {} not found", id))
     }
 
     /// Mark a verdict as removed (convenience method)
-    pub fn mark_removed(&mut self, id: &str, commit_hash: Option<&str>) -> Result<(), String> {
+    pub fn mark_removed(
+        &mut self,
+        id: &str,
+        commit_hash: Option<&str>,
+    ) -> crate::error::Result<()> {
         self.update_outcome(
             id,
             VerdictOutcome::Removed,
@@ -339,7 +343,7 @@ impl OutcomeTracker {
     }
 
     /// Mark a verdict as false positive (convenience method)
-    pub fn mark_false_positive(&mut self, id: &str, reason: &str) -> Result<(), String> {
+    pub fn mark_false_positive(&mut self, id: &str, reason: &str) -> crate::error::Result<()> {
         self.update_outcome(
             id,
             VerdictOutcome::Kept,
@@ -387,7 +391,7 @@ impl OutcomeTracker {
         &mut self,
         dead_verdicts: &[&crate::analysis::verdict_source::state::Verdict],
         project: &str,
-    ) -> Result<usize, String> {
+    ) -> crate::error::Result<usize> {
         let mut count = 0;
         for verdict in dead_verdicts {
             // Use stable ID with line number from verdict if available
@@ -692,16 +696,16 @@ impl OutcomeTracker {
     pub fn save_feedback_as_training_data(
         &self,
         output_path: &std::path::Path,
-    ) -> Result<(), String> {
+    ) -> crate::error::Result<()> {
         let examples = self.export_decisions_as_training_data();
         if examples.is_empty() {
-            return Err("No feedback examples to export".to_string());
+            return Err(anyhow::anyhow!("No feedback examples to export"));
         }
 
         let json = serde_json::to_string_pretty(&examples)
-            .map_err(|e| format!("Failed to serialize: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to serialize: {}", e))?;
 
-        std::fs::write(output_path, json).map_err(|e| format!("Failed to write: {}", e))?;
+        std::fs::write(output_path, json).map_err(|e| anyhow::anyhow!("Failed to write: {}", e))?;
 
         Ok(())
     }

@@ -67,25 +67,27 @@ impl LinearClassifier {
         self
     }
 
-    pub fn validate_features(&self, features: &[f64]) -> Result<(), String> {
+    pub fn validate_features(&self, features: &[f64]) -> crate::error::Result<()> {
         if features.len() != self.feature_count {
-            return Err(format!(
+            return Err(anyhow::anyhow!(
                 "Feature count mismatch: expected {}, got {}",
                 self.feature_count,
                 features.len()
             ));
         }
 
-        FEATURE_SCHEMA.validate_vector(features)?;
+        FEATURE_SCHEMA
+            .validate_vector(features)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         Ok(())
     }
 
-    pub fn predict_validated(&self, features: &[f64]) -> Result<f64, String> {
+    pub fn predict_validated(&self, features: &[f64]) -> crate::error::Result<f64> {
         self.validate_features(features)?;
         Ok(self.predict(features))
     }
 
-    pub fn predict_label_validated(&self, features: &[f64]) -> Result<TrainingLabel, String> {
+    pub fn predict_label_validated(&self, features: &[f64]) -> crate::error::Result<TrainingLabel> {
         self.validate_features(features)?;
         Ok(self.predict_label(features))
     }
@@ -127,7 +129,10 @@ impl LinearClassifier {
 
             for example in &shuffled {
                 let raw = example.features.to_feature_vector();
-                let features = self.scaler.as_ref().unwrap().transform(&raw);
+                let features = match self.scaler.as_ref() {
+                    Some(scaler) => scaler.transform(&raw),
+                    None => raw,
+                };
 
                 let target = match example.label {
                     TrainingLabel::Alive => 1.0,
@@ -357,16 +362,28 @@ impl DeadCodeClassifier {
         }
     }
 
-    pub fn load_embedded() -> Result<Self, String> {
-        bincode::deserialize(EMBEDDED_MODEL_BYTES)
-            .map_err(|e| format!("Failed to deserialize embedded model.bin: {}", e))
+    pub fn load_embedded() -> crate::error::Result<Self> {
+        let classifier: Self = bincode::deserialize(EMBEDDED_MODEL_BYTES)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize embedded model.bin: {}", e))?;
+
+        if let Some(model) = &classifier.model {
+            if model.feature_count != crate::ml::feature_schema::feature_count() {
+                return Err(anyhow::anyhow!(
+                    "Embedded model feature count ({}) does not match current schema ({})",
+                    model.feature_count,
+                    crate::ml::feature_schema::feature_count()
+                ));
+            }
+        }
+
+        Ok(classifier)
     }
 
-    pub fn train(&mut self, examples: &[TrainingExample]) -> Result<(), String> {
+    pub fn train(&mut self, examples: &[TrainingExample]) -> crate::error::Result<()> {
         let feature_count = if let Some(first) = examples.first() {
             first.features.to_feature_vector().len()
         } else {
-            return Err("No training examples found".to_string());
+            return Err(anyhow::anyhow!("No training examples found"));
         };
 
         println!(
@@ -400,15 +417,18 @@ impl DeadCodeClassifier {
         }
     }
 
-    pub fn validate_features(&self, features: &[f64]) -> Result<(), String> {
+    pub fn validate_features(&self, features: &[f64]) -> crate::error::Result<()> {
         if let Some(model) = &self.model {
             model.validate_features(features)
         } else {
-            Err("No model loaded".to_string())
+            Err(anyhow::anyhow!("No model loaded"))
         }
     }
 
-    pub fn predict_validated(&self, example: &TrainingExample) -> Result<TrainingLabel, String> {
+    pub fn predict_validated(
+        &self,
+        example: &TrainingExample,
+    ) -> crate::error::Result<TrainingLabel> {
         let features = example.features.to_feature_vector();
         self.validate_features(&features)?;
         Ok(self.predict(example))
@@ -494,7 +514,19 @@ impl DeadCodeClassifier {
     }
 
     pub fn load<P: AsRef<std::path::Path>>(path: P) -> crate::error::Result<Self> {
-        crate::ml::serialization::ModelSerializer::load_auto(path)
+        let classifier: Self = crate::ml::serialization::ModelSerializer::load_auto(path)?;
+
+        if let Some(model) = &classifier.model {
+            if model.feature_count != crate::ml::feature_schema::feature_count() {
+                return Err(crate::error::err::model(format!(
+                    "Model feature count ({}) does not match current schema ({})",
+                    model.feature_count,
+                    crate::ml::feature_schema::feature_count()
+                )));
+            }
+        }
+
+        Ok(classifier)
     }
 }
 

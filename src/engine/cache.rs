@@ -328,6 +328,78 @@ impl AnalysisCacheManager {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct BinaryCache {
+    persistent_dir: PathBuf,
+    version: u32,
+}
+
+impl BinaryCache {
+    pub fn new(dir: PathBuf, version: u32) -> Self {
+        let _ = std::fs::create_dir_all(&dir);
+        Self {
+            persistent_dir: dir,
+            version,
+        }
+    }
+
+    pub fn get<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
+        let cache_path = self.persistent_dir.join(format!("{}.bin", key));
+        let data = std::fs::read(&cache_path).ok()?;
+        bincode::deserialize(&data).ok()
+    }
+
+    pub fn put<T: serde::Serialize>(&self, key: &str, value: &T) -> Result<(), String> {
+        let cache_path = self.persistent_dir.join(format!("{}.bin", key));
+        let data =
+            bincode::serialize(value).map_err(|e| format!("Failed to serialize cache: {}", e))?;
+        std::fs::write(&cache_path, data).map_err(|e| format!("Failed to write cache: {}", e))?;
+        Ok(())
+    }
+
+    pub fn exists(&self, key: &str) -> bool {
+        self.persistent_dir.join(format!("{}.bin", key)).exists()
+    }
+
+    pub fn version(&self) -> u32 {
+        self.version
+    }
+}
+
+pub struct ContentCache {
+    pub file_cache: FileCache,
+    pub ast_cache: BinaryCache,
+    pub feature_cache: BinaryCache,
+    pub graph_cache: BinaryCache,
+    pub dynamic_refs_cache: BinaryCache,
+    pub framework_cache: BinaryCache,
+}
+
+impl ContentCache {
+    pub fn new(root: &Path) -> Self {
+        let cache_dir = root.join(".code-intelligence-cache");
+        let _ = std::fs::create_dir_all(&cache_dir);
+
+        Self {
+            file_cache: FileCache::new().with_persistent_dir(cache_dir.join("files")),
+            ast_cache: BinaryCache::new(cache_dir.join("ast"), 1),
+            feature_cache: BinaryCache::new(cache_dir.join("features"), 1),
+            graph_cache: BinaryCache::new(cache_dir.join("graph"), 1),
+            dynamic_refs_cache: BinaryCache::new(cache_dir.join("dynamic_refs"), 1),
+            framework_cache: BinaryCache::new(cache_dir.join("framework"), 1),
+        }
+    }
+
+    pub fn clear_all(&self) {
+        self.file_cache.clear();
+        let _ = std::fs::remove_dir_all(&self.ast_cache.persistent_dir);
+        let _ = std::fs::remove_dir_all(&self.feature_cache.persistent_dir);
+        let _ = std::fs::remove_dir_all(&self.graph_cache.persistent_dir);
+        let _ = std::fs::remove_dir_all(&self.dynamic_refs_cache.persistent_dir);
+        let _ = std::fs::remove_dir_all(&self.framework_cache.persistent_dir);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

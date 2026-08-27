@@ -133,22 +133,17 @@ pub trait LLMProvider: Send + Sync {
         &self,
         messages: &[LLMMessage],
         options: &GenerationOptions,
-    ) -> std::result::Result<LLMResponse, String>;
+    ) -> crate::error::Result<LLMResponse>;
 
     async fn generate_stream(
         &self,
         messages: &[LLMMessage],
         options: &GenerationOptions,
-    ) -> std::result::Result<
-        Box<dyn Stream<Item = std::result::Result<String, String>> + Send>,
-        String,
-    >;
+    ) -> crate::error::Result<Box<dyn Stream<Item = crate::error::Result<String>> + Send>>;
 
-    // ⭐ Add default implementations here
     fn model_name(&self) -> &str {
-        "default" // Default implementation
+        "default"
     }
-
     fn max_context_length(&self) -> usize {
         4096 // Default implementation (4K context)
     }

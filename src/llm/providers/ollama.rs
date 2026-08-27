@@ -1,12 +1,7 @@
 // src/llm/providers/ollama.rs
 
-//! Ollama LLM Provider
-//!
-//! This module provides an implementation of the LLMProvider trait for
-//! Ollama, with specific optimizations for phi-2 model.
-
 use crate::llm::providers::ProviderConfig;
-use crate::llm::{GenerationOptions, LLMMessage, LLMProvider, LLMResponse, Result, Usage};
+use crate::llm::{GenerationOptions, LLMMessage, LLMProvider, LLMResponse, Usage};
 
 use async_trait::async_trait;
 use futures::stream::{Stream, StreamExt};
@@ -87,7 +82,7 @@ pub struct OllamaProvider {
 }
 
 impl OllamaProvider {
-    pub async fn new(config: &ProviderConfig) -> std::result::Result<Self, String> {
+    pub async fn new(config: &ProviderConfig) -> crate::error::Result<Self> {
         let base_url = config
             .base_url
             .clone()
@@ -97,7 +92,7 @@ impl OllamaProvider {
         let client = Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds))
             .build()
-            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
 
         let mut provider = Self {
             client,
@@ -216,10 +211,10 @@ impl LLMProvider for OllamaProvider {
         &self,
         messages: &[LLMMessage],
         options: &GenerationOptions,
-    ) -> std::result::Result<LLMResponse, String> {
+    ) -> crate::error::Result<LLMResponse> {
         // Check availability
         if !self.available {
-            return Err("Ollama is not available".to_string());
+            return Err(anyhow::anyhow!("Ollama is not available"));
         }
 
         // Convert messages
@@ -272,7 +267,10 @@ impl LLMProvider for OllamaProvider {
                                 });
                             }
                             Err(e) => {
-                                return Err(format!("Failed to parse Ollama response: {}", e));
+                                return Err(anyhow::anyhow!(
+                                    "Failed to parse Ollama response: {}",
+                                    e
+                                ));
                             }
                         }
                     } else {
@@ -291,20 +289,19 @@ impl LLMProvider for OllamaProvider {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| "Max retries exceeded".to_string()))
+        Err(anyhow::anyhow!(
+            last_error.unwrap_or_else(|| "Max retries exceeded".to_string())
+        ))
     }
 
     async fn generate_stream(
         &self,
         messages: &[LLMMessage],
         options: &GenerationOptions,
-    ) -> std::result::Result<
-        Box<dyn Stream<Item = std::result::Result<String, String>> + Send>,
-        String,
-    > {
+    ) -> crate::error::Result<Box<dyn Stream<Item = crate::error::Result<String>> + Send>> {
         // Check availability
         if !self.available {
-            return Err("Ollama is not available".to_string());
+            return Err(anyhow::anyhow!("Ollama is not available"));
         }
 
         // Convert messages
@@ -334,12 +331,12 @@ impl LLMProvider for OllamaProvider {
             .json(&request)
             .send()
             .await
-            .map_err(|e| format!("Stream request failed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Stream request failed: {}", e))?;
 
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(format!("Ollama API error {}: {}", status, text));
+            return Err(anyhow::anyhow!("Ollama API error {}: {}", status, text));
         }
 
         // Create stream from response
@@ -363,7 +360,7 @@ impl LLMProvider for OllamaProvider {
                     }
                     Ok(String::new())
                 }
-                Err(e) => Err(format!("Stream error: {}", e)),
+                Err(e) => Err(anyhow::anyhow!("Stream error: {}", e)),
             }
         });
 
@@ -411,7 +408,7 @@ impl OllamaProvider {
         &self,
         messages: &[LLMMessage],
         schema: serde_json::Value,
-    ) -> Result<serde_json::Value> {
+    ) -> crate::error::Result<serde_json::Value> {
         let options = GenerationOptions {
             temperature: 0.1, // Low temperature for deterministic output
             max_tokens: 2000,
@@ -438,11 +435,10 @@ impl OllamaProvider {
         let response = self
             .generate(&enhanced_messages, &options)
             .await
-            .map_err(|e| format!("Generation failed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Generation failed: {}", e))?;
 
-        // Parse JSON from response
         let json = crate::llm::extract_json_from_response(&response.content)
-            .map_err(|_| "Failed to parse JSON from response".to_string())?;
+            .map_err(|_| anyhow::anyhow!("Failed to parse JSON from response"))?;
 
         Ok(json)
     }

@@ -155,10 +155,10 @@ impl LLMProvider for MockProvider {
         &self,
         messages: &[LLMMessage],
         _options: &GenerationOptions,
-    ) -> std::result::Result<LLMResponse, String> {
+    ) -> crate::error::Result<LLMResponse> {
         // Simulate failure if configured
         if self.should_fail {
-            return Err("Mock provider failed as configured".to_string());
+            return Err(anyhow::anyhow!("Mock provider failed as configured"));
         }
 
         // Simulate delay
@@ -196,13 +196,10 @@ impl LLMProvider for MockProvider {
         &self,
         messages: &[LLMMessage],
         _options: &GenerationOptions,
-    ) -> std::result::Result<
-        Box<dyn Stream<Item = std::result::Result<String, String>> + Send>,
-        String,
-    > {
+    ) -> crate::error::Result<Box<dyn Stream<Item = crate::error::Result<String>> + Send>> {
         // Simulate failure if configured
         if self.should_fail {
-            return Err("Mock provider failed as configured".to_string());
+            return Err(anyhow::anyhow!("Mock provider failed as configured"));
         }
 
         // Simulate delay

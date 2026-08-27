@@ -6,8 +6,9 @@ use std::path::Path;
 use std::sync::MutexGuard;
 
 /// Safe file read with proper error handling
-pub fn safe_read_file(path: &Path) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))
+pub fn safe_read_file(path: &Path) -> crate::error::Result<String> {
+    std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))
 }
 
 /// Safe parse for integers
@@ -73,41 +74,40 @@ where
     opt.unwrap_or_else(f)
 }
 
-/// Safe expect with custom message
-pub fn safe_expect<T>(opt: Option<T>, msg: &str) -> Result<T, String> {
-    opt.ok_or_else(|| msg.to_string())
+pub fn safe_expect<T>(opt: Option<T>, msg: &str) -> crate::error::Result<T> {
+    opt.ok_or_else(|| anyhow::anyhow!("{}", msg))
 }
-
 /// Safe result unwrap
-pub fn safe_unwrap_result<T, E: std::fmt::Display>(res: Result<T, E>) -> Result<T, String> {
-    res.map_err(|e| e.to_string())
+pub fn safe_unwrap_result<T, E: std::fmt::Display>(res: Result<T, E>) -> crate::error::Result<T> {
+    res.map_err(|e| anyhow::anyhow!("{}", e))
 }
 
 /// Safe mutex lock
 pub fn safe_lock<'a, T>(
     guard: Result<MutexGuard<'a, T>, std::sync::PoisonError<MutexGuard<'a, T>>>,
-) -> Result<MutexGuard<'a, T>, String> {
-    guard.map_err(|e| format!("Mutex lock poisoned: {}", e))
+) -> crate::error::Result<MutexGuard<'a, T>> {
+    guard.map_err(|e| anyhow::anyhow!("Mutex lock poisoned: {}", e))
 }
 
 /// Safe scaler access for ML
-pub fn safe_scaler_access<T>(scaler: Option<&T>) -> Result<&T, String> {
-    scaler.ok_or_else(|| "Scaler not initialized".to_string())
+pub fn safe_scaler_access<T>(scaler: Option<&T>) -> crate::error::Result<&T> {
+    scaler.ok_or_else(|| anyhow::anyhow!("Scaler not initialized"))
 }
 
 /// Safe thread join
-pub fn safe_thread_join<T>(handle: std::thread::JoinHandle<T>) -> Result<T, String> {
+pub fn safe_thread_join<T>(handle: std::thread::JoinHandle<T>) -> crate::error::Result<T> {
     handle
         .join()
-        .map_err(|e| format!("Thread panicked: {:?}", e))
+        .map_err(|e| anyhow::anyhow!("Thread panicked: {:?}", e))
 }
 
 /// Safe JSON serialization
-pub fn safe_to_json<T: serde::Serialize>(value: &T) -> Result<String, String> {
-    serde_json::to_string(value).map_err(|e| format!("JSON serialization failed: {}", e))
+pub fn safe_to_json<T: serde::Serialize>(value: &T) -> crate::error::Result<String> {
+    serde_json::to_string(value).map_err(|e| anyhow::anyhow!("JSON serialization failed: {}", e))
 }
 
 /// Safe JSON pretty serialization
-pub fn safe_to_json_pretty<T: serde::Serialize>(value: &T) -> Result<String, String> {
-    serde_json::to_string_pretty(value).map_err(|e| format!("JSON serialization failed: {}", e))
+pub fn safe_to_json_pretty<T: serde::Serialize>(value: &T) -> crate::error::Result<String> {
+    serde_json::to_string_pretty(value)
+        .map_err(|e| anyhow::anyhow!("JSON serialization failed: {}", e))
 }

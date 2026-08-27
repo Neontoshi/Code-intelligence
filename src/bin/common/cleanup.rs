@@ -36,7 +36,7 @@ impl ResourceManager {
     }
 
     /// Clean up all registered resources
-    pub async fn cleanup(&self) -> Result<(), String> {
+    pub async fn cleanup(&self) -> crate::error::Result<()> {
         // Clean up files
         let files = {
             let mut f = self.files.lock().await;
@@ -75,12 +75,13 @@ impl ResourceManager {
         // Use the ctrlc crate with proper handling
         let _ = ctrlc::set_handler(move || {
             println!("\n⚠️ Cleaning up resources...");
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
-                if let Err(e) = manager.cleanup().await {
-                    eprintln!("❌ Cleanup error: {}", e);
-                }
-            });
+            if let Ok(rt) = tokio::runtime::Runtime::new() {
+                rt.block_on(async {
+                    if let Err(e) = manager.cleanup().await {
+                        eprintln!("❌ Cleanup error: {}", e);
+                    }
+                });
+            }
             std::process::exit(130);
         });
     }
@@ -94,10 +95,14 @@ impl ResourceManager {
         impl Drop for CleanupGuard {
             fn drop(&mut self) {
                 if let Some(manager) = self.manager.take() {
-                    let rt = tokio::runtime::Runtime::new().unwrap();
-                    rt.block_on(async {
-                        let _ = manager.cleanup().await;
-                    });
+                    if let Ok(rt) = tokio::runtime::Runtime::new() {
+                        rt.block_on(async {
+                            if let Err(e) = manager.cleanup().await {
+                                eprintln!("❌ Cleanup error: {}", e);
+                            }
+                        });
+                    }
+                    std::process::exit(130);
                 }
             }
         }
@@ -118,11 +123,11 @@ impl Default for ResourceManager {
 pub async fn create_temp_dir_with_cleanup(
     manager: &ResourceManager,
     prefix: &str,
-) -> Result<tempfile::TempDir, String> {
+) -> crate::error::Result<tempfile::TempDir> {
     let temp_dir = tempfile::Builder::new()
         .prefix(prefix)
         .tempdir()
-        .map_err(|e| format!("Failed to create temp dir: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to create temp dir: {}", e))?;
 
     let path = temp_dir.path().to_path_buf();
     manager.register_temp_dir(path).await;
@@ -135,12 +140,12 @@ pub async fn create_temp_file_with_cleanup(
     manager: &ResourceManager,
     prefix: &str,
     suffix: &str,
-) -> Result<tempfile::NamedTempFile, String> {
+) -> crate::error::Result<tempfile::NamedTempFile> {
     let temp_file = tempfile::Builder::new()
         .prefix(prefix)
         .suffix(suffix)
         .tempfile()
-        .map_err(|e| format!("Failed to create temp file: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to create temp file: {}", e))?;
 
     let path = temp_file.path().to_path_buf();
     manager.register_file(path).await;

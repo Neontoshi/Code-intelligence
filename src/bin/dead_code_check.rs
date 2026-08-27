@@ -12,7 +12,7 @@ use code_intelligence::bin::common::error_handler::{ErrorHandler, ErrorSeverity}
 use code_intelligence::bin::common::exit_codes::ExitCode;
 use code_intelligence::bin::common::monitor::MetricsCollector;
 use code_intelligence::bin::common::reporter::Reporter;
-use code_intelligence::error::{err, Result};
+use code_intelligence::error::Result;
 use code_intelligence::graph::GraphMetrics;
 use code_intelligence::ml::classifier::DeadCodeClassifier;
 use code_intelligence::Pipeline;
@@ -648,7 +648,9 @@ async fn run(args: &Args) -> Result<()> {
     }
 
     if let Some(output_path) = &args.output_report {
-        let json = reporter.to_json().map_err(|e| err::internal(e))?;
+        let json = reporter
+            .to_json()
+            .map_err(|e| anyhow::anyhow!("Internal error: {}", e))?;
         std::fs::write(output_path, json)?;
         println!("📄 Report saved to: {:?}", output_path);
     }

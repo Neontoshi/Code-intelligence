@@ -218,16 +218,16 @@ impl App {
         let pb = ProgressBar::new_spinner();
         pb.set_style(
             ProgressStyle::with_template("  {spinner:.cyan} {msg}")
-                .expect("Invalid progress bar template"),
+                .unwrap_or_else(|_| ProgressStyle::default_spinner()),
         );
         pb.enable_steady_tick(std::time::Duration::from_millis(80));
 
         let path_clone = path.clone();
 
-        let result = std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+        let result = std::thread::spawn(move || -> code_intelligence::error::Result<_> {
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| anyhow::anyhow!("Failed to create runtime: {}", e))?;
             rt.block_on(async {
-                // Use the shared AnalysisService
                 use code_intelligence::analysis::service::{
                     AnalysisService, AnalysisServiceConfig,
                 };
@@ -244,19 +244,25 @@ impl App {
                 };
 
                 let mut service = AnalysisService::new(config);
-
-                // Run the analysis using the shared service
                 let result = service
                     .analyze(&path_clone)
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-                // Extract the dead code analysis from the result
-                Ok::<_, String>(result)
+                Ok(result)
             })
         });
 
-        let outcome = result.join().expect("Thread panicked during analysis");
+        let outcome = match result.join() {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                pb.finish_and_clear();
+                self.error = Some("Analysis thread panicked".to_string());
+                self.loading = false;
+                self.loading_message = "Error".to_string();
+                return;
+            }
+        };
         pb.finish_and_clear();
 
         match outcome {
