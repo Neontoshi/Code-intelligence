@@ -9,6 +9,7 @@ pub mod ml;
 pub mod optimize;
 pub mod output;
 pub mod parser;
+pub mod resolution;
 pub mod utils;
 
 // ⭐ Add bin module for CLI tools
