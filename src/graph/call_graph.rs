@@ -201,7 +201,6 @@ impl CallGraph {
             .unwrap_or_default()
     }
 
-    /// Get resolution statistics
     pub fn resolution_stats(&self) -> ResolutionStats {
         let total_calls = self.edge_count();
         let mut exact = 0;
@@ -220,7 +219,6 @@ impl CallGraph {
                 ResolutionConfidence::Unresolved => unresolved += 1,
             }
 
-            // Count by method (simplified)
             let method = match conf {
                 ResolutionConfidence::Exact => "exact",
                 ResolutionConfidence::Inferred => "inferred",
@@ -231,7 +229,12 @@ impl CallGraph {
             *by_method.entry(method.to_string()).or_insert(0) += 1;
         }
 
+        // Also count unresolved calls from the unresolved_calls map
+        let unresolved_from_map: usize = self.unresolved_calls.values().map(|v| v.len()).sum();
+        let total_unresolved = unresolved + unresolved_from_map;
+
         let resolved = exact + inferred + heuristic;
+        let total_attempted = resolved + total_unresolved + ambiguous;
         let avg_conf = if total_calls > 0 {
             let sum: f64 = self
                 .resolution_cache
@@ -246,15 +249,15 @@ impl CallGraph {
         ResolutionStats {
             total_calls,
             resolved_calls: resolved,
-            unresolved_calls: unresolved,
+            unresolved_calls: total_unresolved,
             exact_count: exact,
             inferred_count: inferred,
             heuristic_count: heuristic,
             ambiguous_count: ambiguous,
             by_method,
             average_confidence: avg_conf,
-            resolution_rate: if total_calls > 0 {
-                resolved as f64 / total_calls as f64
+            resolution_rate: if total_attempted > 0 {
+                resolved as f64 / total_attempted as f64
             } else {
                 1.0
             },

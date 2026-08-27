@@ -17,13 +17,42 @@ impl CallGraphBuilder {
         let mut func_by_file: HashMap<String, Vec<String>> = HashMap::new();
         let mut import_map: HashMap<String, Vec<String>> = HashMap::new();
 
-        // First pass: Build import map
+        // module path index, built from the files we were given.
+        let mut file_module_index: HashMap<String, String> = HashMap::new();
+        let mut module_to_file: HashMap<String, String> = HashMap::new();
         for file in files {
+            let module = Self::file_to_module_path(&file.path);
+            module_to_file.insert(module.clone(), file.path.clone());
+            file_module_index.insert(file.path.clone(), module);
+        }
+
+        // Build module alias map: maps short alias -> full module path
+        // e.g., "rust" -> "crate::parser::languages::rust"
+        //       "fs" -> "std::fs"
+        let mut module_alias_map: HashMap<String, String> = HashMap::new();
+
+        // First pass: Build import map and module alias map
+        for file in files {
+            let current_module = &file_module_index[&file.path];
             for import in &file.imports {
-                let module = &import.module;
-                for item in &import.items {
-                    let full_path = format!("{}::{}", module, item);
-                    import_map.entry(item.clone()).or_default().push(full_path);
+                let resolved_module = Self::resolve_module_path(current_module, &import.module);
+
+                // Store alias for the last segment of the module path
+                let alias = resolved_module
+                    .split("::")
+                    .last()
+                    .unwrap_or(&resolved_module)
+                    .to_string();
+
+                // Map both the alias and the full import string
+                module_alias_map.insert(alias, resolved_module.clone());
+                module_alias_map.insert(import.module.clone(), resolved_module.clone());
+
+                if let Some(target_file) = module_to_file.get(&resolved_module) {
+                    for item in &import.items {
+                        let full_path = format!("{}::{}", target_file, item);
+                        import_map.entry(item.clone()).or_default().push(full_path);
+                    }
                 }
             }
         }
@@ -259,49 +288,101 @@ impl CallGraphBuilder {
                             }
 
                             CallSite::Qualified(qualifier, method_name) => {
-                                // Type::method() or namespace::function()
-                                let qualified_path =
-                                    format!("{}::{}::{}", file_path, qualifier, method_name);
-                                if let Some(&callee_idx) = func_index.get(&qualified_path) {
-                                    call_graph.add_call(
-                                        caller_idx,
-                                        callee_idx,
-                                        CallEdge {
-                                            call_type: "exact".to_string(),
-                                            line: func.line,
-                                        },
-                                    );
-                                    call_graph.set_resolution_confidence(
-                                        &caller_path,
-                                        &qualified_path,
-                                        ResolutionConfidence::Exact,
-                                    );
-                                    found = true;
-                                } else {
-                                    // Try as constructor
-                                    let constructor_path =
+                                let current_module = &file_module_index[&file_path];
+
+                                let resolved_module =
+                                    Self::resolve_module_path(current_module, qualifier);
+                                if let Some(target_file) = module_to_file.get(&resolved_module) {
+                                    let candidate = format!("{}::{}", target_file, method_name);
+                                    if let Some(&callee_idx) = func_index.get(&candidate) {
+                                        call_graph.add_call(
+                                            caller_idx,
+                                            callee_idx,
+                                            CallEdge {
+                                                call_type: "qualified_cross_file".to_string(),
+                                                line: func.line,
+                                            },
+                                        );
+                                        call_graph.set_resolution_confidence(
+                                            &caller_path,
+                                            &candidate,
+                                            ResolutionConfidence::Exact,
+                                        );
+                                        found = true;
+                                    }
+                                }
+
+                                // Type::method() in the same file
+                                if !found {
+                                    let qualified_path =
                                         format!("{}::{}::{}", file_path, qualifier, method_name);
-                                    if method_name == "new"
-                                        || method_name == "default"
-                                        || method_name == "from"
-                                        || method_name == "with_capacity"
-                                    {
-                                        if let Some(&callee_idx) = func_index.get(&constructor_path)
-                                        {
-                                            call_graph.add_call(
-                                                caller_idx,
-                                                callee_idx,
-                                                CallEdge {
-                                                    call_type: "constructor".to_string(),
-                                                    line: func.line,
-                                                },
+                                    if let Some(&callee_idx) = func_index.get(&qualified_path) {
+                                        call_graph.add_call(
+                                            caller_idx,
+                                            callee_idx,
+                                            CallEdge {
+                                                call_type: "exact".to_string(),
+                                                line: func.line,
+                                            },
+                                        );
+                                        call_graph.set_resolution_confidence(
+                                            &caller_path,
+                                            &qualified_path,
+                                            ResolutionConfidence::Exact,
+                                        );
+                                        found = true;
+                                    }
+                                }
+
+                                // Look for TypeName across all files and find method in that file
+                                if !found {
+                                    if let Some(type_files) = type_definition_index.get(qualifier) {
+                                        if type_files.len() == 1 {
+                                            let target_file = &type_files[0];
+                                            let candidate = format!(
+                                                "{}::{}::{}",
+                                                target_file, qualifier, method_name
                                             );
-                                            call_graph.set_resolution_confidence(
-                                                &caller_path,
-                                                &constructor_path,
-                                                ResolutionConfidence::Exact,
-                                            );
-                                            found = true;
+                                            if let Some(&callee_idx) = func_index.get(&candidate) {
+                                                call_graph.add_call(
+                                                    caller_idx,
+                                                    callee_idx,
+                                                    CallEdge {
+                                                        call_type: "cross_file_type_method"
+                                                            .to_string(),
+                                                        line: func.line,
+                                                    },
+                                                );
+                                                call_graph.set_resolution_confidence(
+                                                    &caller_path,
+                                                    &candidate,
+                                                    ResolutionConfidence::Inferred,
+                                                );
+                                                found = true;
+                                            } else {
+                                                // Try without container (associated free function)
+                                                let candidate2 =
+                                                    format!("{}::{}", target_file, method_name);
+                                                if let Some(&callee_idx) =
+                                                    func_index.get(&candidate2)
+                                                {
+                                                    call_graph.add_call(
+                                                        caller_idx,
+                                                        callee_idx,
+                                                        CallEdge {
+                                                            call_type: "cross_file_type_associated"
+                                                                .to_string(),
+                                                            line: func.line,
+                                                        },
+                                                    );
+                                                    call_graph.set_resolution_confidence(
+                                                        &caller_path,
+                                                        &candidate2,
+                                                        ResolutionConfidence::Inferred,
+                                                    );
+                                                    found = true;
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -552,6 +633,71 @@ impl CallGraphBuilder {
                                     }
                                 }
 
+                                // TIER 3.5: Name match using name_to_functions index
+                                if !found {
+                                    if let Some(candidates) =
+                                        call_graph.name_to_functions.get(simple_name)
+                                    {
+                                        let mut unique_paths: Vec<String> = Vec::new();
+                                        for &idx in candidates {
+                                            if call_graph[idx].full_path != caller_path {
+                                                unique_paths
+                                                    .push(call_graph[idx].full_path.clone());
+                                            }
+                                        }
+
+                                        if unique_paths.len() == 1 {
+                                            if let Some(&callee_idx) =
+                                                func_index.get(&unique_paths[0])
+                                            {
+                                                call_graph.add_call(
+                                                    caller_idx,
+                                                    callee_idx,
+                                                    CallEdge {
+                                                        call_type: "name_index".to_string(),
+                                                        line: func.line,
+                                                    },
+                                                );
+                                                call_graph.set_resolution_confidence(
+                                                    &caller_path,
+                                                    &unique_paths[0],
+                                                    ResolutionConfidence::Heuristic,
+                                                );
+                                                found = true;
+                                            }
+                                        } else if unique_paths.len() > 1 {
+                                            // Try same file
+                                            let same_file: Vec<String> = unique_paths
+                                                .iter()
+                                                .filter(|p| p.starts_with(&file_path))
+                                                .cloned()
+                                                .collect();
+
+                                            if same_file.len() == 1 {
+                                                if let Some(&callee_idx) =
+                                                    func_index.get(&same_file[0])
+                                                {
+                                                    call_graph.add_call(
+                                                        caller_idx,
+                                                        callee_idx,
+                                                        CallEdge {
+                                                            call_type: "name_index_same_file"
+                                                                .to_string(),
+                                                            line: func.line,
+                                                        },
+                                                    );
+                                                    call_graph.set_resolution_confidence(
+                                                        &caller_path,
+                                                        &same_file[0],
+                                                        ResolutionConfidence::Heuristic,
+                                                    );
+                                                    found = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
                                 // TIER 4: Name match across files (only if unambiguous)
                                 if !found {
                                     if let Some(paths) = func_by_name.get(simple_name) {
@@ -635,6 +781,57 @@ impl CallGraphBuilder {
                                 CallSite::Chained(m) => format!("().{}", m),
                                 CallSite::Bare(n) => n.clone(),
                             };
+
+                            // Try module alias resolution
+                            let root = display_name
+                                .split("::")
+                                .next()
+                                .unwrap_or(&display_name)
+                                .to_string();
+
+                            if let Some(resolved_module) = module_alias_map.get(&root) {
+                                let rest = display_name.strip_prefix(&root).unwrap_or("");
+                                let full_call = format!("{}{}", resolved_module, rest);
+
+                                if let Some(&callee_idx) = func_index.get(&full_call) {
+                                    call_graph.add_call(
+                                        caller_idx,
+                                        callee_idx,
+                                        CallEdge {
+                                            call_type: "module_alias".to_string(),
+                                            line: func.line,
+                                        },
+                                    );
+                                    call_graph.set_resolution_confidence(
+                                        &caller_path,
+                                        &full_call,
+                                        ResolutionConfidence::Exact,
+                                    );
+                                    continue;
+                                }
+                            }
+
+                            // UNIVERSAL: External if root module is not in the project
+                            let is_external = {
+                                !module_to_file.contains_key(&root)
+                                    && !module_to_file.values().any(|f| f.contains(&root))
+                            };
+
+                            if is_external {
+                                continue;
+                            }
+
+                            static DEBUG_COUNT: std::sync::atomic::AtomicUsize =
+                                std::sync::atomic::AtomicUsize::new(0);
+                            let debug_count =
+                                DEBUG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if debug_count < 50 {
+                                eprintln!(
+                                    "UNRESOLVED: file={} caller={} callee={} is_external={}",
+                                    file_path, caller_path, display_name, is_external
+                                );
+                            }
+
                             call_graph.mark_unresolved(&caller_path, &display_name);
                         }
                     }
@@ -651,5 +848,58 @@ impl CallGraphBuilder {
             .next()
             .unwrap_or(no_generics)
             .to_string()
+    }
+
+    /// Convert a file path like "./src/graph/resolver.rs" into its Rust
+    /// module path, e.g. "crate::graph::resolver". Handles mod.rs/main.rs/lib.rs.
+    fn file_to_module_path(file_path: &str) -> String {
+        let p = file_path.trim_start_matches("./");
+        let rel = p.strip_prefix("src/").unwrap_or(p);
+        let rel = rel.strip_suffix(".rs").unwrap_or(rel);
+        let mut segments: Vec<&str> = rel.split('/').collect();
+        if matches!(segments.last(), Some(&"mod") | Some(&"main") | Some(&"lib")) {
+            segments.pop();
+        }
+        if segments.is_empty() {
+            "crate".to_string()
+        } else {
+            format!("crate::{}", segments.join("::"))
+        }
+    }
+
+    /// Resolve a raw `use`/qualifier path (which may start with `crate::`,
+    /// `super::`, `self::`, or be a bare relative segment) into an absolute
+    /// module path, relative to the module doing the referencing.
+    fn resolve_module_path(current_module: &str, raw: &str) -> String {
+        if raw == "crate" || raw.starts_with("crate::") {
+            return raw.to_string();
+        }
+        if raw == "self" {
+            return current_module.to_string();
+        }
+        if let Some(rest) = raw.strip_prefix("self::") {
+            return format!("{}::{}", current_module, rest);
+        }
+        if raw == "super" || raw.starts_with("super") {
+            let mut base: Vec<&str> = current_module.split("::").collect();
+            let mut rest = raw;
+            while rest == "super" || rest.starts_with("super::") || rest.starts_with("super") {
+                base.pop();
+                rest = rest.strip_prefix("super").unwrap_or(rest);
+                rest = rest.strip_prefix("::").unwrap_or(rest);
+                if !rest.starts_with("super") {
+                    break;
+                }
+            }
+            return if rest.is_empty() {
+                base.join("::")
+            } else {
+                format!("{}::{}", base.join("::"), rest)
+            };
+        }
+        // Bare path (sibling module referenced without `crate::`, or an
+        // external crate). Left as-is — external crates won't be found in
+        // module_to_file, which is the correct outcome.
+        raw.to_string()
     }
 }

@@ -187,8 +187,13 @@ impl Pipeline {
     }
 
     pub fn with_cache_dir(mut self, cache_dir: PathBuf) -> Self {
+        self.config.cache_dir = Some(cache_dir.clone());
         self.cache = self.cache.with_persistent_dir(cache_dir.clone());
         self.analysis_cache = Some(AnalysisCacheManager::new(&cache_dir));
+        self.enable_incremental = true;
+        if self.file_tracker.is_none() {
+            self.file_tracker = Some(FileTracker::new());
+        }
         self
     }
 

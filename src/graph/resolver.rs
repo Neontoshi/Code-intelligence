@@ -30,22 +30,27 @@ impl CallResolver {
         let mut resolved_graph = self.call_graph.clone();
 
         for idx in resolved_graph.node_indices() {
-            let func = &resolved_graph[idx].clone();
-            let calls = self.resolve_calls_for_function(func, &resolved_graph);
+            let func = resolved_graph[idx].clone();
+            let calls = self.resolve_calls_for_function(&func, &resolved_graph);
 
             for resolved in calls {
+                if resolved.target_full_path.is_empty() {
+                    // Mark as unresolved
+                    resolved_graph
+                        .unresolved_calls
+                        .entry(func.full_path.clone())
+                        .or_default()
+                        .push(resolved.target_name.clone());
+                    continue;
+                }
+
                 if let Some(_callee_idx) = resolved_graph.name_index.get(&resolved.target_full_path)
                 {
-                    // Edge already exists, just update confidence
                     resolved_graph.set_resolution_confidence(
                         &func.full_path,
                         &resolved.target_full_path,
                         resolved.confidence,
                     );
-                } else {
-                    // Add new resolved edge
-                    // In practice, we need to add the function first
-                    // This would require more context
                 }
             }
         }
@@ -94,7 +99,7 @@ impl CallResolver {
         let (target_path, confidence, method) = self.resolve_target(caller, target, call_graph);
 
         ResolvedCall {
-            target_full_path: target_path.unwrap_or_else(|| target.to_string()),
+            target_full_path: target_path.unwrap_or_default(),
             target_name: target.to_string(),
             confidence,
             resolution_method: method,
@@ -177,20 +182,51 @@ impl CallResolver {
         }
 
         // Try name match (single candidate)
-        let candidates: Vec<_> = call_graph
-            .node_indices()
-            .filter(|idx| call_graph[*idx].name == simple_name)
-            .collect();
+        if let Some(candidates) = call_graph.name_to_functions.get(simple_name) {
+            if candidates.len() == 1 {
+                return (
+                    Some(call_graph[candidates[0]].full_path.clone()),
+                    ResolutionConfidence::Heuristic,
+                    ResolutionMethod::NameMatch,
+                );
+            } else if candidates.len() > 1 {
+                // Multiple candidates - try to disambiguate by file
+                let same_file: Vec<_> = candidates
+                    .iter()
+                    .filter(|&&idx| call_graph[idx].file == caller.file)
+                    .collect();
 
-        if candidates.len() == 1 {
-            return (
-                Some(call_graph[candidates[0]].full_path.clone()),
-                ResolutionConfidence::Heuristic,
-                ResolutionMethod::NameMatch,
-            );
+                if same_file.len() == 1 {
+                    return (
+                        Some(call_graph[*same_file[0]].full_path.clone()),
+                        ResolutionConfidence::Heuristic,
+                        ResolutionMethod::NameMatch,
+                    );
+                }
+
+                // Try to disambiguate by container
+                if let Some(container) = &container {
+                    let same_container: Vec<_> = candidates
+                        .iter()
+                        .filter(|&&idx| {
+                            call_graph[idx]
+                                .full_path
+                                .contains(&format!("::{}::", container))
+                        })
+                        .collect();
+
+                    if same_container.len() == 1 {
+                        return (
+                            Some(call_graph[*same_container[0]].full_path.clone()),
+                            ResolutionConfidence::Heuristic,
+                            ResolutionMethod::ContainerMethod,
+                        );
+                    }
+                }
+            }
         }
 
-        // ⭐ FIX: Try container method using extracted container
+        // Try container method using extracted container
         if let Some(container) = &container {
             let candidate = format!("{}::{}::{}", caller.file, container, simple_name);
             if let Some(&idx) = call_graph.name_index.get(&candidate) {

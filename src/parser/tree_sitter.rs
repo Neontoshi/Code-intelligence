@@ -6,8 +6,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use tree_sitter::Parser;
 
-// TYPE DEFINITIONS - These need to be public and accessible
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedFile {
     pub path: String,
