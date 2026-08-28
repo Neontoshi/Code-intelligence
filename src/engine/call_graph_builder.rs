@@ -87,6 +87,7 @@ impl CallGraphBuilder {
                     let scope_id = ScopeId(format!("scope_{}", caller_path));
 
                     for parser_call in &func.calls {
+                        
                         let semantic_call = convert_call_site(parser_call, &file_path, func);
 
                         // Skip external dependency calls (now handles all cases)

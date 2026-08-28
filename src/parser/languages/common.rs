@@ -157,9 +157,63 @@ fn walk_for_calls(
                     }
                 }
             }
+            "macro_invocation" => {
+                // Bare identifiers inside a macro's token tree are only meaningful as
+                // item references for a small set of macros (criterion_group!,
+                // criterion_main!, lazy_static!, etc.) where the arguments genuinely
+                // name functions/statics. For everything else — assert!, assert_eq!,
+                // println!, format!, vec!, matches!, panic! and friends — the
+                // arguments are ordinary expressions (locals, fields, string content),
+                // and walking them produces massive false-positive call sites.
+                if let Some(macro_name) = child
+                    .child_by_field_name("macro")
+                    .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+                {
+                    const ITEM_REFERENCING_MACROS: &[&str] =
+                        &["criterion_group", "criterion_main", "lazy_static"];
+                    if ITEM_REFERENCING_MACROS.contains(&macro_name) {
+                        extract_macro_identifiers(&child, source, calls);
+                    }
+                }
+            }
             _ => {}
         }
         walk_for_calls(&child, source, calls);
+    }
+}
+
+fn extract_macro_identifiers(
+    node: &Node,
+    source: &str,
+    calls: &mut Vec<crate::parser::tree_sitter::CallSite>,
+) {
+    use crate::parser::tree_sitter::CallSite;
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "identifier" => {
+                if let Ok(name) = child.utf8_text(source.as_bytes()) {
+                    let clean = name.trim();
+                    if !clean.is_empty() {
+                        calls.push(CallSite::Bare(clean.to_string()));
+                    }
+                }
+            }
+            "scoped_identifier" => {
+                if let Ok(text) = child.utf8_text(source.as_bytes()) {
+                    if let Some((qualifier, name)) = text.rsplit_once("::") {
+                        let q = qualifier.trim();
+                        let n = name.trim();
+                        if !q.is_empty() && !n.is_empty() {
+                            calls.push(CallSite::Qualified(q.to_string(), n.to_string()));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        extract_macro_identifiers(&child, source, calls);
     }
 }
 
@@ -213,7 +267,41 @@ fn extract_call_site(
         }
 
         // Method call: receiver.method() or self.method()
-        "field_expression" | "member_expression" => {
+        // Rust uses field_expression with unnamed children: value, ., field_identifier
+        "field_expression" => {
+            let mut named_children = Vec::new();
+            let mut cursor = func.walk();
+            for child in func.named_children(&mut cursor) {
+                named_children.push(child);
+            }
+
+            if named_children.len() >= 2 {
+                let recv = named_children[0];
+                let meth = named_children[named_children.len() - 1];
+
+                if let (Ok(recv_text), Ok(meth_text)) = (
+                    recv.utf8_text(source.as_bytes()),
+                    meth.utf8_text(source.as_bytes()),
+                ) {
+                    let r = recv_text.trim();
+                    let m = meth_text.trim();
+
+                    if r.is_empty() || m.is_empty() {
+                        return;
+                    }
+
+                    if r == "self" || r == "this" || r == "cls" {
+                        calls.push(CallSite::SelfMethod(m.to_string()));
+                    } else if recv.kind() == "call_expression" {
+                        calls.push(CallSite::Chained(m.to_string()));
+                    } else {
+                        calls.push(CallSite::OnReceiver(r.to_string(), m.to_string()));
+                    }
+                }
+            }
+        }
+        // Non-Rust languages use member_expression with named fields
+        "member_expression" => {
             let receiver = func
                 .child_by_field_name("object")
                 .or_else(|| func.child_by_field_name("receiver"));
@@ -233,22 +321,18 @@ fn extract_call_site(
                         return;
                     }
 
-                    // Check if receiver is self/this
                     if r == "self" || r == "this" || r == "cls" {
                         calls.push(CallSite::SelfMethod(m.to_string()));
                     } else if recv.kind() == "call_expression"
                         || recv.kind() == "invocation_expression"
                     {
-                        // Chained call: foo().bar()
                         calls.push(CallSite::Chained(m.to_string()));
                     } else {
-                        // Regular method call on a variable/object
                         calls.push(CallSite::OnReceiver(r.to_string(), m.to_string()));
                     }
                 }
             }
         }
-
         // Chained call: the function field itself is a call expression
         "call_expression" | "invocation_expression" => {
             // This is foo().bar() - extract method name from the outer expression

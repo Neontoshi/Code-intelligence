@@ -7,6 +7,7 @@ use crate::resolution::result::{
 };
 use crate::resolution::symbol::{ImportBinding, SymbolId, TypeId};
 use crate::resolution::traits::LanguageResolver;
+use crate::resolution::ResolutionStatus;
 
 pub struct RustResolver;
 
@@ -45,6 +46,8 @@ impl LanguageResolver for RustResolver {
             CalleeExpr::Member { receiver, member } => {
                 self.resolve_member(receiver, member, context)
             }
+
+            CalleeExpr::Unknown(name) => self.resolve_chained_method(name, context),
             _ => ResolutionResult::unresolved(),
         }
     }
@@ -261,6 +264,23 @@ impl RustResolver {
         }
 
         ResolutionResult::unresolved()
+    }
+    /// A chained call (`x.iter().filter(...).collect()`) whose receiver type we
+    /// don't track, so we can't do container-based lookup. We still run it
+    /// through full bare-name resolution in case it's a real project method
+    /// reached via a chain (same-file, imports, unambiguous global match all
+    /// still apply and can succeed here). But if that search exhausts every
+    /// tier and finds zero matches anywhere in the indexed project, that
+    /// absence is itself the signal: a method name that isn't a symbol in this
+    /// codebase cannot be a call into this codebase. Report it as External
+    /// rather than Unresolved. This adapts automatically as the project and its
+    /// dependencies change — no name list to maintain.
+    fn resolve_chained_method(&self, name: &str, context: &ResolutionContext) -> ResolutionResult {
+        let result = self.resolve_bare_name(name, context);
+        if matches!(result.status, ResolutionStatus::Unresolved) {
+            return ResolutionResult::external();
+        }
+        result
     }
 
     fn resolve_qualified(&self, parts: &[String], context: &ResolutionContext) -> ResolutionResult {
@@ -480,7 +500,7 @@ impl RustResolver {
                     }
                 }
             }
-            return ResolutionResult::external();
+            return ResolutionResult::unresolved();
         }
 
         // Tier 1: Direct qualified match
@@ -791,11 +811,6 @@ impl RustResolver {
             }
         }
 
-        // Handle Self::default() and Self::new()
-        if parts.first().map(|s| s == "Self").unwrap_or(false) {
-            return ResolutionResult::external();
-        }
-
         // Handle code_intelligence:: paths
         if parts
             .first()
@@ -824,6 +839,7 @@ impl RustResolver {
             _ => return ResolutionResult::unresolved(),
         };
 
+        if receiver_name == "self" && member == "calculate_impact" {}
         if receiver_name == "self" || receiver_name == "this" {
             if let Some(caller) = context.index.symbols.get(&context.function) {
                 if let Some(container) = &caller.container {
@@ -867,7 +883,12 @@ impl RustResolver {
                     vec![ResolutionEvidence::SameFile],
                 );
             }
-            return ResolutionResult::external();
+            // A self/this call that can't be resolved via container membership or
+            // same-file lookup is a resolver gap, not a genuine external
+            // dependency — self.foo() can never call into another crate. Report
+            // it as Unresolved so it's visible in diagnostics instead of being
+            // silently absorbed as "external" and dropped from the call graph.
+            return ResolutionResult::unresolved();
         }
 
         let receiver_candidates = context.index.find_by_name(&receiver_name);

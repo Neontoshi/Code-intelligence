@@ -61,6 +61,7 @@ pub struct DeadFunction {
     pub is_binary_only: bool,
     pub is_internal_call: bool,
     pub ml_probability: Option<f64>,
+    pub deletion_recommendation: crate::analysis::verdict_source::state::DeletionRecommendation,
 }
 
 #[derive(Debug, Clone)]
@@ -157,6 +158,7 @@ impl DeadCodeAnalyzer {
                     is_binary_only,
                     is_internal_call,
                     ml_probability: verdict.dead_probability,
+                    deletion_recommendation: verdict.deletion_recommendation.clone(),
                 });
             }
         }

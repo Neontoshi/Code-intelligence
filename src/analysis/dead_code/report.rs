@@ -1,6 +1,7 @@
 // src/analysis/dead_code/report.rs
 
 use super::analyzer::{ConfidenceLevel, DeadCodeAnalysis};
+use crate::analysis::verdict_source::state::DeletionRecommendation;
 
 pub struct DeadCodeReportGenerator;
 
@@ -44,9 +45,27 @@ impl DeadCodeReportGenerator {
         ));
 
         // Priority Report
+        // Priority Report
         output.push_str("## 🎯 Priority Removal Order\n\n");
-        output.push_str("| # | Function | Confidence | Impact | LOC |\n");
-        output.push_str("|---|----------|------------|--------|-----|\n");
+
+        let safe_count = analysis
+            .functions
+            .iter()
+            .filter(|f| f.deletion_recommendation == DeletionRecommendation::SafeToDelete)
+            .count();
+        let review_count = analysis.functions.len() - safe_count;
+        if review_count > 0 {
+            output.push_str(&format!(
+                "⚠️ **{} of {} functions need manual review before deletion** \
+                 (only static evidence, no ML confirmation, or an evidence conflict). \
+                 Only functions marked ✅ below are recommended for automatic removal.\n\n",
+                review_count,
+                analysis.functions.len()
+            ));
+        }
+
+        output.push_str("| # | Function | Confidence | Recommendation | Impact | LOC |\n");
+        output.push_str("|---|----------|------------|-----------------|--------|-----|\n");
 
         for func in &analysis.functions {
             let confidence_str = match func.score.level {
@@ -56,11 +75,18 @@ impl DeadCodeReportGenerator {
                 _ => "🟢 40-60%",
             };
 
+            let recommendation_str = match func.deletion_recommendation {
+                DeletionRecommendation::SafeToDelete => "✅ Safe to delete",
+                DeletionRecommendation::NeedsReview => "⚠️ Needs review",
+                DeletionRecommendation::DoNotDelete => "🛑 Do not delete",
+            };
+
             output.push_str(&format!(
-                "| {} | `{}` | {} | {} | {} |\n",
+                "| {} | `{}` | {} | {} | {} | {} |\n",
                 func.removal_order,
                 func.name,
                 confidence_str,
+                recommendation_str,
                 func.impact.estimated_removal_impact,
                 func.impact.lines_of_code
             ));
@@ -81,6 +107,12 @@ impl DeadCodeReportGenerator {
                 func.score.score * 100.0
             ));
             output.push_str(&format!("- **Level**: {:?}\n", func.score.level));
+            let recommendation_str = match func.deletion_recommendation {
+                DeletionRecommendation::SafeToDelete => "✅ Safe to delete",
+                DeletionRecommendation::NeedsReview => "⚠️ Needs review",
+                DeletionRecommendation::DoNotDelete => "🛑 Do not delete",
+            };
+            output.push_str(&format!("- **Recommendation**: {}\n", recommendation_str));
             output.push_str(&format!(
                 "- **Complexity**: {:.2}\n",
                 func.impact.complexity
@@ -136,8 +168,17 @@ impl DeadCodeReportGenerator {
         // Recommendations
         output.push_str("## 💡 Recommendations\n\n");
 
-        if analysis.summary.dead_functions > 10 {
-            output.push_str("1. **Start with high-confidence functions** - Remove functions with Guaranteed/VeryLikely confidence first\n");
+        if safe_count > 0 {
+            output.push_str(&format!(
+                "1. **{} function(s) are cross-validated safe to delete** - static analysis and ML evidence agree, no conflicts\n",
+                safe_count
+            ));
+        }
+        if review_count > 0 {
+            output.push_str(&format!(
+                "1a. **{} function(s) need manual review** - single-source evidence only (e.g. ML disabled for this run) or an unresolved evidence conflict; verify with grep/build-removal before deleting\n",
+                review_count
+            ));
         }
 
         if analysis.summary.dead_types > 0 {

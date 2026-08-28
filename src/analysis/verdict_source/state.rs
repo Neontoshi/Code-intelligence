@@ -491,7 +491,6 @@ impl VerdictEngine {
 
         let mut signals = Vec::new();
         let mut evidence_sources = Vec::new();
-        let mut static_score = 0.0;
         let mut evidence_conflicts = Vec::new();
 
         // Look up dynamic-ref match once
@@ -501,24 +500,60 @@ impl VerdictEngine {
         let normalized_static = if self.config.enable_static {
             let static_signals =
                 self.collect_static_signals(func, reachability, matched_dynamic_ref);
-            for signal in &static_signals {
-                if signal.direction == SignalDirection::SupportsDead {
-                    static_score += signal.weight;
-                } else if signal.direction == SignalDirection::SupportsAlive {
-                    static_score -= signal.weight;
-                }
-            }
             signals.extend(static_signals);
 
             evidence_sources.push(EvidenceSource::StaticReachability);
             evidence_sources.push(EvidenceSource::CallGraph);
 
-            let total_weight: f64 = signals.iter().map(|s| s.weight).sum();
-            if total_weight > 0.0 {
-                ((static_score / total_weight + 1.0) / 2.0).clamp(0.0, 1.0)
+            // Core signals (fan_in, reachability, is_public) fire unconditionally
+            // for every function, in one direction or the other — normalizing
+            // against their fixed combined weight keeps the base scale
+            // comparable and consistent with pre-fix behavior.
+            const CORE_WEIGHT: f64 = 0.4 + 0.3 + 0.2; // fan_in + reachability + is_public
+
+            let core_score: f64 = signals
+                .iter()
+                .filter(|s| matches!(s.name.as_str(), "fan_in" | "reachability" | "is_public"))
+                .map(|s| {
+                    let magnitude = s.weight * s.value.clamp(0.0, 1.0);
+                    if s.direction == SignalDirection::SupportsDead {
+                        magnitude
+                    } else {
+                        -magnitude
+                    }
+                })
+                .sum();
+
+            let base = if CORE_WEIGHT > 0.0 {
+                ((core_score / CORE_WEIGHT + 1.0) / 2.0).clamp(0.0, 1.0)
             } else {
                 0.5
-            }
+            };
+
+            // Optional signals (trait_impl, complexity, documentation,
+            // dynamic_reference) are alive-only evidence. They nudge the base
+            // score toward alive when present, without diluting the core
+            // scale for functions that simply lack them.
+            const MAX_OPTIONAL_WEIGHT: f64 = 0.15 + 0.1 + 0.1 + 0.4; // trait_impl + complexity + documentation + dynamic_reference
+
+            let optional_bonus: f64 = signals
+                .iter()
+                .filter(|s| {
+                    matches!(
+                        s.name.as_str(),
+                        "trait_impl" | "complexity" | "documentation" | "dynamic_reference"
+                    )
+                })
+                .map(|s| s.weight * s.value.clamp(0.0, 1.0))
+                .sum();
+
+            let optional_pull = if MAX_OPTIONAL_WEIGHT > 0.0 {
+                (optional_bonus / MAX_OPTIONAL_WEIGHT) * 0.5 // scaled fraction of the base range
+            } else {
+                0.0
+            };
+
+            (base - optional_pull).clamp(0.0, 1.0)
         } else {
             0.5
         };
@@ -777,7 +812,9 @@ impl VerdictEngine {
         if func.fan_in == 0 {
             signals.push(Signal {
                 name: "fan_in".to_string(),
-                value: 0.0,
+                // value = confidence this signal has in its own direction (dead),
+                // not the raw call count. Zero callers is maximal confidence.
+                value: 1.0,
                 direction: SignalDirection::SupportsDead,
                 weight: 0.4,
                 explanation: "No callers found".to_string(),
@@ -785,6 +822,7 @@ impl VerdictEngine {
         } else {
             signals.push(Signal {
                 name: "fan_in".to_string(),
+                // More callers = more confidence this is alive, capped at 1.0.
                 value: fan_in_value.min(1.0),
                 direction: SignalDirection::SupportsAlive,
                 weight: 0.4,
@@ -805,7 +843,10 @@ impl VerdictEngine {
         } else {
             signals.push(Signal {
                 name: "reachability".to_string(),
-                value: 0.0,
+                // value = confidence in this signal's own direction (dead),
+                // not a raw reachability metric. Being unreachable is
+                // unambiguous, maximal evidence toward dead.
+                value: 1.0,
                 direction: SignalDirection::SupportsDead,
                 weight: 0.3,
                 explanation: "Unreachable from entry points".to_string(),
@@ -824,7 +865,9 @@ impl VerdictEngine {
         } else {
             signals.push(Signal {
                 name: "is_public".to_string(),
-                value: 0.0,
+                // Same fix: private is unambiguous evidence toward dead,
+                // full confidence, not a metric that happens to read 0.
+                value: 1.0,
                 direction: SignalDirection::SupportsDead,
                 weight: 0.2,
                 explanation: "Private function".to_string(),
