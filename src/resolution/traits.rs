@@ -16,8 +16,8 @@ pub trait LanguageResolver: Send + Sync {
         Vec::new()
     }
 
-    fn resolve_call(&self, _call: &CallSite, _context: &ResolutionContext) -> ResolutionResult {
-        ResolutionResult::unresolved()
+    fn resolve_call(&self, call: &CallSite, context: &ResolutionContext) -> ResolutionResult {
+        crate::resolution::generic::resolve_call(call, context)
     }
 
     fn resolve_type(&self, _name: &str, _context: &ResolutionContext) -> Vec<TypeId> {

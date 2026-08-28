@@ -15,6 +15,8 @@ pub enum ResolutionConfidence {
     Heuristic,
     /// Ambiguous - multiple possible targets
     Ambiguous,
+    /// Dynamic - callback, trait dispatch, or other indirect invocation
+    Dynamic,
     /// Unresolved - could not find target
     Unresolved,
 }
@@ -26,6 +28,7 @@ impl ResolutionConfidence {
             ResolutionConfidence::Inferred => 0.85,
             ResolutionConfidence::Heuristic => 0.65,
             ResolutionConfidence::Ambiguous => 0.40,
+            ResolutionConfidence::Dynamic => 0.25,
             ResolutionConfidence::Unresolved => 0.0,
         }
     }
@@ -131,6 +134,7 @@ pub struct ResolutionStats {
     pub total_calls: usize,
     pub resolved_calls: usize,
     pub unresolved_calls: usize,
+    pub dynamic_calls: usize,
     pub exact_count: usize,
     pub inferred_count: usize,
     pub heuristic_count: usize,

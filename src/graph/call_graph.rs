@@ -1,5 +1,6 @@
 use super::resolution::{ResolutionConfidence, ResolutionStats};
 use crate::graph::traits::GraphMetrics;
+use crate::resolution::result::{ResolutionDebugInfo, ResolutionStatus, UnresolvedReason};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use serde::{Deserialize, Serialize};
@@ -50,6 +51,14 @@ pub struct CycleDetectionResult {
     pub max_nodes_limit: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnresolvedCall {
+    pub callee: String,
+    pub status: ResolutionStatus,
+    pub reason: Option<UnresolvedReason>,
+    pub debug: Option<ResolutionDebugInfo>,
+}
+
 #[derive(Debug, Clone)]
 pub struct CallGraph {
     pub graph: DiGraph<FunctionNode, CallEdge>,
@@ -63,6 +72,9 @@ pub struct CallGraph {
     pub duplicate_functions: Vec<String>,
     pub resolution_cache: HashMap<String, ResolutionConfidence>,
     pub unresolved_calls: HashMap<String, Vec<String>>,
+    pub unresolved_details: HashMap<String, Vec<UnresolvedCall>>,
+    pub dynamic_calls: HashMap<String, Vec<String>>,
+    pub dynamic_details: HashMap<String, Vec<UnresolvedCall>>,
     pub external_calls: HashMap<String, Vec<String>>,
 }
 
@@ -80,6 +92,9 @@ impl CallGraph {
             duplicate_functions: Vec::new(),
             resolution_cache: HashMap::new(),
             unresolved_calls: HashMap::new(),
+            unresolved_details: HashMap::new(),
+            dynamic_calls: HashMap::new(),
+            dynamic_details: HashMap::new(),
             external_calls: HashMap::new(),
         }
     }
@@ -134,12 +149,71 @@ impl CallGraph {
     }
 
     pub fn mark_unresolved(&mut self, caller: &str, callee: &str) {
-        self.unresolved_calls
-            .entry(caller.to_string())
-            .or_default()
-            .push(callee.to_string());
+        self.mark_unresolved_detailed(
+            caller,
+            UnresolvedCall {
+                callee: callee.to_string(),
+                status: ResolutionStatus::Unresolved,
+                reason: Some(UnresolvedReason::NoCandidates),
+                debug: None,
+            },
+        );
+    }
 
-        self.set_resolution_confidence(caller, callee, ResolutionConfidence::Unresolved);
+    pub fn mark_unresolved_detailed(&mut self, caller: &str, unresolved: UnresolvedCall) {
+        match unresolved.status {
+            ResolutionStatus::Dynamic => {
+                self.dynamic_calls
+                    .entry(caller.to_string())
+                    .or_default()
+                    .push(unresolved.callee.clone());
+
+                self.dynamic_details
+                    .entry(caller.to_string())
+                    .or_default()
+                    .push(unresolved.clone());
+
+                self.set_resolution_confidence(
+                    caller,
+                    &unresolved.callee,
+                    ResolutionConfidence::Dynamic,
+                );
+            }
+            ResolutionStatus::Ambiguous => {
+                self.unresolved_calls
+                    .entry(caller.to_string())
+                    .or_default()
+                    .push(unresolved.callee.clone());
+
+                self.unresolved_details
+                    .entry(caller.to_string())
+                    .or_default()
+                    .push(unresolved.clone());
+
+                self.set_resolution_confidence(
+                    caller,
+                    &unresolved.callee,
+                    ResolutionConfidence::Ambiguous,
+                );
+            }
+            _ => {
+                self.unresolved_calls
+                    .entry(caller.to_string())
+                    .or_default()
+                    .push(unresolved.callee.clone());
+
+                self.unresolved_details
+                    .entry(caller.to_string())
+                    .or_default()
+                    .push(unresolved.clone());
+
+                self.set_resolution_confidence(
+                    caller,
+                    &unresolved.callee,
+                    ResolutionConfidence::Unresolved,
+                );
+            }
+        }
     }
 
     /// Mark a call as external (dependency outside the project)
@@ -242,12 +316,20 @@ impl CallGraph {
             .unwrap_or_default()
     }
 
+    pub fn get_unresolved_details(&self, full_path: &str) -> &[UnresolvedCall] {
+        self.unresolved_details
+            .get(full_path)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
     pub fn resolution_stats(&self) -> ResolutionStats {
         let total_calls = self.edge_count();
         let mut exact = 0;
         let mut inferred = 0;
         let mut heuristic = 0;
         let mut ambiguous = 0;
+        let mut dynamic = 0;
         let mut unresolved = 0;
         let mut by_method = std::collections::HashMap::new();
 
@@ -257,6 +339,7 @@ impl CallGraph {
                 ResolutionConfidence::Inferred => inferred += 1,
                 ResolutionConfidence::Heuristic => heuristic += 1,
                 ResolutionConfidence::Ambiguous => ambiguous += 1,
+                ResolutionConfidence::Dynamic => dynamic += 1,
                 ResolutionConfidence::Unresolved => unresolved += 1,
             }
 
@@ -265,17 +348,20 @@ impl CallGraph {
                 ResolutionConfidence::Inferred => "inferred",
                 ResolutionConfidence::Heuristic => "heuristic",
                 ResolutionConfidence::Ambiguous => "ambiguous",
+                ResolutionConfidence::Dynamic => "dynamic",
                 ResolutionConfidence::Unresolved => "unresolved",
             };
             *by_method.entry(method.to_string()).or_insert(0) += 1;
         }
 
-        // Also count unresolved calls from the unresolved_calls map
+        // Also count categorized non-edge outcomes from the detail maps.
         let unresolved_from_map: usize = self.unresolved_calls.values().map(|v| v.len()).sum();
-        let total_unresolved = unresolved + unresolved_from_map;
+        let dynamic_from_map: usize = self.dynamic_calls.values().map(|v| v.len()).sum();
+        let total_unresolved = unresolved.max(unresolved_from_map);
+        let total_dynamic = dynamic.max(dynamic_from_map);
 
         let resolved = exact + inferred + heuristic;
-        let total_attempted = resolved + total_unresolved + ambiguous;
+        let total_attempted = resolved + total_unresolved + ambiguous + total_dynamic;
         let avg_conf = if total_calls > 0 {
             let sum: f64 = self
                 .resolution_cache
@@ -291,6 +377,7 @@ impl CallGraph {
             total_calls,
             resolved_calls: resolved,
             unresolved_calls: total_unresolved,
+            dynamic_calls: total_dynamic,
             exact_count: exact,
             inferred_count: inferred,
             heuristic_count: heuristic,

@@ -2,10 +2,11 @@
 
 use crate::parser::tree_sitter::ParsedFile;
 use crate::parser::TypeKind;
+use crate::resolution::naming;
 use crate::resolution::scope::{Scope, ScopeChain};
 use crate::resolution::symbol::{
-    FileId, ImportBinding, ImportKind, Module, ModuleId, ScopeId, Symbol, SymbolId, SymbolIndex,
-    SymbolKind, Visibility,
+    FileId, ImportBinding, ImportKind, Module, ModuleId, Symbol, SymbolId, SymbolIndex, SymbolKind,
+    Visibility,
 };
 use crate::resolution::type_inference::{InferredType, TypeContext};
 use std::collections::HashMap;
@@ -21,8 +22,8 @@ impl IndexBuilder {
         // First pass: Register all modules and file-level scopes
         for file in files {
             let file_path = file.path.clone();
-            let file_id = FileId(file_path.clone());
-            let module_id = ModuleId(Self::file_to_module_path(&file_path));
+            let file_id = naming::file_id(&file_path);
+            let module_id = naming::module_id_for_file(&file_path);
 
             // Register module
             index.modules.insert(
@@ -36,9 +37,8 @@ impl IndexBuilder {
             );
 
             // Create file-level scope
-            let file_scope_id = ScopeId(format!("file_{}", file_path));
-            let file_scope = Scope::new(file_scope_id.clone(), None);
-            scopes.add_scope(file_scope);
+            let file_scope_id = naming::file_scope_id(&file_path);
+            let mut file_scope = Scope::new(file_scope_id.clone(), None);
 
             // Register imports
             let mut import_bindings = Vec::new();
@@ -61,6 +61,12 @@ impl IndexBuilder {
                     scope: file_scope_id.clone(),
                     kind: Self::classify_import(&import.module),
                 };
+                if binding.kind != ImportKind::Wildcard {
+                    file_scope.insert(
+                        local_name.clone(),
+                        SymbolId(format!("import::{}", local_name)),
+                    );
+                }
                 import_bindings.push(binding);
             }
 
@@ -68,23 +74,69 @@ impl IndexBuilder {
                 index.add_type(ty.name.clone(), file_id.clone());
             }
 
+            scopes.add_scope(file_scope);
             index.imports.insert(file_id, import_bindings);
         }
 
-        // Second pass: Register container scopes (class/struct/impl)
+        // Second pass: Register type/container symbols and scopes.
         for file in files {
             let file_path = file.path.clone();
+            let file_id = naming::file_id(&file_path);
+            let module_id = naming::module_id_for_file(&file_path);
+            let file_scope_id = naming::file_scope_id(&file_path);
+
+            for ty in &file.types {
+                let type_symbol_id = naming::type_symbol_id(&file_path, &ty.name);
+                let type_id = naming::type_id(&ty.name);
+
+                if !index.symbols.contains_key(&type_symbol_id) {
+                    let type_symbol = Symbol {
+                        id: type_symbol_id.clone(),
+                        name: ty.name.clone(),
+                        kind: SymbolKind::Type,
+                        file: file_id.clone(),
+                        container: None,
+                        module: Some(module_id.clone()),
+                        signature: None,
+                        visibility: Visibility::Public,
+                        declared_type: Some(type_id.clone()),
+                    };
+                    index.add_symbol(type_symbol);
+                    index.register_type_symbol(type_id, type_symbol_id.clone());
+                }
+
+                let container_scope_id = naming::container_scope_id(&file_path, &ty.name);
+                if !scopes.scopes.contains_key(&container_scope_id) {
+                    let container_scope =
+                        Scope::new(container_scope_id, Some(file_scope_id.clone()));
+                    scopes.add_scope(container_scope);
+                }
+            }
 
             for func in &file.functions {
                 if let Some(container) = &func.container {
-                    let container_scope_id =
-                        ScopeId(format!("container_{}::{}", file_path, container));
-                    let file_scope_id = ScopeId(format!("file_{}", file_path));
-
+                    let container_scope_id = naming::container_scope_id(&file_path, container);
                     if !scopes.scopes.contains_key(&container_scope_id) {
                         let container_scope =
-                            Scope::new(container_scope_id.clone(), Some(file_scope_id));
+                            Scope::new(container_scope_id.clone(), Some(file_scope_id.clone()));
                         scopes.add_scope(container_scope);
+                    }
+
+                    let container_symbol_id = naming::container_symbol_id(&file_path, container);
+                    if !index.symbols.contains_key(&container_symbol_id) {
+                        let declared_type = index.type_name_to_id.get(container).cloned();
+                        let container_symbol = Symbol {
+                            id: container_symbol_id,
+                            name: container.clone(),
+                            kind: SymbolKind::Type,
+                            file: file_id.clone(),
+                            container: None,
+                            module: Some(module_id.clone()),
+                            signature: None,
+                            visibility: Visibility::Public,
+                            declared_type,
+                        };
+                        index.add_symbol(container_symbol);
                     }
                 }
             }
@@ -93,18 +145,20 @@ impl IndexBuilder {
         // Third pass: Register function symbols and scopes
         for file in files {
             let file_path = file.path.clone();
-            let file_id = FileId(file_path.clone());
-            let module_id = ModuleId(Self::file_to_module_path(&file_path));
-            let file_scope_id = ScopeId(format!("file_{}", file_path));
+            let file_id = naming::file_id(&file_path);
+            let module_id = naming::module_id_for_file(&file_path);
+            let file_scope_id = naming::file_scope_id(&file_path);
 
             for func in &file.functions {
-                let full_path = match &func.container {
-                    Some(c) => format!("{}::{}::{}", file_path, c, func.name),
-                    None => format!("{}::{}", file_path, func.name),
-                };
+                let function_id = naming::function_symbol_id_from_info(&file_path, func);
+
+                let declared_type = func
+                    .container
+                    .as_ref()
+                    .and_then(|container| index.type_name_to_id.get(container).cloned());
 
                 let symbol = Symbol {
-                    id: SymbolId(full_path.clone()),
+                    id: function_id.clone(),
                     name: func.name.clone(),
                     kind: if func.is_trait_method {
                         SymbolKind::TraitMethod
@@ -117,7 +171,7 @@ impl IndexBuilder {
                     container: func
                         .container
                         .as_ref()
-                        .map(|c| SymbolId(format!("{}::{}", file_path, c))),
+                        .map(|c| naming::container_symbol_id(&file_path, c)),
                     module: Some(module_id.clone()),
                     signature: func.return_type.clone(),
                     visibility: if func.is_public {
@@ -125,25 +179,53 @@ impl IndexBuilder {
                     } else {
                         Visibility::Private
                     },
+                    declared_type: declared_type.clone(),
                 };
+
+                if let Some(type_id) = declared_type.clone() {
+                    index
+                        .by_type
+                        .entry(type_id)
+                        .or_default()
+                        .push(function_id.clone());
+                }
 
                 index.add_symbol(symbol);
 
                 // Function scope with correct parent chain
-                let scope_id = ScopeId(format!("scope_{}", full_path));
+                let scope_id = naming::function_scope_id(&function_id);
                 let parent_scope = if let Some(container) = &func.container {
-                    Some(ScopeId(format!("container_{}::{}", file_path, container)))
+                    Some(naming::container_scope_id(&file_path, container))
                 } else {
                     Some(file_scope_id.clone())
                 };
 
                 let mut scope = Scope::new(scope_id, parent_scope);
 
-                // Insert parameters into scope
+                // Insert parameters into scope and seed parameter type information.
                 for param in &func.params {
-                    scope.insert(
-                        param.name.clone(),
-                        SymbolId(format!("{}::param::{}", full_path, param.name)),
+                    let param_symbol = naming::parameter_symbol_id(&function_id, &param.name);
+                    scope.insert(param.name.clone(), param_symbol);
+
+                    if let Some(type_hint) = param.type_hint.as_deref() {
+                        type_context.register_variable_with_context(
+                            Some(&function_id.0),
+                            &param.name,
+                            Some(type_hint),
+                            None,
+                        );
+                    }
+                }
+
+                for variable in &func.variables {
+                    let local_symbol =
+                        naming::local_variable_symbol_id(&function_id, &variable.name);
+                    scope.insert(variable.name.clone(), local_symbol);
+                    type_context.register_variable_with_context(
+                        Some(&function_id.0),
+                        &variable.name,
+                        variable.type_hint.as_deref(),
+                        variable.initializer.as_deref(),
                     );
                 }
 
@@ -200,10 +282,7 @@ impl IndexBuilder {
 
             // Register function signatures
             for func in &file.functions {
-                let full_path = match &func.container {
-                    Some(c) => format!("{}::{}::{}", file.path, c, func.name),
-                    None => format!("{}::{}", file.path, func.name),
-                };
+                let function_id = naming::function_symbol_id_from_info(&file.path, func);
 
                 let params: Vec<InferredType> = func
                     .params
@@ -222,7 +301,7 @@ impl IndexBuilder {
                     .map(|t| InferredType::from_string(t))
                     .unwrap_or(InferredType::Unknown);
 
-                type_context.register_function(&full_path, params, return_type);
+                type_context.register_function(&function_id.0, params, return_type);
             }
         }
 
@@ -305,37 +384,6 @@ impl IndexBuilder {
     }
 
     pub fn file_to_module_path(file_path: &str) -> String {
-        let p = file_path.trim_start_matches("./");
-        let rel = p.strip_prefix("src/").unwrap_or(p);
-
-        // Strip all known language extensions
-        let rel = rel
-            .strip_suffix(".rs")
-            .or_else(|| rel.strip_suffix(".py"))
-            .or_else(|| rel.strip_suffix(".ts"))
-            .or_else(|| rel.strip_suffix(".tsx"))
-            .or_else(|| rel.strip_suffix(".js"))
-            .or_else(|| rel.strip_suffix(".jsx"))
-            .or_else(|| rel.strip_suffix(".go"))
-            .or_else(|| rel.strip_suffix(".java"))
-            .or_else(|| rel.strip_suffix(".dart"))
-            .or_else(|| rel.strip_suffix(".php"))
-            .or_else(|| rel.strip_suffix(".cpp"))
-            .or_else(|| rel.strip_suffix(".cc"))
-            .or_else(|| rel.strip_suffix(".cxx"))
-            .or_else(|| rel.strip_suffix(".hpp"))
-            .or_else(|| rel.strip_suffix(".h"))
-            .or_else(|| rel.strip_suffix(".cs"))
-            .unwrap_or(rel);
-
-        let mut segments: Vec<&str> = rel.split('/').collect();
-        if matches!(segments.last(), Some(&"mod") | Some(&"main") | Some(&"lib")) {
-            segments.pop();
-        }
-        if segments.is_empty() {
-            "crate".to_string()
-        } else {
-            format!("crate::{}", segments.join("::"))
-        }
+        naming::file_to_module_path(file_path)
     }
 }

@@ -41,6 +41,35 @@ pub enum ResolutionEvidence {
     FrameworkPattern,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UnresolvedReason {
+    NoCandidates,
+    MissingCurrentSymbol,
+    ScopeMiss,
+    SameFileAmbiguous,
+    ImportAmbiguous,
+    WildcardImportAmbiguous,
+    GlobalAmbiguous,
+    ContainerMiss,
+    ReceiverUnbound,
+    QualifiedPathMiss,
+    UnsupportedCalleeShape,
+    DynamicPattern,
+    ExternalDependency,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolutionDebugInfo {
+    pub query: Option<String>,
+    pub scope_checked: bool,
+    pub same_file_candidate_count: usize,
+    pub import_candidate_count: usize,
+    pub wildcard_candidate_count: usize,
+    pub global_candidate_count: usize,
+    pub container_candidate_count: usize,
+    pub notes: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ResolutionResult {
     pub status: ResolutionStatus,
@@ -49,6 +78,8 @@ pub struct ResolutionResult {
     pub method: Option<ResolutionMethod>,
     pub evidence: Vec<ResolutionEvidence>,
     pub candidates: Vec<ResolutionCandidate>,
+    pub reason: Option<UnresolvedReason>,
+    pub debug: Option<ResolutionDebugInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +104,8 @@ impl ResolutionResult {
             method: Some(method),
             evidence,
             candidates: Vec::new(),
+            reason: None,
+            debug: None,
         }
     }
 
@@ -84,6 +117,8 @@ impl ResolutionResult {
             method: None,
             evidence: Vec::new(),
             candidates,
+            reason: Some(UnresolvedReason::GlobalAmbiguous),
+            debug: None,
         }
     }
 
@@ -95,10 +130,12 @@ impl ResolutionResult {
             method: None,
             evidence: Vec::new(),
             candidates: Vec::new(),
+            reason: Some(UnresolvedReason::ExternalDependency),
+            debug: None,
         }
     }
 
-    pub fn dynamic(_reason: &str) -> Self {
+    pub fn dynamic(reason: &str) -> Self {
         Self {
             status: ResolutionStatus::Dynamic,
             target: None,
@@ -106,10 +143,47 @@ impl ResolutionResult {
             method: None,
             evidence: vec![ResolutionEvidence::FrameworkPattern],
             candidates: Vec::new(),
+            reason: Some(UnresolvedReason::DynamicPattern),
+            debug: Some(ResolutionDebugInfo {
+                query: None,
+                scope_checked: false,
+                same_file_candidate_count: 0,
+                import_candidate_count: 0,
+                wildcard_candidate_count: 0,
+                global_candidate_count: 0,
+                container_candidate_count: 0,
+                notes: vec![reason.to_string()],
+            }),
+        }
+    }
+
+    pub fn callback(reason: &str) -> Self {
+        Self {
+            status: ResolutionStatus::Dynamic,
+            target: None,
+            confidence: 0.60,
+            method: Some(ResolutionMethod::CallbackResolution),
+            evidence: vec![ResolutionEvidence::MatchingScope],
+            candidates: Vec::new(),
+            reason: Some(UnresolvedReason::DynamicPattern),
+            debug: Some(ResolutionDebugInfo {
+                query: None,
+                scope_checked: true,
+                same_file_candidate_count: 0,
+                import_candidate_count: 0,
+                wildcard_candidate_count: 0,
+                global_candidate_count: 0,
+                container_candidate_count: 0,
+                notes: vec![reason.to_string()],
+            }),
         }
     }
 
     pub fn unresolved() -> Self {
+        Self::unresolved_with_reason(UnresolvedReason::NoCandidates)
+    }
+
+    pub fn unresolved_with_reason(reason: UnresolvedReason) -> Self {
         Self {
             status: ResolutionStatus::Unresolved,
             target: None,
@@ -117,6 +191,18 @@ impl ResolutionResult {
             method: None,
             evidence: Vec::new(),
             candidates: Vec::new(),
+            reason: Some(reason),
+            debug: None,
         }
+    }
+
+    pub fn with_debug(mut self, debug: ResolutionDebugInfo) -> Self {
+        self.debug = Some(debug);
+        self
+    }
+
+    pub fn with_reason(mut self, reason: UnresolvedReason) -> Self {
+        self.reason = Some(reason);
+        self
     }
 }

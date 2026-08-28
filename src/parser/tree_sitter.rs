@@ -52,8 +52,14 @@ pub struct VariableInfo {
 pub enum CallSite {
     SelfMethod(String),
     Qualified(String, String),
-    OnReceiver(String, String),
-    Chained(String),
+    OnReceiver {
+        receiver: String,
+        method: String,
+    },
+    Chained {
+        root: Option<String>,
+        chain: Vec<String>,
+    },
     Bare(String),
 }
 
@@ -114,8 +120,18 @@ impl std::fmt::Display for CallSite {
         match self {
             CallSite::SelfMethod(m) => write!(f, "self.{}", m),
             CallSite::Qualified(q, m) => write!(f, "{}::{}", q, m),
-            CallSite::OnReceiver(r, m) => write!(f, "{}.{}", r, m),
-            CallSite::Chained(m) => write!(f, "().{}", m),
+            CallSite::OnReceiver { receiver, method } => write!(f, "{}.{}", receiver, method),
+            CallSite::Chained { root, chain } => {
+                if let Some(root) = root {
+                    write!(f, "{}", root)?;
+                } else {
+                    write!(f, "()")?;
+                }
+                for method in chain {
+                    write!(f, ".{}", method)?;
+                }
+                Ok(())
+            }
             CallSite::Bare(n) => write!(f, "{}", n),
         }
     }

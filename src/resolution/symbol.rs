@@ -28,6 +28,7 @@ pub struct Symbol {
     pub module: Option<ModuleId>,
     pub signature: Option<String>,
     pub visibility: Visibility,
+    pub declared_type: Option<TypeId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +40,7 @@ pub enum SymbolKind {
     ClassMethod,
     TraitMethod,
     AssociatedFunction,
+    Type,
     Closure,
     Callback,
 }
@@ -63,6 +65,8 @@ pub struct SymbolIndex {
     pub imports: HashMap<FileId, Vec<ImportBinding>>,
     pub modules: HashMap<ModuleId, Module>,
     pub type_files: HashMap<String, Vec<FileId>>,
+    pub type_symbols: HashMap<TypeId, SymbolId>,
+    pub type_name_to_id: HashMap<String, TypeId>,
     pub module_aliases: HashMap<String, String>,
 }
 
@@ -99,6 +103,13 @@ impl SymbolIndex {
 
     pub fn add_type(&mut self, name: String, file: FileId) {
         self.type_files.entry(name).or_default().push(file);
+    }
+
+    pub fn register_type_symbol(&mut self, type_id: TypeId, symbol_id: SymbolId) {
+        self.type_symbols.insert(type_id.clone(), symbol_id);
+        self.type_name_to_id
+            .entry(type_id.0.clone())
+            .or_insert(type_id);
     }
 
     pub fn add_symbol(&mut self, symbol: Symbol) {

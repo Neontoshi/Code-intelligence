@@ -62,6 +62,15 @@ impl UnifiedFilter {
             return ProtectionLevel::Protected;
         }
 
+        if is_generated_file(&func.file)
+            || is_generated_directory(&func.file)
+            || is_example_file(&func.file)
+            || is_template_file(&func.file)
+            || is_extension_file(&func.file)
+        {
+            return ProtectionLevel::Protected;
+        }
+
         if func.is_trait_method || func.is_trait_default || func.trait_impl.is_some() {
             return ProtectionLevel::Protected;
         }
@@ -79,6 +88,10 @@ impl UnifiedFilter {
             .framework_registry
             .is_framework_root(&language, &func.file, &func.name)
         {
+            return ProtectionLevel::Protected;
+        }
+
+        if is_framework_file(&func.file) || is_framework_callback(&func.name) {
             return ProtectionLevel::Protected;
         }
 
@@ -129,7 +142,15 @@ impl UnifiedFilter {
             return ProtectionLevel::LikelyAlive;
         }
 
-        if func.fan_in > 0 {
+        if is_builder_method(&func.name)
+            || is_simple_accessor(&func.name)
+            || is_boilerplate_name(&func.name)
+            || is_snippet_function(&func.name)
+        {
+            return ProtectionLevel::LikelyAlive;
+        }
+
+        if func.fan_in > 0 || func.fan_out > 0 {
             return ProtectionLevel::LikelyAlive;
         }
 

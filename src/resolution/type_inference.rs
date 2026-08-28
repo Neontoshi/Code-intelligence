@@ -95,7 +95,6 @@ impl TypeContext {
     }
 
     pub fn infer_type(&self, expr: &str) -> InferredType {
-        // Check variable types first
         if let Some(t) = self.variable_types.get(expr) {
             return t.clone();
         }
@@ -134,12 +133,26 @@ impl TypeContext {
         type_hint: Option<&str>,
         initializer: Option<&str>,
     ) {
+        self.register_variable_with_context(None, name, type_hint, initializer);
+    }
+
+    pub fn register_variable_with_context(
+        &mut self,
+        context: Option<&str>,
+        name: &str,
+        type_hint: Option<&str>,
+        initializer: Option<&str>,
+    ) {
+        let key = context
+            .map(|ctx| format!("{}::{}", ctx, name))
+            .unwrap_or_else(|| name.to_string());
+
         if let Some(hint) = type_hint {
             self.variable_types
-                .insert(name.to_string(), InferredType::from_string(hint));
+                .insert(key, InferredType::from_string(hint));
         } else if let Some(init) = initializer {
             let inferred = self.infer_from_initializer(init);
-            self.variable_types.insert(name.to_string(), inferred);
+            self.variable_types.insert(key, inferred);
         }
     }
 
@@ -156,6 +169,17 @@ impl TypeContext {
 
     pub fn lookup_function_return(&self, func_name: &str) -> Option<InferredType> {
         self.function_return_types.get(func_name).cloned()
+    }
+
+    pub fn infer_type_in_context(&self, context: Option<&str>, expr: &str) -> InferredType {
+        if let Some(ctx) = context {
+            let scoped_key = format!("{}::{}", ctx, expr);
+            if let Some(t) = self.variable_types.get(&scoped_key) {
+                return t.clone();
+            }
+        }
+
+        self.infer_type(expr)
     }
 
     fn infer_from_initializer(&self, init: &str) -> InferredType {

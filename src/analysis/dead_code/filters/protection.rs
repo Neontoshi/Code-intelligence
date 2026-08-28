@@ -40,6 +40,12 @@ pub fn filter_reason(func: &FunctionNode) -> Option<&'static str> {
                 Some("protected: trait_method")
             } else if func.trait_impl.is_some() {
                 Some("protected: trait_implementation")
+            } else if func.file.contains("/generated/")
+                || func.file.contains("/examples/")
+                || func.file.contains("/extensions/")
+                || func.file.contains("/plugins/")
+            {
+                Some("protected: generated_or_integration_surface")
             } else {
                 Some("protected: ffi_or_framework")
             }
@@ -49,8 +55,17 @@ pub fn filter_reason(func: &FunctionNode) -> Option<&'static str> {
                 Some("likely_alive: public_api")
             } else if func.fan_in > 0 {
                 Some("likely_alive: has_callers")
+            } else if func.fan_out > 0 {
+                Some("likely_alive: participates_in_call_flow")
+            } else if func.name.starts_with("with_")
+                || func.name.starts_with("get_")
+                || func.name.starts_with("set_")
+                || func.name.starts_with("is_")
+                || func.name.starts_with("has_")
+            {
+                Some("likely_alive: conventional_api_shape")
             } else {
-                Some("likely_alive: entry_point")
+                Some("likely_alive: protected_pattern")
             }
         }
         ProtectionLevel::Candidate => None,

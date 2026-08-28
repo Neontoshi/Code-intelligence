@@ -137,8 +137,6 @@ fn walk_for_calls(
     source: &str,
     calls: &mut Vec<crate::parser::tree_sitter::CallSite>,
 ) {
-    use crate::parser::tree_sitter::CallSite;
-
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         match child.kind() {
@@ -151,11 +149,7 @@ fn walk_for_calls(
                 }
             }
             "method_call" | "method_invocation" => {
-                if let Some(method) = child.child_by_field_name("method") {
-                    if let Ok(name) = method.utf8_text(source.as_bytes()) {
-                        calls.push(CallSite::Bare(name.to_string()));
-                    }
-                }
+                extract_call_site(&child, source, calls);
             }
             "macro_invocation" => {
                 // Bare identifiers inside a macro's token tree are only meaningful as
@@ -217,6 +211,72 @@ fn extract_macro_identifiers(
     }
 }
 
+fn extract_call_chain_root(func: &Node, source: &str) -> Option<String> {
+    match func.kind() {
+        "call_expression" | "invocation_expression" => func
+            .child_by_field_name("function")
+            .or_else(|| func.child_by_field_name("expression"))
+            .and_then(|inner| extract_call_chain_root(&inner, source)),
+        "field_expression" => {
+            let mut cursor = func.walk();
+            let named_children: Vec<_> = func.named_children(&mut cursor).collect();
+            named_children
+                .first()
+                .and_then(|receiver| extract_call_chain_root(receiver, source))
+        }
+        "member_expression" => func
+            .child_by_field_name("object")
+            .or_else(|| func.child_by_field_name("receiver"))
+            .and_then(|receiver| receiver.utf8_text(source.as_bytes()).ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        "identifier" | "property_identifier" | "type_identifier" => func
+            .utf8_text(source.as_bytes())
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        _ => None,
+    }
+}
+
+fn extract_call_chain_methods(func: &Node, source: &str) -> Vec<String> {
+    match func.kind() {
+        "call_expression" | "invocation_expression" => func
+            .child_by_field_name("function")
+            .or_else(|| func.child_by_field_name("expression"))
+            .map(|inner| extract_call_chain_methods(&inner, source))
+            .unwrap_or_default(),
+        "field_expression" => {
+            let mut cursor = func.walk();
+            let named_children: Vec<_> = func.named_children(&mut cursor).collect();
+            if named_children.len() >= 2 {
+                let mut methods = extract_call_chain_methods(&named_children[0], source);
+                if let Ok(member) =
+                    named_children[named_children.len() - 1].utf8_text(source.as_bytes())
+                {
+                    let member = member.trim();
+                    if !member.is_empty() {
+                        methods.push(member.to_string());
+                    }
+                }
+                methods
+            } else {
+                Vec::new()
+            }
+        }
+        "member_expression" => func
+            .child_by_field_name("field")
+            .or_else(|| func.child_by_field_name("property"))
+            .and_then(|member| member.utf8_text(source.as_bytes()).ok())
+            .map(|s| vec![s.trim().to_string()])
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+    .into_iter()
+    .filter(|s| !s.is_empty())
+    .collect()
+}
+
 fn extract_call_site(
     func: &Node,
     source: &str,
@@ -248,10 +308,14 @@ fn extract_call_site(
                     let qualifier = q.trim();
                     let method = m.trim();
                     if !qualifier.is_empty() && !method.is_empty() {
-                        calls.push(CallSite::Qualified(
-                            qualifier.to_string(),
-                            method.to_string(),
-                        ));
+                        if qualifier == "Self" {
+                            calls.push(CallSite::SelfMethod(method.to_string()));
+                        } else {
+                            calls.push(CallSite::Qualified(
+                                qualifier.to_string(),
+                                method.to_string(),
+                            ));
+                        }
                     }
                 }
             } else if let Ok(text) = func.utf8_text(source.as_bytes()) {
@@ -260,7 +324,11 @@ fn extract_call_site(
                     let q = qualifier.trim();
                     let m = method.trim();
                     if !q.is_empty() && !m.is_empty() {
-                        calls.push(CallSite::Qualified(q.to_string(), m.to_string()));
+                        if q == "Self" {
+                            calls.push(CallSite::SelfMethod(m.to_string()));
+                        } else {
+                            calls.push(CallSite::Qualified(q.to_string(), m.to_string()));
+                        }
                     }
                 }
             }
@@ -292,10 +360,18 @@ fn extract_call_site(
 
                     if r == "self" || r == "this" || r == "cls" {
                         calls.push(CallSite::SelfMethod(m.to_string()));
-                    } else if recv.kind() == "call_expression" {
-                        calls.push(CallSite::Chained(m.to_string()));
+                    } else if recv.kind() == "call_expression"
+                        || recv.kind() == "invocation_expression"
+                    {
+                        let root = extract_call_chain_root(&recv, source);
+                        let mut chain = extract_call_chain_methods(&recv, source);
+                        chain.push(m.to_string());
+                        calls.push(CallSite::Chained { root, chain });
                     } else {
-                        calls.push(CallSite::OnReceiver(r.to_string(), m.to_string()));
+                        calls.push(CallSite::OnReceiver {
+                            receiver: r.to_string(),
+                            method: m.to_string(),
+                        });
                     }
                 }
             }
@@ -326,25 +402,21 @@ fn extract_call_site(
                     } else if recv.kind() == "call_expression"
                         || recv.kind() == "invocation_expression"
                     {
-                        calls.push(CallSite::Chained(m.to_string()));
+                        let root = extract_call_chain_root(&recv, source);
+                        let mut chain = extract_call_chain_methods(&recv, source);
+                        chain.push(m.to_string());
+                        calls.push(CallSite::Chained { root, chain });
                     } else {
-                        calls.push(CallSite::OnReceiver(r.to_string(), m.to_string()));
+                        calls.push(CallSite::OnReceiver {
+                            receiver: r.to_string(),
+                            method: m.to_string(),
+                        });
                     }
                 }
             }
         }
-        // Chained call: the function field itself is a call expression
-        "call_expression" | "invocation_expression" => {
-            // This is foo().bar() - extract method name from the outer expression
-            if let Ok(text) = func.utf8_text(source.as_bytes()) {
-                if let Some(last_dot) = text.rfind('.') {
-                    let method = text[last_dot + 1..].trim();
-                    if !method.is_empty() && !method.contains('(') {
-                        calls.push(CallSite::Chained(method.to_string()));
-                    }
-                }
-            }
-        }
+        // Nested calls are handled by the surrounding member/field expression extraction.
+        "call_expression" | "invocation_expression" => {}
 
         // Fallback: try to extract something useful
         _ => {
@@ -576,10 +648,43 @@ pub fn parse_import(text: &str) -> (String, Vec<String>) {
     let trimmed = text.trim().trim_end_matches(';').trim();
     if trimmed.starts_with("use ") {
         let rest = trimmed[4..].trim();
-        if let Some(alias_pos) = rest.find(" as ") {
-            let actual = &rest[..alias_pos];
-            return (actual.to_string(), vec![actual.to_string()]);
+
+        if let Some((path, alias)) = rest.split_once(" as ") {
+            let path = path.trim();
+            let alias = alias.trim();
+            if let Some((module, item)) = path.rsplit_once("::") {
+                return (
+                    module.trim().to_string(),
+                    vec![alias.to_string(), item.trim().to_string()],
+                );
+            }
+            return (path.to_string(), vec![alias.to_string()]);
         }
+
+        if rest.ends_with("::*") {
+            return (
+                rest.trim_end_matches("::*").to_string(),
+                vec!["*".to_string()],
+            );
+        }
+
+        if rest.contains("::{") && rest.ends_with('}') {
+            if let Some((module, items_part)) = rest.split_once("::{") {
+                let items = items_part
+                    .trim_end_matches('}')
+                    .split(',')
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect();
+                return (module.trim().to_string(), items);
+            }
+        }
+
+        if let Some((module, item)) = rest.rsplit_once("::") {
+            return (module.trim().to_string(), vec![item.trim().to_string()]);
+        }
+
         return (rest.to_string(), vec![rest.to_string()]);
     }
     if trimmed.starts_with("import ") {

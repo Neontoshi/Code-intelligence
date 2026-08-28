@@ -1,6 +1,6 @@
 // src/engine/call_graph_builder.rs
 
-use crate::graph::call_graph::{CallEdge, CallGraph, FunctionNode};
+use crate::graph::call_graph::{CallEdge, CallGraph, FunctionNode, UnresolvedCall};
 use crate::graph::resolution::ResolutionConfidence;
 use crate::parser::tree_sitter::{CallSite as ParserCallSite, FunctionInfo, ParsedFile};
 use crate::resolution::call_site::{
@@ -8,8 +8,8 @@ use crate::resolution::call_site::{
 };
 use crate::resolution::context::Language;
 use crate::resolution::index_builder::IndexBuilder;
+use crate::resolution::naming;
 use crate::resolution::result::ResolutionStatus;
-use crate::resolution::symbol::{FileId, ModuleId, ScopeId, SymbolId};
 use crate::resolution::ResolutionEngine;
 use std::collections::HashMap;
 
@@ -30,10 +30,8 @@ impl CallGraphBuilder {
         // Pass 1: Add function nodes to the call graph
         for file in files {
             for func in &file.functions {
-                let full_path = match &func.container {
-                    Some(c) => format!("{}::{}::{}", file.path, c, func.name),
-                    None => format!("{}::{}", file.path, func.name),
-                };
+                let function_id = naming::function_symbol_id_from_info(&file.path, func);
+                let full_path = function_id.0.clone();
 
                 let node = FunctionNode {
                     name: func.name.clone(),
@@ -71,23 +69,19 @@ impl CallGraphBuilder {
         // Pass 2: Resolve calls and build edges
         for file in files {
             let file_path = file.path.clone();
-            let file_id = FileId(file_path.clone());
+            let file_id = naming::file_id(&file_path);
             let language = Language::from_file_extension(file.path.split('.').last().unwrap_or(""))
                 .unwrap_or(Language::Rust);
-            let module_id = ModuleId(IndexBuilder::file_to_module_path(&file_path));
+            let module_id = naming::module_id_for_file(&file_path);
 
             for func in &file.functions {
-                let caller_path = match &func.container {
-                    Some(c) => format!("{}::{}::{}", file_path, c, func.name),
-                    None => format!("{}::{}", file_path, func.name),
-                };
+                let function_id = naming::function_symbol_id_from_info(&file_path, func);
+                let caller_path = function_id.0.clone();
 
                 if let Some(&caller_idx) = call_graph.name_index.get(&caller_path) {
-                    let function_id = SymbolId(caller_path.clone());
-                    let scope_id = ScopeId(format!("scope_{}", caller_path));
+                    let scope_id = naming::function_scope_id(&function_id);
 
                     for parser_call in &func.calls {
-                        
                         let semantic_call = convert_call_site(parser_call, &file_path, func);
 
                         // Skip external dependency calls (now handles all cases)
@@ -152,17 +146,33 @@ impl CallGraphBuilder {
                                 let debug_count =
                                     DEBUG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                 if debug_count < 50 {
+                                    let label = match result.status {
+                                        ResolutionStatus::Dynamic => "DYNAMIC",
+                                        ResolutionStatus::Ambiguous => "AMBIGUOUS",
+                                        _ => "UNRESOLVED",
+                                    };
                                     eprintln!(
-                                        "UNRESOLVED: file={} caller={} callee={:?} kind={:?} status={:?}",
+                                        "{}: file={} caller={} callee={:?} kind={:?} status={:?} reason={:?} debug={:?}",
+                                        label,
                                         file_path,
                                         caller_path,
                                         semantic_call.callee,
                                         semantic_call.kind,
                                         result.status,
+                                        result.reason,
+                                        result.debug,
                                     );
                                 }
 
-                                call_graph.mark_unresolved(&caller_path, &display);
+                                call_graph.mark_unresolved_detailed(
+                                    &caller_path,
+                                    UnresolvedCall {
+                                        callee: display,
+                                        status: result.status,
+                                        reason: result.reason.clone(),
+                                        debug: result.debug.clone(),
+                                    },
+                                );
                             }
                         }
                     }
@@ -208,19 +218,31 @@ fn convert_call_site(
         }
         ParserCallSite::SelfMethod(method) => (
             CallKind::Method,
-            CalleeExpr::Member {
-                receiver: Box::new(CalleeExpr::Name("self".to_string())),
-                member: method.clone(),
-            },
+            CalleeExpr::Qualified(vec!["Self".to_string(), method.clone()]),
         ),
-        ParserCallSite::OnReceiver(receiver, method) => (
+        ParserCallSite::OnReceiver { receiver, method } => (
             CallKind::Method,
             CalleeExpr::Member {
                 receiver: Box::new(CalleeExpr::Name(receiver.clone())),
                 member: method.clone(),
             },
         ),
-        ParserCallSite::Chained(method) => (CallKind::Method, CalleeExpr::Unknown(method.clone())),
+        ParserCallSite::Chained { root, chain } => {
+            let terminal = chain
+                .last()
+                .cloned()
+                .unwrap_or_else(|| "unknown".to_string());
+            match root {
+                Some(root_name) => (
+                    CallKind::Method,
+                    CalleeExpr::Member {
+                        receiver: Box::new(CalleeExpr::Name(root_name.clone())),
+                        member: terminal,
+                    },
+                ),
+                None => (CallKind::Method, CalleeExpr::Unknown(terminal)),
+            }
+        }
     };
 
     SemanticCallSite {

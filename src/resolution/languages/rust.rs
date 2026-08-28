@@ -3,7 +3,8 @@
 use crate::resolution::call_site::{CallSite, CalleeExpr};
 use crate::resolution::context::{Language, ResolutionContext};
 use crate::resolution::result::{
-    ResolutionCandidate, ResolutionEvidence, ResolutionMethod, ResolutionResult,
+    ResolutionCandidate, ResolutionDebugInfo, ResolutionEvidence, ResolutionMethod,
+    ResolutionResult, UnresolvedReason,
 };
 use crate::resolution::symbol::{ImportBinding, SymbolId, TypeId};
 use crate::resolution::traits::LanguageResolver;
@@ -48,16 +49,18 @@ impl LanguageResolver for RustResolver {
             }
 
             CalleeExpr::Unknown(name) => self.resolve_chained_method(name, context),
-            _ => ResolutionResult::unresolved(),
+            _ => ResolutionResult::unresolved_with_reason(UnresolvedReason::UnsupportedCalleeShape),
         }
     }
 
     fn resolve_type(&self, name: &str, context: &ResolutionContext) -> Vec<TypeId> {
-        let mut results = Vec::new();
-        for symbol in context.index.find_by_name(name) {
-            results.push(TypeId(format!("type_{}", symbol.id.0)));
-        }
-        results
+        context
+            .index
+            .type_name_to_id
+            .get(name)
+            .cloned()
+            .into_iter()
+            .collect()
     }
 
     fn resolve_module(&self, module: &str, context: &ResolutionContext) -> Vec<String> {
@@ -72,19 +75,74 @@ impl LanguageResolver for RustResolver {
 }
 
 impl RustResolver {
-    fn resolve_bare_name(&self, name: &str, context: &ResolutionContext) -> ResolutionResult {
-        // Tier 1: Local scope chain
-        if let Some(symbol_id) = context.scopes.resolve(&context.scope, name) {
-            return ResolutionResult::resolved(
-                symbol_id.clone(),
-                1.0,
-                ResolutionMethod::LexicalScope,
-                vec![ResolutionEvidence::MatchingScope],
-            );
+    fn strip_generic_args(name: &str) -> String {
+        let mut result = String::with_capacity(name.len());
+        let chars: Vec<char> = name.chars().collect();
+        let mut i = 0;
+
+        while i < chars.len() {
+            if i + 1 < chars.len() && chars[i] == ':' && chars[i + 1] == '<' {
+                i += 2;
+                let mut depth = 1usize;
+                while i < chars.len() && depth > 0 {
+                    match chars[i] {
+                        '<' => depth += 1,
+                        '>' => depth -= 1,
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+
+            result.push(chars[i]);
+            i += 1;
         }
 
-        // Tier 2: Same file
+        result
+    }
+
+    fn resolve_bare_name(&self, name: &str, context: &ResolutionContext) -> ResolutionResult {
+        let mut debug = ResolutionDebugInfo {
+            query: Some(name.to_string()),
+            scope_checked: true,
+            same_file_candidate_count: 0,
+            import_candidate_count: 0,
+            wildcard_candidate_count: 0,
+            global_candidate_count: 0,
+            container_candidate_count: 0,
+            notes: Vec::new(),
+        };
+
+        if let Some(symbol_id) = context.scopes.resolve(&context.scope, name) {
+            if symbol_id.0.starts_with("import::") {
+                debug.notes.push(format!(
+                    "scope lookup hit imported alias {}; deferring to import resolution",
+                    name
+                ));
+            } else if symbol_id.0.contains("::param::") || symbol_id.0.contains("::local::") {
+                debug.notes.push(format!(
+                    "scope lookup hit local callable binding {}",
+                    symbol_id.0
+                ));
+                return ResolutionResult::callback(&format!(
+                    "call through local or parameter binding: {}",
+                    symbol_id.0
+                ))
+                .with_debug(debug);
+            } else {
+                return ResolutionResult::resolved(
+                    symbol_id.clone(),
+                    1.0,
+                    ResolutionMethod::LexicalScope,
+                    vec![ResolutionEvidence::MatchingScope],
+                );
+            }
+        }
+        debug.notes.push("scope lookup missed".to_string());
+
         let same_file = context.index.find_in_file(&context.file, name);
+        debug.same_file_candidate_count = same_file.len();
         if same_file.len() == 1 {
             return ResolutionResult::resolved(
                 same_file[0].id.clone(),
@@ -93,16 +151,56 @@ impl RustResolver {
                 vec![ResolutionEvidence::SameFile],
             );
         }
+        if same_file.len() > 1 {
+            let callable_same_file: Vec<_> = same_file
+                .iter()
+                .filter(|s| {
+                    matches!(
+                        s.kind,
+                        crate::resolution::symbol::SymbolKind::Function
+                            | crate::resolution::symbol::SymbolKind::Constructor
+                            | crate::resolution::symbol::SymbolKind::AssociatedFunction
+                            | crate::resolution::symbol::SymbolKind::StaticMethod
+                            | crate::resolution::symbol::SymbolKind::ClassMethod
+                    )
+                })
+                .collect();
+            if callable_same_file.len() == 1 {
+                debug.notes.push(
+                    "same-file duplicate name disambiguated in favor of callable free/associated function"
+                        .to_string(),
+                );
+                return ResolutionResult::resolved(
+                    callable_same_file[0].id.clone(),
+                    0.93,
+                    ResolutionMethod::LocalSymbol,
+                    vec![ResolutionEvidence::SameFile],
+                );
+            }
+            return ResolutionResult::unresolved_with_reason(UnresolvedReason::SameFileAmbiguous)
+                .with_debug(debug);
+        }
 
         // Tier 3: Import resolution
         if let Some(imports) = context.index.imports.get(&context.file) {
+            let mut import_candidates = Vec::new();
             for import in imports {
-                let matches = import.local_name == name
-                    || import.imported_name.as_deref() == Some(name)
+                let imported_name_match = import.imported_name.as_deref() == Some(name);
+                let local_name_match = import.local_name == name;
+                let matches = local_name_match
+                    || imported_name_match
                     || import.module.0.ends_with(&format!("::{}", name));
 
                 if matches {
-                    // Try to find the symbol in the imported module
+                    if let Some(symbol) = &import.symbol {
+                        return ResolutionResult::resolved(
+                            symbol.clone(),
+                            0.92,
+                            ResolutionMethod::ImportedSymbol,
+                            vec![ResolutionEvidence::ExplicitImport],
+                        );
+                    }
+
                     let module_candidates = context
                         .index
                         .find_by_qualified(&format!("{}::{}", import.module.0, name));
@@ -116,8 +214,27 @@ impl RustResolver {
                         );
                     }
 
-                    // Fallback: search by name
-                    let name_candidates = context.index.find_by_name(name);
+                    import_candidates.extend(module_candidates.into_iter().map(|s| s.id.clone()));
+
+                    let name_candidates: Vec<_> = context
+                        .index
+                        .find_by_name(name)
+                        .into_iter()
+                        .filter(|candidate| {
+                            if imported_name_match {
+                                candidate.id.0.contains(&import.module.0)
+                                    || candidate
+                                        .module
+                                        .as_ref()
+                                        .map(|m| m.0.starts_with(&import.module.0))
+                                        .unwrap_or(false)
+                            } else if local_name_match {
+                                candidate.id.0.contains(&import.module.0)
+                            } else {
+                                true
+                            }
+                        })
+                        .collect();
                     if name_candidates.len() == 1 {
                         return ResolutionResult::resolved(
                             name_candidates[0].id.clone(),
@@ -126,7 +243,16 @@ impl RustResolver {
                             vec![ResolutionEvidence::ExplicitImport],
                         );
                     }
+
+                    import_candidates.extend(name_candidates.into_iter().map(|s| s.id.clone()));
                 }
+            }
+            import_candidates.sort();
+            import_candidates.dedup();
+            debug.import_candidate_count = import_candidates.len();
+            if import_candidates.len() > 1 {
+                return ResolutionResult::unresolved_with_reason(UnresolvedReason::ImportAmbiguous)
+                    .with_debug(debug);
             }
         }
 
@@ -170,6 +296,7 @@ impl RustResolver {
             }
             wildcard_matches.sort();
             wildcard_matches.dedup();
+            debug.wildcard_candidate_count = wildcard_matches.len();
             if wildcard_matches.len() == 1 {
                 return ResolutionResult::resolved(
                     wildcard_matches[0].clone(),
@@ -177,6 +304,12 @@ impl RustResolver {
                     ResolutionMethod::ImportedSymbol,
                     vec![ResolutionEvidence::ExplicitImport],
                 );
+            }
+            if wildcard_matches.len() > 1 {
+                return ResolutionResult::unresolved_with_reason(
+                    UnresolvedReason::WildcardImportAmbiguous,
+                )
+                .with_debug(debug);
             }
         }
 
@@ -196,6 +329,7 @@ impl RustResolver {
 
         // Tier 4: Global name fallback (unambiguous only)
         let global = context.index.find_by_name(name);
+        debug.global_candidate_count = global.len();
         if global.len() == 1 {
             return ResolutionResult::resolved(
                 global[0].id.clone(),
@@ -216,7 +350,9 @@ impl RustResolver {
                 })
                 .collect();
 
-            return ResolutionResult::ambiguous(candidates);
+            let mut result = ResolutionResult::ambiguous(candidates);
+            result.debug = Some(debug.clone());
+            return result;
         }
 
         // Handle type aliases (FileId, ModuleId, ScopeId, SymbolId, TypeId)
@@ -263,7 +399,7 @@ impl RustResolver {
             );
         }
 
-        ResolutionResult::unresolved()
+        ResolutionResult::unresolved_with_reason(UnresolvedReason::NoCandidates).with_debug(debug)
     }
     /// A chained call (`x.iter().filter(...).collect()`) whose receiver type we
     /// don't track, so we can't do container-based lookup. We still run it
@@ -284,12 +420,26 @@ impl RustResolver {
     }
 
     fn resolve_qualified(&self, parts: &[String], context: &ResolutionContext) -> ResolutionResult {
-        let joined = parts.join("::");
+        let normalized_parts: Vec<String> = parts
+            .iter()
+            .map(|part| Self::strip_generic_args(part))
+            .collect();
+        let joined = normalized_parts.join("::");
+        let mut debug = ResolutionDebugInfo {
+            query: Some(joined.clone()),
+            scope_checked: false,
+            same_file_candidate_count: 0,
+            import_candidate_count: 0,
+            wildcard_candidate_count: 0,
+            global_candidate_count: 0,
+            container_candidate_count: 0,
+            notes: Vec::new(),
+        };
 
         // Try module alias resolution first
-        if let Some(first) = parts.first() {
+        if let Some(first) = normalized_parts.first() {
             if let Some(file_path) = context.index.module_aliases.get(first) {
-                let rest = parts[1..].join("::");
+                let rest = normalized_parts[1..].join("::");
                 let full_path = if rest.is_empty() {
                     file_path.clone()
                 } else {
@@ -306,7 +456,7 @@ impl RustResolver {
                 }
 
                 // Try with just the last part
-                let last = parts.last().unwrap();
+                let last = normalized_parts.last().unwrap();
                 let simple_path = format!("{}::{}", file_path, last);
                 if let Some(target) = context.index.symbols.get(&SymbolId(simple_path)) {
                     return ResolutionResult::resolved(
@@ -320,9 +470,9 @@ impl RustResolver {
                 // Try with the type name as container (e.g., rust::RustParser::extract_functions)
                 // The symbol might be stored as file_path::RustParser::extract_functions
                 // OR as file_path::extract_functions (without the type name)
-                if parts.len() >= 3 {
-                    let type_name = &parts[1];
-                    let method_name = &parts[2];
+                if normalized_parts.len() >= 3 {
+                    let type_name = &normalized_parts[1];
+                    let method_name = &normalized_parts[2];
 
                     // Try file_path::Type::method
                     let with_type = format!("{}::{}::{}", file_path, type_name, method_name);
@@ -396,24 +546,33 @@ impl RustResolver {
             }
         }
         // Handle code_intelligence:: paths (the crate's own name)
-        if parts
+        if normalized_parts
             .first()
             .map(|s| s == "code_intelligence")
             .unwrap_or(false)
         {
             let mut new_parts = vec!["crate".to_string()];
-            new_parts.extend(parts[1..].to_vec());
+            new_parts.extend(normalized_parts[1..].to_vec());
             return self.resolve_qualified(&new_parts, context);
         }
 
         // Handle crate:: paths - resolve to actual file paths
-        if parts.first().map(|s| s == "crate").unwrap_or(false) {
-            let rest = &parts[1..];
+        if normalized_parts
+            .first()
+            .map(|s| s == "crate")
+            .unwrap_or(false)
+        {
+            let rest = &normalized_parts[1..];
             let target_name = rest.last().unwrap();
             let module_path = rest[..rest.len() - 1].join("/");
+            let prefix = if context.file.0.starts_with("./") {
+                "./"
+            } else {
+                ""
+            };
 
             // Try direct file path resolution
-            let direct_file = format!("src/{}.rs", module_path);
+            let direct_file = format!("{}src/{}.rs", prefix, module_path);
             let direct = format!("{}::{}", direct_file, target_name);
             if let Some(target) = context.index.symbols.get(&SymbolId(direct.clone())) {
                 return ResolutionResult::resolved(
@@ -425,7 +584,7 @@ impl RustResolver {
             }
 
             // Try mod.rs path
-            let mod_file = format!("src/{}/mod.rs", module_path);
+            let mod_file = format!("{}src/{}/mod.rs", prefix, module_path);
             let mod_direct = format!("{}::{}", mod_file, target_name);
             if let Some(target) = context.index.symbols.get(&SymbolId(mod_direct.clone())) {
                 return ResolutionResult::resolved(
@@ -474,20 +633,29 @@ impl RustResolver {
             }
 
             // If we can't resolve it, mark as external
-            return ResolutionResult::external();
+            debug.notes.push(
+                "crate-qualified path missed indexed project symbols; treating as external"
+                    .to_string(),
+            );
+            return ResolutionResult::external().with_debug(debug);
         }
 
         // Handle Self:: calls
-        if parts.first().map(|s| s == "Self").unwrap_or(false) {
+        if normalized_parts
+            .first()
+            .map(|s| s == "Self")
+            .unwrap_or(false)
+        {
             if let Some(caller) = context.index.symbols.get(&context.function) {
                 if let Some(container) = &caller.container {
-                    let method_name = parts.last().unwrap();
+                    let method_name = normalized_parts.last().unwrap();
                     if let Some(members) = context.index.by_container.get(container) {
                         let matching: Vec<_> = members
                             .iter()
                             .filter_map(|id| context.index.symbols.get(id))
                             .filter(|s| s.name == *method_name)
                             .collect();
+                        debug.container_candidate_count = matching.len();
 
                         if matching.len() == 1 {
                             return ResolutionResult::resolved(
@@ -497,10 +665,102 @@ impl RustResolver {
                                 vec![ResolutionEvidence::MatchingContainer],
                             );
                         }
+                        if matching.len() > 1 {
+                            let candidates = matching
+                                .iter()
+                                .map(|s| ResolutionCandidate {
+                                    symbol: s.id.clone(),
+                                    method: ResolutionMethod::ContainerMember,
+                                    confidence: 0.5,
+                                    evidence: vec![ResolutionEvidence::MatchingContainer],
+                                })
+                                .collect();
+                            let mut result = ResolutionResult::ambiguous(candidates)
+                                .with_reason(UnresolvedReason::GlobalAmbiguous);
+                            result.debug = Some(debug.clone());
+                            return result;
+                        }
                     }
+                    if let Some(type_id) = &caller.declared_type {
+                        if let Some(type_members) = context.index.by_type.get(type_id) {
+                            let matching: Vec<_> = type_members
+                                .iter()
+                                .filter_map(|id| context.index.symbols.get(id))
+                                .filter(|s| s.name == *method_name)
+                                .collect();
+                            debug.container_candidate_count = matching.len();
+
+                            if matching.len() == 1 {
+                                return ResolutionResult::resolved(
+                                    matching[0].id.clone(),
+                                    0.93,
+                                    ResolutionMethod::TypeMember,
+                                    vec![ResolutionEvidence::MatchingType],
+                                );
+                            }
+                            if matching.len() > 1 {
+                                let candidates = matching
+                                    .iter()
+                                    .map(|s| ResolutionCandidate {
+                                        symbol: s.id.clone(),
+                                        method: ResolutionMethod::TypeMember,
+                                        confidence: 0.45,
+                                        evidence: vec![ResolutionEvidence::MatchingType],
+                                    })
+                                    .collect();
+                                let mut result = ResolutionResult::ambiguous(candidates)
+                                    .with_reason(UnresolvedReason::GlobalAmbiguous);
+                                result.debug = Some(debug.clone());
+                                return result;
+                            }
+                        }
+                    }
+
+                    let same_file = context.index.find_in_file(&context.file, method_name);
+                    debug.same_file_candidate_count = same_file.len();
+                    if same_file.len() == 1 {
+                        return ResolutionResult::resolved(
+                            same_file[0].id.clone(),
+                            0.80,
+                            ResolutionMethod::LocalSymbol,
+                            vec![ResolutionEvidence::SameFile],
+                        );
+                    }
+
+                    if method_name == "default" {
+                        debug.notes.push(format!(
+                            "Self resolved to container {}, but default is likely provided by derived/trait Default rather than indexed impl",
+                            container.0
+                        ));
+                        return ResolutionResult::external().with_debug(debug);
+                    }
+
+                    debug.notes.push(format!(
+                        "Self resolved to container {}, but no matching member was found",
+                        container.0
+                    ));
+                    return ResolutionResult::unresolved_with_reason(
+                        UnresolvedReason::ContainerMiss,
+                    )
+                    .with_debug(debug);
                 }
+
+                debug
+                    .notes
+                    .push("caller symbol had no container for Self resolution".to_string());
+                return ResolutionResult::unresolved_with_reason(
+                    UnresolvedReason::MissingCurrentSymbol,
+                )
+                .with_debug(debug);
             }
-            return ResolutionResult::unresolved();
+
+            debug
+                .notes
+                .push("current function symbol missing during Self resolution".to_string());
+            return ResolutionResult::unresolved_with_reason(
+                UnresolvedReason::MissingCurrentSymbol,
+            )
+            .with_debug(debug);
         }
 
         // Tier 1: Direct qualified match
@@ -515,14 +775,14 @@ impl RustResolver {
         }
 
         // Tier 2: Try file-based path conversion
-        let root = &parts[0];
+        let root = &normalized_parts[0];
 
         for (module_id, module) in &context.index.modules {
             let module_short = module_id.0.split("::").last().unwrap_or(&module_id.0);
 
             if module_short == root || module_id.0.ends_with(&format!("::{}", root)) {
                 let file_path = &module.file.0;
-                let rest = parts[1..].join("::");
+                let rest = normalized_parts[1..].join("::");
                 let file_based = if rest.is_empty() {
                     file_path.clone()
                 } else {
@@ -538,7 +798,7 @@ impl RustResolver {
                     );
                 }
 
-                let last = parts.last().unwrap();
+                let last = normalized_parts.last().unwrap();
                 let simple_path = format!("{}::{}", file_path, last);
                 if let Some(target) = context.index.symbols.get(&SymbolId(simple_path)) {
                     return ResolutionResult::resolved(
@@ -564,7 +824,7 @@ impl RustResolver {
         };
 
         if let Some(module_path) = resolved_module {
-            let rest = parts[1..].join("::");
+            let rest = normalized_parts[1..].join("::");
             let full_path = if rest.is_empty() {
                 module_path
             } else {
@@ -574,7 +834,7 @@ impl RustResolver {
             for (module_id, module) in &context.index.modules {
                 if module_id.0 == full_path || module_id.0.starts_with(&full_path) {
                     let file_path = &module.file.0;
-                    let last = parts.last().unwrap();
+                    let last = normalized_parts.last().unwrap();
                     let file_based = format!("{}::{}", file_path, last);
 
                     if let Some(target) = context.index.symbols.get(&SymbolId(file_based)) {
@@ -586,9 +846,9 @@ impl RustResolver {
                         );
                     }
 
-                    if parts.len() >= 3 {
-                        let container = &parts[parts.len() - 2];
-                        let method = &parts[parts.len() - 1];
+                    if normalized_parts.len() >= 3 {
+                        let container = &normalized_parts[normalized_parts.len() - 2];
+                        let method = &normalized_parts[normalized_parts.len() - 1];
                         let full = format!("{}::{}::{}", file_path, container, method);
                         if let Some(target) = context.index.symbols.get(&SymbolId(full)) {
                             return ResolutionResult::resolved(
@@ -604,9 +864,9 @@ impl RustResolver {
         }
 
         // Tier 4: Type::method resolution
-        if parts.len() >= 2 {
-            let type_name = &parts[parts.len() - 2];
-            let method_name = &parts[parts.len() - 1];
+        if normalized_parts.len() >= 2 {
+            let type_name = &normalized_parts[normalized_parts.len() - 2];
+            let method_name = &normalized_parts[normalized_parts.len() - 1];
 
             if let Some(files) = context.index.type_files.get(type_name.as_str()) {
                 if files.len() == 1 {
@@ -633,8 +893,8 @@ impl RustResolver {
                 }
             }
 
-            let first_type = &parts[0];
-            let last_method = &parts[parts.len() - 1];
+            let first_type = &normalized_parts[0];
+            let last_method = &normalized_parts[normalized_parts.len() - 1];
 
             for symbol in context.index.symbols.values() {
                 if symbol.name == *first_type && symbol.container.is_none() {
@@ -662,8 +922,8 @@ impl RustResolver {
         }
 
         // Handle Default::default() and similar trait methods
-        if parts.len() == 2 && parts[1] == "default" {
-            let type_name = &parts[0];
+        if normalized_parts.len() == 2 && normalized_parts[1] == "default" {
+            let type_name = &normalized_parts[0];
 
             if let Some(files) = context.index.type_files.get(type_name.as_str()) {
                 if !files.is_empty() {
@@ -697,9 +957,9 @@ impl RustResolver {
         }
 
         // Handle internal type constructors and associated functions
-        if parts.len() >= 2 {
-            let type_name = &parts[0];
-            let method_name = parts.last().unwrap();
+        if normalized_parts.len() >= 2 {
+            let type_name = &normalized_parts[0];
+            let method_name = normalized_parts.last().unwrap();
 
             if let Some(files) = context.index.type_files.get(type_name.as_str()) {
                 for file_id in files {
@@ -752,8 +1012,8 @@ impl RustResolver {
         }
 
         // Handle module aliases (rust::RustParser, python::PythonParser, etc.)
-        if parts.len() >= 2 {
-            let first = &parts[0];
+        if normalized_parts.len() >= 2 {
+            let first = &normalized_parts[0];
             let known_modules = [
                 "rust",
                 "python",
@@ -769,7 +1029,7 @@ impl RustResolver {
 
             if known_modules.contains(&first.as_str()) {
                 let module_name = first;
-                let type_name = &parts[1];
+                let type_name = &normalized_parts[1];
 
                 // Try to find the actual file path for this module
                 let expected_path = format!("src/parser/languages/{}.rs", module_name);
@@ -791,41 +1051,62 @@ impl RustResolver {
                 }
 
                 // If we can't find it, mark as external
-                return ResolutionResult::external();
+                debug.notes.push(format!(
+                    "known parser language module alias {} did not resolve to indexed symbols",
+                    module_name
+                ));
+                return ResolutionResult::external().with_debug(debug);
             }
         }
 
         // Handle enum variant constructors
-        if parts.len() == 2 {
-            let type_name = &parts[0];
-            let variant = &parts[1];
+        if normalized_parts.len() == 2 {
+            let type_name = &normalized_parts[0];
+            let variant = &normalized_parts[1];
 
             if context.index.type_files.get(type_name.as_str()).is_some() {
-                return ResolutionResult::external();
+                debug.notes.push(format!(
+                    "{}::{} treated as enum variant or type-associated external constructor",
+                    type_name, variant
+                ));
+                return ResolutionResult::external().with_debug(debug);
             }
 
             if type_name.chars().next().map_or(false, |c| c.is_uppercase())
                 && variant.chars().next().map_or(false, |c| c.is_uppercase())
             {
-                return ResolutionResult::external();
+                debug.notes.push(format!(
+                    "{}::{} matched enum-variant-like uppercase constructor pattern",
+                    type_name, variant
+                ));
+                return ResolutionResult::external().with_debug(debug);
             }
         }
 
         // Handle code_intelligence:: paths
-        if parts
+        if normalized_parts
             .first()
             .map(|s| s == "code_intelligence")
             .unwrap_or(false)
         {
-            return ResolutionResult::external();
+            debug
+                .notes
+                .push("crate-name-qualified path fell through to external".to_string());
+            return ResolutionResult::external().with_debug(debug);
         }
 
         // Handle fs:: paths
-        if parts.first().map(|s| s == "fs").unwrap_or(false) {
-            return ResolutionResult::external();
+        if normalized_parts.first().map(|s| s == "fs").unwrap_or(false) {
+            debug
+                .notes
+                .push("std/fs qualified path treated as external".to_string());
+            return ResolutionResult::external().with_debug(debug);
         }
 
-        ResolutionResult::unresolved()
+        debug
+            .notes
+            .push("qualified lookup exhausted all Rust heuristics".to_string());
+        ResolutionResult::unresolved_with_reason(UnresolvedReason::ContainerMiss).with_debug(debug)
     }
 
     fn resolve_member(
@@ -834,12 +1115,30 @@ impl RustResolver {
         member: &str,
         context: &ResolutionContext,
     ) -> ResolutionResult {
-        let receiver_name = match receiver {
-            CalleeExpr::Name(name) => name.clone(),
-            _ => return ResolutionResult::unresolved(),
+        let mut debug = ResolutionDebugInfo {
+            query: Some(member.to_string()),
+            scope_checked: false,
+            same_file_candidate_count: 0,
+            import_candidate_count: 0,
+            wildcard_candidate_count: 0,
+            global_candidate_count: 0,
+            container_candidate_count: 0,
+            notes: Vec::new(),
         };
 
-        if receiver_name == "self" && member == "calculate_impact" {}
+        let receiver_name = match receiver {
+            CalleeExpr::Name(name) => name.clone(),
+            _ => {
+                debug
+                    .notes
+                    .push("member receiver was not a simple name".to_string());
+                return ResolutionResult::unresolved_with_reason(
+                    UnresolvedReason::UnsupportedCalleeShape,
+                )
+                .with_debug(debug);
+            }
+        };
+
         if receiver_name == "self" || receiver_name == "this" {
             if let Some(caller) = context.index.symbols.get(&context.function) {
                 if let Some(container) = &caller.container {
@@ -850,6 +1149,7 @@ impl RustResolver {
                             .filter(|s| s.name == member)
                             .collect();
 
+                        debug.container_candidate_count = matching.len();
                         if matching.len() == 1 {
                             return ResolutionResult::resolved(
                                 matching[0].id.clone(),
@@ -868,13 +1168,51 @@ impl RustResolver {
                                     evidence: vec![ResolutionEvidence::MatchingContainer],
                                 })
                                 .collect();
-                            return ResolutionResult::ambiguous(candidates);
+                            let mut result = ResolutionResult::ambiguous(candidates)
+                                .with_reason(UnresolvedReason::GlobalAmbiguous);
+                            result.debug = Some(debug.clone());
+                            return result;
+                        }
+                    }
+
+                    if let Some(type_id) = &caller.declared_type {
+                        if let Some(type_members) = context.index.by_type.get(type_id) {
+                            let matching: Vec<_> = type_members
+                                .iter()
+                                .filter_map(|id| context.index.symbols.get(id))
+                                .filter(|s| s.name == member)
+                                .collect();
+                            debug.container_candidate_count = matching.len();
+                            if matching.len() == 1 {
+                                return ResolutionResult::resolved(
+                                    matching[0].id.clone(),
+                                    0.93,
+                                    ResolutionMethod::TypeMember,
+                                    vec![ResolutionEvidence::MatchingType],
+                                );
+                            }
+                            if matching.len() > 1 {
+                                let candidates = matching
+                                    .iter()
+                                    .map(|s| ResolutionCandidate {
+                                        symbol: s.id.clone(),
+                                        method: ResolutionMethod::TypeMember,
+                                        confidence: 0.45,
+                                        evidence: vec![ResolutionEvidence::MatchingType],
+                                    })
+                                    .collect();
+                                let mut result = ResolutionResult::ambiguous(candidates)
+                                    .with_reason(UnresolvedReason::GlobalAmbiguous);
+                                result.debug = Some(debug.clone());
+                                return result;
+                            }
                         }
                     }
                 }
             }
 
             let same_file = context.index.find_in_file(&context.file, member);
+            debug.same_file_candidate_count = same_file.len();
             if same_file.len() == 1 {
                 return ResolutionResult::resolved(
                     same_file[0].id.clone(),
@@ -883,15 +1221,42 @@ impl RustResolver {
                     vec![ResolutionEvidence::SameFile],
                 );
             }
+            if matches!(
+                member,
+                "iter"
+                    | "filter"
+                    | "map"
+                    | "collect"
+                    | "len"
+                    | "is_empty"
+                    | "contains"
+                    | "is_ok"
+                    | "to_vec"
+                    | "ok_or_else"
+                    | "is_some"
+                    | "edge_count"
+            ) {
+                debug.notes.push(format!(
+                    "receiver {} member {} treated as stdlib/container-style external method",
+                    receiver_name, member
+                ));
+                return ResolutionResult::external().with_debug(debug);
+            }
             // A self/this call that can't be resolved via container membership or
             // same-file lookup is a resolver gap, not a genuine external
             // dependency — self.foo() can never call into another crate. Report
             // it as Unresolved so it's visible in diagnostics instead of being
             // silently absorbed as "external" and dropped from the call graph.
-            return ResolutionResult::unresolved();
+            debug.notes.push(format!(
+                "receiver {} did not resolve to a unique container member or same-file symbol",
+                receiver_name
+            ));
+            return ResolutionResult::unresolved_with_reason(UnresolvedReason::ContainerMiss)
+                .with_debug(debug);
         }
 
         let receiver_candidates = context.index.find_by_name(&receiver_name);
+        debug.global_candidate_count = receiver_candidates.len();
         if receiver_candidates.len() == 1 {
             let receiver_symbol = &receiver_candidates[0];
             if let Some(container) = &receiver_symbol.container {
@@ -902,6 +1267,7 @@ impl RustResolver {
                         .filter(|s| s.name == member)
                         .collect();
 
+                    debug.container_candidate_count = matching.len();
                     if matching.len() == 1 {
                         return ResolutionResult::resolved(
                             matching[0].id.clone(),
@@ -914,6 +1280,7 @@ impl RustResolver {
             }
 
             let same_file = context.index.find_in_file(&receiver_symbol.file, member);
+            debug.same_file_candidate_count = same_file.len();
             if same_file.len() == 1 {
                 return ResolutionResult::resolved(
                     same_file[0].id.clone(),
@@ -925,6 +1292,7 @@ impl RustResolver {
         }
 
         let same_file = context.index.find_in_file(&context.file, member);
+        debug.same_file_candidate_count = same_file.len();
         if same_file.len() == 1 {
             return ResolutionResult::resolved(
                 same_file[0].id.clone(),
@@ -934,6 +1302,32 @@ impl RustResolver {
             );
         }
 
-        ResolutionResult::external()
+        if matches!(
+            member,
+            "iter"
+                | "filter"
+                | "map"
+                | "collect"
+                | "len"
+                | "is_empty"
+                | "contains"
+                | "is_ok"
+                | "to_vec"
+                | "ok_or_else"
+                | "is_some"
+                | "edge_count"
+        ) {
+            debug.notes.push(format!(
+                "member lookup for receiver {} and member {} treated as stdlib/container-style external method",
+                receiver_name, member
+            ));
+            return ResolutionResult::external().with_debug(debug);
+        }
+
+        debug.notes.push(format!(
+            "member lookup for receiver {} and member {} fell back to external",
+            receiver_name, member
+        ));
+        ResolutionResult::external().with_debug(debug)
     }
 }

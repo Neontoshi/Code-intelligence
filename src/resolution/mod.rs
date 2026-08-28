@@ -2,8 +2,10 @@
 
 pub mod call_site;
 pub mod context;
+pub mod generic;
 pub mod index_builder;
 pub mod languages;
+pub mod naming;
 pub mod result;
 pub mod scope;
 pub mod symbol;
@@ -64,8 +66,11 @@ impl ResolutionEngine {
         // Try to resolve using type inference
         if let CalleeExpr::Member { receiver, member } = &call.callee {
             if let CalleeExpr::Name(name) = receiver.as_ref() {
-                // Infer the type of the receiver
-                let receiver_type = self.type_context.infer_type(name);
+                // Infer the type of the receiver, preferring variables declared in the
+                // current function scope before falling back to global heuristics.
+                let receiver_type = self
+                    .type_context
+                    .infer_type_in_context(Some(&function.0), name);
 
                 if let Some(type_name) = receiver_type.name() {
                     // Try to find the method on this type
@@ -188,13 +193,11 @@ impl ResolutionEngine {
                         let matches = import.local_name == *name
                             || import.imported_name.as_deref() == Some(name.as_str());
                         if matches {
-                            let root = import
-                                .module
-                                .0
-                                .split("::")
-                                .next()
-                                .unwrap_or(&import.module.0);
-                            if self.is_external_root(root, language) {
+                            let module_path = &import.module.0;
+                            let root = module_path.split("::").next().unwrap_or(module_path);
+                            if self.is_external_root(root, language)
+                                || self.is_external_root(module_path, language)
+                            {
                                 return true;
                             }
                         }

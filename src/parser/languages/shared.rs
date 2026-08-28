@@ -35,7 +35,16 @@ pub struct LanguageParserConfig {
 pub struct SharedParser;
 
 impl SharedParser {
-    /// Extract functions from the AST using the provided configuration
+    fn normalize_rust_container_name(name: &str) -> String {
+        let trimmed = name.trim();
+        if let Some((head, _)) = trimmed.split_once('<') {
+            head.trim().to_string()
+        } else {
+            trimmed.to_string()
+        }
+    }
+
+    /// Extract types from the AST using the provided configuration
     pub fn extract_functions(
         tree: &Tree,
         source: &str,
@@ -182,7 +191,10 @@ impl SharedParser {
                     .child_by_field_name("trait")
                     .and_then(|t| t.utf8_text(source.as_bytes()).ok());
 
-                next_container = ty;
+                next_container = ty.map(|name| {
+                    let normalized = Self::normalize_rust_container_name(name);
+                    Box::leak(normalized.into_boxed_str()) as &str
+                });
                 next_trait = tr;
             }
 
