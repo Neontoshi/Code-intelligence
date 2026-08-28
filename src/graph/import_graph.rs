@@ -169,7 +169,6 @@ impl ImportGraph {
         self.exports.get(file).cloned().unwrap_or_default()
     }
 
-    // ⭐ NEW: Get all functions imported from a specific module
     pub fn get_imported_functions(&self, module: &str) -> Vec<String> {
         let mut functions = Vec::new();
         if let Some(exports) = self.exports.get(module) {
@@ -324,7 +323,6 @@ impl ImportGraph {
         false
     }
 
-    // ⭐ NEW: Check if a function is used in a specific file
     pub fn is_function_used_in_file(&self, func_name: &str, file: &str) -> bool {
         for edge in &self.edges {
             if edge.source_file == file {

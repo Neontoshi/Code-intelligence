@@ -1,5 +1,3 @@
-// src/graph/mod.rs
-
 pub mod call_graph;
 pub mod dependency_graph;
 pub mod graph_traits;
@@ -11,14 +9,10 @@ pub mod traits;
 pub mod type_graph;
 pub mod unresolved_handler;
 
-// Re-export
-pub use resolution::{ResolutionConfidence, ResolutionMethod, ResolutionStats, ResolvedCall};
-pub use resolver::CallResolver;
-// Re-export macros
 pub use crate::impl_graph_index;
 pub use crate::impl_graph_metrics;
-
-// Re-export traits
+pub use resolution::{ResolutionConfidence, ResolutionMethod, ResolutionStats, ResolvedCall};
+pub use resolver::CallResolver;
 pub use traits::{GraphIndex, GraphMetrics, Indexable};
 
 #[macro_export]

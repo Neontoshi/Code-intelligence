@@ -99,7 +99,7 @@ impl DuplicateClassifier {
         1.0 / (1.0 + (-(dot + self.bias)).exp())
     }
 
-    /// Check if two functions are duplicates (boolean)
+    /// Return whether the predicted duplicate score exceeds the configured threshold.
     pub fn is_duplicate(&self, a: &FunctionFeatures, b: &FunctionFeatures) -> bool {
         self.predict(a, b) > self.threshold
     }
@@ -113,7 +113,6 @@ impl DuplicateClassifier {
         let mut features = a.to_feature_vector();
         features.extend(b.to_feature_vector());
 
-        // Add difference features
         let a_vec = a.to_feature_vector();
         let b_vec = b.to_feature_vector();
         let diff: Vec<f64> = a_vec
@@ -124,7 +123,6 @@ impl DuplicateClassifier {
 
         features.extend(diff);
 
-        // Add type comparison features
         let type_same =
             if a.type_name.is_some() && b.type_name.is_some() && a.type_name == b.type_name {
                 1.0
@@ -164,7 +162,6 @@ impl DuplicateClassifier {
 
         features.extend(diff);
 
-        // Add type comparison features
         let type_same = if example.func_a.type_name.is_some()
             && example.func_b.type_name.is_some()
             && example.func_a.type_name == example.func_b.type_name

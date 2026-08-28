@@ -123,8 +123,8 @@ impl CallResolver {
             );
         }
 
-        // ⭐ FIX: Extract container from full_path
-        // full_path format: "file::container::method"
+        // Extract the enclosing container from the function full_path.
+        // Expected full_path format: "file::container::method"
         let container = Self::extract_container(&caller.full_path);
 
         // Try method call on self
@@ -167,7 +167,7 @@ impl CallResolver {
 
         // Try import resolution
         let simple_name = target.rsplit("::").next().unwrap_or(target);
-        // ⭐ FIX: get_imported_functions returns Vec<String>, not Option
+        // Resolve imported candidate paths for the caller's file.
         let imported_paths = self.import_graph.get_imported_functions(&caller.file);
         for path in imported_paths {
             if path.ends_with(simple_name) {

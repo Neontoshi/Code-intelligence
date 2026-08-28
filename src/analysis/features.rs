@@ -120,14 +120,12 @@ impl FunctionFeatures {
             language: language.to_string(),
             layer: func.layer.clone(),
 
-            // ⭐ These will be set after building the feature vector
             feature_vector: Vec::new(),
             normalized_tokens: normalized_tokens.clone(),
 
             body,
             doc_comment: func.doc_comment.clone(),
 
-            // ⭐ Type-related fields
             is_method,
             container,
             trait_impl: trait_impl.clone(),
@@ -137,7 +135,7 @@ impl FunctionFeatures {
             is_override,
         };
 
-        // 7. BUILD THE FEATURE VECTOR (USING THE CREATED FEATURES)
+        // Build the derived feature vector after the base fields are populated.
         let feature_vector = Self::build_feature_vector(
             &signature_hash,
             &ast_hash,
@@ -149,13 +147,10 @@ impl FunctionFeatures {
             &features,
         );
 
-        // 8. SET THE FEATURE VECTOR AND RETURN
         features.feature_vector = feature_vector;
 
         features
     }
-
-    // Find this function and add bounds checking:
 
     fn compute_complexity_metrics(source: &str) -> (f64, f64, usize) {
         let mut complexity: f64 = 1.0;
@@ -181,7 +176,7 @@ impl FunctionFeatures {
             ("expect", 0.2),
         ];
 
-        // Add bounds checking for empty source
+        // Empty bodies still carry baseline complexity.
         if source.is_empty() {
             return (1.0, 1.0, 0);
         }
@@ -189,7 +184,6 @@ impl FunctionFeatures {
         for line in source.lines() {
             let trimmed = line.trim();
 
-            // Track nesting
             if trimmed.contains('{') {
                 current_nesting += 1;
                 max_nesting = max_nesting.max(current_nesting);
@@ -198,7 +192,6 @@ impl FunctionFeatures {
                 current_nesting = current_nesting.saturating_sub(1);
             }
 
-            // Control flow complexity
             for (pattern, weight) in &control_flow_patterns {
                 if trimmed.contains(pattern) {
                     complexity += weight;
@@ -207,10 +200,8 @@ impl FunctionFeatures {
             }
         }
 
-        // Nesting penalty
         complexity += max_nesting as f64 * 0.2;
 
-        // Cap at reasonable maximum
         let complexity = complexity.min(50.0);
         let cyclomatic = cyclomatic.min(50.0);
 
@@ -1137,7 +1128,6 @@ impl FeatureExtractor {
         functions: &[FunctionNode],
         files: &[ParsedFile],
     ) -> &HashMap<String, FunctionFeatures> {
-        // Build source map for quick lookup
         let source_map: HashMap<String, &str> = files
             .iter()
             .flat_map(|f| {
@@ -1150,7 +1140,6 @@ impl FeatureExtractor {
             })
             .collect();
 
-        // Build language map
         let lang_map: HashMap<String, &str> = files
             .iter()
             .flat_map(|f| {

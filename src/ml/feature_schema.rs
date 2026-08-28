@@ -876,7 +876,6 @@ impl FeatureSchema {
             normalization: Normalization::None,
         });
 
-        // Build the name-to-index map
         let name_to_index = features.iter().map(|f| (f.name.clone(), f.index)).collect();
 
         Self {
@@ -886,7 +885,6 @@ impl FeatureSchema {
         }
     }
 
-    // PUBLIC METHODS
     pub fn feature_names(&self) -> Vec<String> {
         self.features.iter().map(|f| f.name.clone()).collect()
     }

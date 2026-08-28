@@ -61,7 +61,6 @@ pub struct ProjectMetrics {
     pub layers: Vec<String>,
 }
 
-// Builder
 pub struct ProjectAnalysisBuilder {
     root: PathBuf,
     files: Vec<ParsedFile>,
@@ -165,7 +164,7 @@ impl ProjectAnalysisBuilder {
         let import_graph = Arc::new(self.import_graph.unwrap_or_else(ImportGraph::new));
         let dependency_graph = Arc::new(self.dependency_graph.unwrap_or_else(DependencyGraph::new));
 
-        // Build rich indexes BEFORE moving files into Arc
+        // Build indexes that depend on owned file data before wrapping files in Arc.
         let rich_indexes = Arc::new(self.rich_indexes.unwrap_or_else(|| {
             let builder = crate::engine::indexer::IndexBuilder::new();
             let functions: Vec<FunctionNode> = call_graph
@@ -175,7 +174,7 @@ impl ProjectAnalysisBuilder {
             builder.build_from_analysis(&functions, &self.files)
         }));
 
-        // Build features BEFORE moving files into Arc
+        // Extract features before wrapping files in Arc for shared ownership.
         let features = Arc::new(self.features.unwrap_or_else(|| {
             let mut extractor = FeatureExtractor::new();
             let functions: Vec<FunctionNode> = call_graph
@@ -189,10 +188,7 @@ impl ProjectAnalysisBuilder {
         let files = Arc::new(self.files);
         let cache = Arc::new(self.cache);
 
-        // Build indexes
         let indexes = Arc::new(Self::build_indexes(&files, &call_graph));
-
-        // Build metrics
         let metrics = Arc::new(Self::build_metrics(&files, &call_graph));
 
         ProjectAnalysis {
@@ -217,7 +213,6 @@ impl ProjectAnalysisBuilder {
     fn build_indexes(files: &[ParsedFile], call_graph: &CallGraph) -> AnalysisIndexes {
         let mut indexes = AnalysisIndexes::default();
 
-        // Build name → functions index
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
             indexes
@@ -233,7 +228,6 @@ impl ProjectAnalysisBuilder {
                 .push(func.full_path.clone());
         }
 
-        // Build type → definitions index
         for file in files {
             for type_info in &file.types {
                 indexes
@@ -244,7 +238,6 @@ impl ProjectAnalysisBuilder {
             }
         }
 
-        // Build import → files index
         for file in files {
             for import in &file.imports {
                 indexes
@@ -265,23 +258,18 @@ impl ProjectAnalysisBuilder {
         metrics.total_files = files.len();
         metrics.total_call_edges = call_graph.edge_count();
 
-        // Languages
         let mut langs: Vec<String> = files.iter().map(|f| f.language.clone()).collect();
         langs.sort();
         langs.dedup();
         metrics.languages = langs;
 
-        // Total lines
         metrics.total_lines = files.iter().map(|f| f.source.lines().count()).sum();
 
         metrics
     }
 }
 
-// Query Helpers
-
 impl ProjectAnalysis {
-    /// Get a function by full path
     pub fn get_function(&self, full_path: &str) -> Option<&crate::graph::call_graph::FunctionNode> {
         self.call_graph
             .name_index
@@ -289,7 +277,6 @@ impl ProjectAnalysis {
             .map(|&idx| &self.call_graph[idx])
     }
 
-    /// Get functions by name
     pub fn get_functions_by_name(
         &self,
         name: &str,
@@ -305,7 +292,6 @@ impl ProjectAnalysis {
         result
     }
 
-    /// Get functions by file
     pub fn get_functions_by_file(
         &self,
         file: &str,
@@ -321,38 +307,30 @@ impl ProjectAnalysis {
         result
     }
 
-    /// Get all function names
     pub fn function_names(&self) -> Vec<String> {
         self.indexes.name_to_functions.keys().cloned().collect()
     }
 
-    /// Get all files
     pub fn file_paths(&self) -> Vec<String> {
         self.files.iter().map(|f| f.path.clone()).collect()
     }
 
-    /// Check if a function exists
     pub fn has_function(&self, full_path: &str) -> bool {
         self.get_function(full_path).is_some()
     }
 
-    /// Get function count
     pub fn function_count(&self) -> usize {
         self.metrics.total_functions
     }
 
-    /// Get file count
     pub fn file_count(&self) -> usize {
         self.metrics.total_files
     }
 
-    /// Get call edge count
     pub fn call_edge_count(&self) -> usize {
         self.metrics.total_call_edges
     }
 }
-
-// Output Methods
 
 impl ProjectAnalysis {
     pub fn to_markdown(&self) -> String {

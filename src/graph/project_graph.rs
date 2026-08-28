@@ -322,17 +322,11 @@ impl ProjectGraph {
             .collect()
     }
 
-    // ========================================================================
-    // Cross-Query Operations
-    // ========================================================================
-
     /// Get all types referenced by a function
     pub fn get_types_referenced_by_function(&self, func_idx: NodeIndex) -> Vec<&ProjectNode> {
         let mut types = Vec::new();
 
-        // Check if this is a function node
         if let Some(ProjectNode::Function(func)) = self.graph.node_weight(func_idx) {
-            // Look for references to types
             for edge in self
                 .graph
                 .edges_directed(func_idx, petgraph::Direction::Outgoing)
@@ -346,7 +340,7 @@ impl ProjectGraph {
                 }
             }
 
-            // Also check parameter and return types
+            // Include types referenced in the function signature as well.
             for param in &func.params {
                 if let Some(type_node) = self.get_type(param) {
                     types.push(type_node);
@@ -420,10 +414,6 @@ impl ProjectGraph {
 
         files
     }
-
-    // ========================================================================
-    // Analysis Operations
-    // ========================================================================
 
     pub fn node_indices(&self) -> impl Iterator<Item = NodeIndex> + '_ {
         self.graph.node_indices()
@@ -547,7 +537,6 @@ impl ProjectGraph {
         dist
     }
 }
-// Builder for ProjectGraph
 
 pub struct ProjectGraphBuilder {
     graph: ProjectGraph,
@@ -575,7 +564,6 @@ impl ProjectGraphBuilder {
         self.func_full_path_to_idx
             .insert(func.full_path.clone(), idx);
 
-        // Add contains edge: file -> function
         if let Some(&file_idx) = self.file_to_idx.get(file_path) {
             self.graph.add_contains(file_idx, idx);
         }

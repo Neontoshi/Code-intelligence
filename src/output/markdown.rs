@@ -91,14 +91,11 @@ impl MarkdownOutput {
             output.push('\n');
         }
 
-        // Call Graph Summary
         output.push_str("## 📞 Call Graph Summary\n\n");
         output.push_str("```mermaid\n");
         output.push_str("graph TD\n");
 
-        // Bounded the same way graphviz.rs is — mermaid renders even worse
-        // than Graphviz at scale, so drawing every edge unfiltered (as
-        // before) produced an unreadable diagram past a handful of files.
+        // Limit the Mermaid graph to the most important nodes to keep it readable.
         let selected = call_graph.top_important_nodes(60, 0.3);
         let mut added = std::collections::HashSet::new();
         for &idx in &selected {
@@ -116,7 +113,7 @@ impl MarkdownOutput {
                 }
             }
         }
-        // Architecture layers
+
         output.push_str("## 🏗️ Architecture Layers\n\n");
         let layers = crate::output::json::JsonOutput::detect_layers(files);
         for layer in layers {

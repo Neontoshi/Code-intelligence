@@ -1,5 +1,3 @@
-// src/bin/ci/deadcode.rs
-
 use crate::helpers::get_default_model;
 use code_intelligence::analysis::dead_code::DeadCodeAnalyzer;
 use code_intelligence::analysis::service::{AnalysisService, AnalysisServiceConfig};
@@ -17,10 +15,8 @@ pub async fn run_deadcode(
     println!("📊 Threshold: {:.2}", threshold);
     println!();
 
-    // Resolve optional custom model path (falls back to embedded if None)
     let model_path = model_path.or_else(get_default_model).map(PathBuf::from);
 
-    // Build config
     let config = AnalysisServiceConfig {
         model_path,
         threshold: Some(threshold),
@@ -37,7 +33,6 @@ pub async fn run_deadcode(
 
     let dead_analysis = &result.dead_code_analysis;
 
-    // Generate report
     let report = DeadCodeAnalyzer::new().generate_report(dead_analysis);
 
     // Print to terminal

@@ -27,10 +27,8 @@ pub async fn run_analyze(
         println!("📊 Detected project type: {}", pt);
     }
 
-    // Resolve optional custom model path (falls back to embedded if None)
     let model_path = model_path.or_else(get_default_model).map(PathBuf::from);
 
-    // Build service config
     let config = AnalysisServiceConfig {
         model_path,
         threshold,
@@ -45,14 +43,12 @@ pub async fn run_analyze(
     let mut service = AnalysisService::new(config);
     let result = service.analyze(&path).await?;
 
-    // 1. DEAD CODE ANALYSIS
     println!("\n{}", "═".repeat(60));
     println!("🔍 DEAD CODE ANALYSIS");
     println!("{}", "═".repeat(60));
 
     let dead_analysis = &result.dead_code_analysis;
 
-    // Print dead code summary
     println!("\n📊 Dead Code Summary:");
     println!("   Total functions: {}", result.call_graph.node_count());
     println!("   Dead functions: {}", dead_analysis.functions.len());

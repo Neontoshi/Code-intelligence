@@ -83,7 +83,6 @@ pub async fn run_check(
         println!("{}", report);
     }
 
-    // Check conditions
     if let Some(max) = max_dead {
         if result.dead_verdicts.len() > max {
             eprintln!(

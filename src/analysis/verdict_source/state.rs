@@ -865,8 +865,8 @@ impl VerdictEngine {
         } else {
             signals.push(Signal {
                 name: "is_public".to_string(),
-                // Same fix: private is unambiguous evidence toward dead,
-                // full confidence, not a metric that happens to read 0.
+                // Private visibility is treated as explicit evidence toward dead code
+                // rather than as the absence of a positive signal.
                 value: 1.0,
                 direction: SignalDirection::SupportsDead,
                 weight: 0.2,

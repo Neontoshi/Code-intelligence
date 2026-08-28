@@ -98,10 +98,9 @@ impl SharedParser {
         for child in node.children(&mut cursor) {
             let child_kind = child.kind();
 
-            // Check if this node is a function
             let is_function = config.function_kinds.contains(&child_kind);
 
-            // Special case: variable declarator with function value (JS/TS)
+            // JS/TS can bind function expressions or arrow functions via variable declarators.
             let is_js_function = child_kind == "variable_declarator" && {
                 let name_is_identifier = child
                     .child_by_field_name("name")
@@ -127,7 +126,7 @@ impl SharedParser {
                 }
             }
 
-            // Track container (class/struct/trait) for method resolution
+            // Propagate the enclosing type/container for downstream method resolution.
             let mut next_container = container;
             if Self::is_type_container(&child_kind) {
                 if let Some(name_node) = child.child_by_field_name("name") {
@@ -137,19 +136,18 @@ impl SharedParser {
                 }
             }
 
-            // Track trait implementation (Rust-specific)
+            // Track Rust impl blocks so methods can be associated with their type and trait.
             let mut next_trait = trait_impl;
             if child_kind == "impl_item" && config.name == "Rust" {
-                // Try field first (impl Trait for Type)
+                // Prefer the parsed type field when available.
                 let ty = child
                     .child_by_field_name("type")
                     .and_then(|t| t.utf8_text(source.as_bytes()).ok());
 
-                // If no type field, extract from the impl text
+                // Fall back to parsing the impl header text when the type field is absent.
                 let ty = if ty.is_some() {
                     ty
                 } else {
-                    // Get the full text of the impl_item
                     child
                         .utf8_text(source.as_bytes())
                         .ok()
@@ -157,14 +155,13 @@ impl SharedParser {
                             let trimmed = text.trim_start();
                             if trimmed.starts_with("impl ") {
                                 let after_impl = &trimmed[5..];
-                                // Handle "impl Trait for Type"
+
                                 if let Some(for_pos) = after_impl.find(" for ") {
                                     after_impl[for_pos + 5..]
                                         .split_whitespace()
                                         .next()
                                         .map(|s| s.trim_matches('{').trim().to_string())
                                 } else {
-                                    // "impl TypeName {"
                                     after_impl
                                         .split_whitespace()
                                         .next()
@@ -175,8 +172,8 @@ impl SharedParser {
                             }
                         })
                         .and_then(|s| {
-                            // Need to store this String somewhere that outlives the closure
-                            // We'll leak it temporarily - acceptable for parsing
+                            // This intentionally leaks the parsed name to extend its lifetime
+                            // for the recursive descent pass.
                             Some(&*Box::leak(s.into_boxed_str()))
                         })
                 };
@@ -204,16 +201,16 @@ impl SharedParser {
         let line = node.start_position().row + 1;
 
         let is_public = if config.go_export_rules {
-            // Go: capitalized = public
+            // In Go, exported identifiers are capitalized.
             name.chars()
                 .next()
                 .map(|c| c.is_uppercase())
                 .unwrap_or(false)
         } else if config.has_export_statements {
-            // JS/TS: check for export statements
+            // In JS/TS, visibility is inferred from export syntax.
             is_public_js(node, source)
         } else {
-            // Check for pub/ public keyword
+            // Other languages use explicit visibility modifiers.
             is_public_generic(node, source, config.name)
         };
 

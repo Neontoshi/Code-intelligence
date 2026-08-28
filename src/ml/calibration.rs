@@ -93,7 +93,7 @@ impl CalibratedModel {
             };
         }
 
-        // Find optimal temperature using grid search
+        // Select the temperature that minimizes validation loss over a small grid.
         let mut best_temp = 1.0;
         let mut best_loss = f64::MAX;
 
@@ -292,13 +292,11 @@ impl CalibratedModel {
                 1.0 / (1.0 + (-logit / self.calibration.temperature).exp())
             }
             CalibrationMethod::HistogramBinning => {
-                // Find which bin the prediction falls into
                 for bin in &self.calibration.bins {
                     if raw >= bin.lower && raw < bin.upper {
                         return bin.empirical_accuracy;
                     }
                 }
-                // If outside all bins, use raw
                 raw
             }
             CalibrationMethod::IsotonicRegression => {
@@ -313,7 +311,7 @@ impl CalibratedModel {
         }
     }
 
-    /// Get calibration statistics
+    /// Compute calibration statistics for labeled examples.
     pub fn calibration_stats(&self, examples: &[TrainingExample]) -> CalibrationStats {
         let labeled: Vec<_> = examples
             .iter()
@@ -345,8 +343,6 @@ impl CalibratedModel {
     }
 }
 
-// Calibration Stats
-
 #[derive(Debug, Clone, Default)]
 pub struct CalibrationStats {
     pub expected_calibration_error: f64,
@@ -375,7 +371,6 @@ impl CalibrationStats {
     }
 }
 
-// Calibration Wrapper for DeadCodeClassifier
 impl DeadCodeClassifier {
     /// Calibrate the model using validation data
     pub fn calibrate(&mut self, val_examples: &[TrainingExample]) -> Result<(), String> {
@@ -396,7 +391,6 @@ impl DeadCodeClassifier {
     pub fn predict_calibrated(&self, features: &[f64]) -> f64 {
         let raw = self.predict_features(features);
 
-        // If we have calibration parameters, apply them
         if let Some(calibration) = &self.calibration {
             match calibration.method {
                 CalibrationMethod::TemperatureScaling => {
@@ -405,7 +399,6 @@ impl DeadCodeClassifier {
                     1.0 / (1.0 + (-logit / calibration.temperature).exp())
                 }
                 CalibrationMethod::HistogramBinning => {
-                    // Find which bin the prediction falls into
                     for bin in &calibration.bins {
                         if raw >= bin.lower && raw < bin.upper {
                             return bin.empirical_accuracy;

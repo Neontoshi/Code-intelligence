@@ -27,7 +27,6 @@ pub async fn run_analyze(
         println!("📊 Detected project type: {}", pt);
     }
 
-    // Get model path
     let model_path = model_path
         .or_else(get_default_model)
         .map(PathBuf::from)
@@ -40,7 +39,6 @@ pub async fn run_analyze(
         )));
     }
 
-    // Build service config
     let config = AnalysisServiceConfig {
         model_path: Some(model_path),
         threshold,
@@ -56,7 +54,6 @@ pub async fn run_analyze(
     service.load_model()?;
     let result = service.analyze(&path).await?;
 
-    // 1. DEAD CODE ANALYSIS
     println!("\n{}", "═".repeat(60));
     println!("🔍 DEAD CODE ANALYSIS");
     println!("{}", "═".repeat(60));

@@ -124,14 +124,13 @@ impl SemanticAnalyzer {
     fn analyze_data_flows(call_graph: &CallGraph, _files: &[ParsedFile]) -> Vec<DataFlow> {
         let mut flows = Vec::new();
 
-        // Detect data flow through function calls
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
             let callees = call_graph.get_callees(idx);
 
             for callee in callees {
-                // Check if data flows from func to callee
-                // In a real implementation, we'd analyze parameters and return types
+                // This models call-to-call flow at a coarse level without inspecting
+                // argument binding or return-value propagation.
                 let flow = DataFlow {
                     source: func.full_path.clone(),
                     target: callee.full_path.clone(),
@@ -151,7 +150,6 @@ impl SemanticAnalyzer {
         for idx in call_graph.node_indices() {
             let func = &call_graph[idx];
 
-            // Check if function handles errors
             let has_try = func
                 .doc_comment
                 .as_ref()

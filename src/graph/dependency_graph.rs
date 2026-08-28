@@ -1,5 +1,3 @@
-// src/graph/dependency_graph.rs
-
 use crate::define_graph;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
@@ -31,7 +29,6 @@ pub enum DependencyType {
 
 define_graph!(DependencyGraph, DependencyNode, DependencyEdge);
 
-// ⭐ All other methods go in a separate impl block
 impl DependencyGraph {
     pub fn add_node(&mut self, node: DependencyNode) -> NodeIndex {
         let key = node.name.clone();
@@ -105,7 +102,6 @@ impl DependencyGraph {
         cycles: &mut Vec<Vec<NodeIndex>>,
     ) {
         if let Some(pos) = path.iter().position(|&n| n == current) {
-            // Found a cycle
             let cycle = path[pos..].to_vec();
             if !cycles.contains(&cycle) {
                 cycles.push(cycle);

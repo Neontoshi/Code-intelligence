@@ -91,11 +91,9 @@ impl Pipeline {
     }
 
     fn report(&self, msg: &str) {
-        // Progress reporting
         if let Some(f) = &self.progress {
             f(msg);
         }
-        // Structured logging
         let mut fields = HashMap::new();
         fields.insert(
             "message".to_string(),
@@ -104,7 +102,6 @@ impl Pipeline {
         self.log_event("progress", fields);
     }
 
-    // Update stage methods to log events
     pub fn stage_collect(&self, root: &Path) -> RawProject {
         self.log_event("stage_collect_started", {
             let mut fields = HashMap::new();
@@ -226,7 +223,6 @@ impl Pipeline {
         self
     }
 
-    // File Hash Collection for Cache
     fn collect_file_hashes(&self, root: &Path) -> Vec<CachedFileEntry> {
         let mut entries = Vec::new();
         let supported_extensions = [
