@@ -250,7 +250,10 @@ async fn run(args: &Args) -> Result<()> {
                         Some((model, args.threshold))
                     }
                     Err(e) => {
-                        eprintln!("⚠️ Failed to load model: {}", e);
+                        eprintln!(
+                            "⚠️ Failed to load model: {}\n   Falling back to static-only analysis.",
+                            e
+                        );
                         None
                     }
                 },
@@ -259,6 +262,8 @@ async fn run(args: &Args) -> Result<()> {
     } else {
         None
     };
+
+    let ml_loaded = ml_model.is_some();
 
     let (_model, model_threshold) = match &ml_model {
         Some((m, t)) => (Some(m), Some(*t)),
@@ -407,7 +412,7 @@ async fn run(args: &Args) -> Result<()> {
 
     let dead_verdicts = filtered_dead_verdicts;
 
-    if args.model.is_some() && !args.no_ml {
+    if ml_loaded {
         let project_name = args
             .project_dir
             .file_name()
@@ -582,8 +587,10 @@ async fn run(args: &Args) -> Result<()> {
         filtered_analysis.summary.estimated_loc_removable
     );
 
-    if args.model.is_some() && !args.no_ml {
+    if ml_loaded {
         println!("   ML Model: enabled ✅");
+    } else if args.model.is_some() && !args.no_ml {
+        println!("   ML Model: failed to load ❌ (static-only fallback)");
     } else {
         println!("   ML Model: disabled");
     }
@@ -627,10 +634,7 @@ async fn run(args: &Args) -> Result<()> {
             .to_string(),
     );
     reporter.set_metric("threshold", &format!("{:.2}", threshold));
-    reporter.set_metric(
-        "ml_enabled",
-        &format!("{}", args.model.is_some() && !args.no_ml),
-    );
+    reporter.set_metric("ml_enabled", &format!("{}", ml_loaded));
 
     // Add metrics from collector
     if let Some(metrics) = &metrics {

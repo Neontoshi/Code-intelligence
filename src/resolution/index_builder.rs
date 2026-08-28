@@ -43,15 +43,13 @@ impl IndexBuilder {
             // Register imports
             let mut import_bindings = Vec::new();
             for import in &file.imports {
-                // Parse import items properly
                 let local_name = import
                     .items
                     .first()
                     .cloned()
                     .unwrap_or_else(|| import.module.clone());
 
-                // Try to extract the imported name from the module path
-                let imported_name = Self::extract_imported_name(&import.module);
+                let imported_name = Self::imported_name_from_parts(import);
 
                 let binding = ImportBinding {
                     local_name: local_name.clone(),
@@ -59,7 +57,7 @@ impl IndexBuilder {
                     module: ModuleId(import.module.clone()),
                     symbol: None,
                     scope: file_scope_id.clone(),
-                    kind: Self::classify_import(&import.module),
+                    kind: Self::classify_import_from_parts(import),
                 };
                 if binding.kind != ImportKind::Wildcard {
                     file_scope.insert(
@@ -239,22 +237,8 @@ impl IndexBuilder {
 
         for (file_id, imports) in &index.imports {
             for (idx, import) in imports.iter().enumerate() {
-                // Try to resolve import module to a symbol
-                let module_candidates = index.find_by_qualified(&import.module.0);
-
-                // Also try to find by the imported name
-                let name_to_find = import.imported_name.as_ref().unwrap_or(&import.local_name);
-                let name_candidates = index.find_by_name(name_to_find);
-
-                // Prefer module-qualified matches
-                if !module_candidates.is_empty() {
-                    import_resolutions.push((
-                        file_id.clone(),
-                        idx,
-                        module_candidates[0].id.clone(),
-                    ));
-                } else if name_candidates.len() == 1 {
-                    import_resolutions.push((file_id.clone(), idx, name_candidates[0].id.clone()));
+                if let Some(symbol_id) = Self::resolve_import_binding(&index, file_id, import) {
+                    import_resolutions.push((file_id.clone(), idx, symbol_id));
                 }
             }
         }
@@ -318,18 +302,15 @@ impl IndexBuilder {
         for (module_id, module) in &index.modules {
             let file_path = &module.file.0;
 
-            // Register the full module path
             index
                 .module_aliases
                 .insert(module_id.0.clone(), file_path.clone());
 
-            // Register the short name (last segment)
             let short_name = module_id.0.split("::").last().unwrap_or(&module_id.0);
             index
                 .module_aliases
                 .insert(short_name.to_string(), file_path.clone());
 
-            // Register common aliases
             let file_stem = file_path
                 .split('/')
                 .last()
@@ -339,27 +320,205 @@ impl IndexBuilder {
                 .module_aliases
                 .insert(file_stem.to_string(), file_path.clone());
 
-            // Register path-based aliases (src/parser/languages/rust -> rust)
             if let Some(lang_pos) = file_path.find("/languages/") {
                 let lang_name = file_path[lang_pos + 11..].trim_end_matches(".rs");
                 index
                     .module_aliases
                     .insert(lang_name.to_string(), file_path.clone());
             }
+
+            for alias in Self::derive_local_rust_aliases(file_path) {
+                index
+                    .module_aliases
+                    .entry(alias)
+                    .or_insert(file_path.clone());
+            }
         }
 
         (index, scopes, type_context)
     }
 
-    fn extract_imported_name(module: &str) -> Option<String> {
-        // Handle different import syntaxes:
-        // Rust: "std::fs::write" -> "write"
-        // Python: "from module import name" -> "name" (handled elsewhere)
-        // JavaScript: "import { name } from 'module'" -> "name" (handled elsewhere)
-        // Go: "import (\"fmt\")" -> "fmt"
-        // Java: "import java.util.List;" -> "List"
+    fn resolve_import_binding(
+        index: &SymbolIndex,
+        importing_file: &FileId,
+        import: &ImportBinding,
+    ) -> Option<SymbolId> {
+        let name_to_find = import.imported_name.as_ref().unwrap_or(&import.local_name);
 
-        // Try to split on common separators
+        if import.kind == ImportKind::Wildcard {
+            return None;
+        }
+
+        if let Some(symbol_id) = Self::resolve_rust_import_to_symbol(
+            index,
+            importing_file,
+            &import.module.0,
+            name_to_find,
+        ) {
+            return Some(symbol_id);
+        }
+
+        let module_candidates = index.find_by_qualified(&import.module.0);
+        if module_candidates.len() == 1 {
+            return Some(module_candidates[0].id.clone());
+        }
+
+        let name_candidates = index.find_by_name(name_to_find);
+        if name_candidates.len() == 1 {
+            return Some(name_candidates[0].id.clone());
+        }
+
+        None
+    }
+
+    fn resolve_rust_import_to_symbol(
+        index: &SymbolIndex,
+        importing_file: &FileId,
+        module_path: &str,
+        item_name: &str,
+    ) -> Option<SymbolId> {
+        let path_prefix = if importing_file.0.starts_with("./") {
+            "./"
+        } else {
+            ""
+        };
+
+        let candidate_files =
+            Self::candidate_rust_import_files(importing_file, module_path, path_prefix);
+        for file_path in candidate_files {
+            let direct = SymbolId(format!("{}::{}", file_path, item_name));
+            if index.symbols.contains_key(&direct) {
+                return Some(direct);
+            }
+
+            let container = SymbolId(format!("{}::{}", file_path, item_name));
+            if let Some(members) = index.by_container.get(&container) {
+                if members.len() == 1 {
+                    return Some(members[0].clone());
+                }
+            }
+        }
+
+        None
+    }
+
+    fn candidate_rust_import_files(
+        importing_file: &FileId,
+        module_path: &str,
+        path_prefix: &str,
+    ) -> Vec<String> {
+        let mut candidates = Vec::new();
+        let normalized = module_path.trim().trim_end_matches("::*");
+
+        if let Some(rest) = normalized.strip_prefix("crate::") {
+            let rel = rest.replace("::", "/");
+            candidates.push(format!("{}src/{}.rs", path_prefix, rel));
+            candidates.push(format!("{}src/{}/mod.rs", path_prefix, rel));
+            return candidates;
+        }
+
+        if let Some(rest) = normalized.strip_prefix("self::") {
+            let base = importing_file
+                .0
+                .trim_start_matches("./")
+                .trim_end_matches(".rs")
+                .trim_end_matches("/mod");
+            let rel = if rest.is_empty() {
+                base.to_string()
+            } else {
+                format!("{}/{}", base, rest.replace("::", "/"))
+            };
+            candidates.push(format!("{}{}.rs", path_prefix, rel));
+            candidates.push(format!("{}{}//mod.rs", path_prefix, rel).replace("//", "/"));
+            return candidates;
+        }
+
+        if let Some(rest) = normalized.strip_prefix("super::") {
+            let base = importing_file
+                .0
+                .trim_start_matches("./")
+                .rsplit_once('/')
+                .map(|(dir, _)| dir)
+                .unwrap_or("src");
+            let parent = base.rsplit_once('/').map(|(dir, _)| dir).unwrap_or("src");
+            let rel = if rest.is_empty() {
+                parent.to_string()
+            } else {
+                format!("{}/{}", parent, rest.replace("::", "/"))
+            };
+            candidates.push(format!("{}{}.rs", path_prefix, rel));
+            candidates.push(format!("{}{}//mod.rs", path_prefix, rel).replace("//", "/"));
+            return candidates;
+        }
+
+        let rel = normalized.replace("::", "/");
+        candidates.push(format!("{}src/{}.rs", path_prefix, rel));
+        candidates.push(format!("{}src/{}/mod.rs", path_prefix, rel));
+        candidates
+    }
+
+    fn derive_local_rust_aliases(file_path: &str) -> Vec<String> {
+        let normalized = file_path.trim_start_matches("./");
+        let segments: Vec<&str> = normalized.split('/').collect();
+        let src_pos = match segments.iter().position(|segment| *segment == "src") {
+            Some(pos) => pos,
+            None => return Vec::new(),
+        };
+
+        let mut aliases = Vec::new();
+
+        if src_pos > 0 {
+            aliases.push(segments[src_pos - 1].to_string());
+        }
+
+        if src_pos + 1 < segments.len() {
+            let first_after_src = segments[src_pos + 1]
+                .trim_end_matches(".rs")
+                .trim_end_matches("mod")
+                .trim_end_matches('/');
+            if !first_after_src.is_empty() && first_after_src != "main" && first_after_src != "lib"
+            {
+                aliases.push(first_after_src.to_string());
+            }
+        }
+
+        let crate_relative = &segments[src_pos + 1..];
+        if !crate_relative.is_empty() {
+            let mut module_parts: Vec<String> = crate_relative
+                .iter()
+                .map(|part| part.trim_end_matches(".rs").to_string())
+                .collect();
+            if matches!(
+                module_parts.last().map(|s| s.as_str()),
+                Some("mod") | Some("main") | Some("lib")
+            ) {
+                module_parts.pop();
+            }
+            if !module_parts.is_empty() {
+                aliases.push(module_parts.join("::"));
+            }
+        }
+
+        aliases.sort();
+        aliases.dedup();
+        aliases
+    }
+
+    fn imported_name_from_parts(import: &crate::parser::tree_sitter::ImportInfo) -> Option<String> {
+        if import.items.len() >= 2 {
+            return import.items.get(1).cloned();
+        }
+
+        if let Some(first) = import.items.first() {
+            if first != "*" {
+                return Some(first.clone());
+            }
+        }
+
+        Self::extract_imported_name(&import.module)
+    }
+
+    fn extract_imported_name(module: &str) -> Option<String> {
         let separators = ["::", ".", "/"];
         for sep in separators {
             if let Some(last) = module.rsplit(sep).next() {
@@ -372,11 +531,16 @@ impl IndexBuilder {
         None
     }
 
-    fn classify_import(module: &str) -> ImportKind {
-        // Classify import type based on syntax
-        if module.ends_with(".*") || module.ends_with("::*") {
+    fn classify_import_from_parts(import: &crate::parser::tree_sitter::ImportInfo) -> ImportKind {
+        if import.items.iter().any(|item| item == "*")
+            || import.module.ends_with(".*")
+            || import.module.ends_with("::*")
+        {
             ImportKind::Wildcard
-        } else if module.contains("::") || module.contains('.') {
+        } else if !import.items.is_empty()
+            || import.module.contains("::")
+            || import.module.contains('.')
+        {
             ImportKind::Symbol
         } else {
             ImportKind::Module

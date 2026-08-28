@@ -376,15 +376,25 @@ impl SharedParser {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             if config.type_kinds.contains(&child.kind()) {
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
-                        let kind = Self::node_kind_to_type_kind(&child);
-                        out.push(TypeInfo {
-                            name: name.to_string(),
-                            kind,
-                            line: child.start_position().row + 1,
-                        });
-                    }
+                let extracted_name = if child.kind() == "impl_item" && config.name == "Rust" {
+                    child
+                        .child_by_field_name("type")
+                        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+                        .map(|name| Self::normalize_rust_container_name(name))
+                } else {
+                    child
+                        .child_by_field_name("name")
+                        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+                        .map(|name| name.to_string())
+                };
+
+                if let Some(name) = extracted_name {
+                    let kind = Self::node_kind_to_type_kind(&child);
+                    out.push(TypeInfo {
+                        name,
+                        kind,
+                        line: child.start_position().row + 1,
+                    });
                 }
             }
             Self::walk_for_types(child, source, config, out);
